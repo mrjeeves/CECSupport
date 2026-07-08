@@ -62,8 +62,10 @@ export interface Grant {
   technician: string;
   /** The Agent Name the customer saw when approving. */
   agent_name: string;
-  /** What the technician may do — "screen_view" and/or "control". */
-  capabilities: string[];
+  /** Whether the grant includes keyboard/mouse control (true) or is view-only
+   *  (false). The node flattens the consent store's capability set to this
+   *  single boolean on the wire (see `Cec::grants`). */
+  control: boolean;
   /** How the grant was made. A string over the flat wire, or `{ kind }` from
    *  the consent store's tagged form — read it with {@link grantScope}. */
   scope: ApprovalScope | { kind: ApprovalScope };
