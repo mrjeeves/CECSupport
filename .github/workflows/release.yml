@@ -1,0 +1,115 @@
+name: Release
+
+# Triggered by pushing a tag `v*` (what `just release X.Y.Z` does) or a manual
+# `workflow_dispatch`. Builds the Windows installer and publishes it to the
+# GitHub release at that tag — this is what support.cec.direct's "Download for
+# Windows" button points at (the NSIS `*-setup.exe` asset).
+#
+# CEC Support is a Windows-only product (one download, no OS picker), so the
+# matrix is Windows-only. The app is a Tauri bundle that ships two sidecars —
+# `myownmesh` (.myownmesh-rev) and `allmystuff-serve` (.allmystuff-rev) — which
+# the GUI's build.rs fetches from those repos' releases during `pnpm tauri
+# build`, so the installer is self-contained.
+#
+# NOTE ON SIGNING: the installer is currently published UNSIGNED, so Windows
+# SmartScreen warns on first run. To sign it (Authenticode) and clear that
+# warning, follow docs/WINDOWS-CODE-SIGNING.md and wire the cert into the
+# tauri build — that's the intended follow-up, gated on a signing cert being
+# available.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  bundle:
+    name: Build Windows installer
+    runs-on: windows-latest
+    env:
+      # The Opus bundled via the node engine's audio stack declares a pre-3.5
+      # `cmake_minimum_required` that CMake 4.x rejects; this shim re-enables
+      # the old policy floor for every CMake build in the job (same as
+      # AllMyStuff's release).
+      CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+    steps:
+      - uses: actions/checkout@v4
+
+      # Guard the "tag says v0.1.0, binary reports 0.0.9" trap. The `cec-support`
+      # binary embeds CARGO_PKG_VERSION and the GUI title reads
+      # gui/src-tauri/Cargo.toml. All three manifests the bump touches
+      # (scripts/bump-version.sh) must match the tag, or every install misreports
+      # its version.
+      - name: Verify tag matches manifest versions
+        shell: bash
+        run: |
+          set -e
+          TAG="${{ inputs.tag || github.ref_name }}"
+          EXPECTED="${TAG#v}"
+          fail() { echo "::error::$*"; exit 1; }
+          got_workspace=$(awk '
+            /^\[workspace\.package\]/ {in_pkg=1; next}
+            /^\[/ {in_pkg=0}
+            in_pkg && /^version =/ {gsub(/[ "]/, "", $0); split($0, a, "="); print a[2]; exit}
+          ' Cargo.toml)
+          got_gui_cargo=$(awk -F\" '/^version = / {print $2; exit}' gui/src-tauri/Cargo.toml)
+          got_gui_pkg=$(node -e "console.log(require('./gui/package.json').version)")
+          [[ "$got_workspace" == "$EXPECTED" ]] || fail "Cargo.toml [workspace.package].version is $got_workspace, expected $EXPECTED (tag $TAG). Run 'just release $EXPECTED'."
+          [[ "$got_gui_cargo" == "$EXPECTED" ]] || fail "gui/src-tauri/Cargo.toml version is $got_gui_cargo, expected $EXPECTED (tag $TAG). Run 'just release $EXPECTED'."
+          [[ "$got_gui_pkg"   == "$EXPECTED" ]] || fail "gui/package.json version is $got_gui_pkg, expected $EXPECTED (tag $TAG). Run 'just release $EXPECTED'."
+          echo "Manifest versions match tag $TAG ($EXPECTED)."
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache (GUI workspace)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gui/src-tauri -> target
+          key: gui-windows
+
+      # No `version:` — pnpm/action-setup reads it from gui/package.json's
+      # `packageManager` field. There's no root package.json, so point the action
+      # at the GUI manifest explicitly.
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: gui/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: gui/pnpm-lock.yaml
+
+      - name: Install GUI dependencies
+        working-directory: gui
+        run: pnpm install --frozen-lockfile
+
+      # Build + publish the Tauri bundle. tauri-action runs `pnpm tauri build`,
+      # so the GUI's build.rs fetches the pinned `myownmesh` + `allmystuff-serve`
+      # sidecars from their GitHub releases and bundles them inside the installer
+      # — we deliberately do NOT set CEC_SKIP_SIDECAR. It then uploads the NSIS
+      # `*-setup.exe` + `.msi` (targets: "all") to the named release.
+      #
+      # The pinned AllMyStuff release (.allmystuff-rev) must already be published
+      # with its `allmystuff-serve-windows-x86_64.zip` asset before this runs,
+      # or the serve sidecar falls back to a stub (the app still builds; it just
+      # won't ship the bundled node).
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: gui
+          tagName: ${{ inputs.tag || github.ref_name }}
+          releaseName: ${{ inputs.tag || github.ref_name }}
+          releaseDraft: false
+          prerelease: false
+          args: --target x86_64-pc-windows-msvc

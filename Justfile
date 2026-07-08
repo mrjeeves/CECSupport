@@ -170,11 +170,15 @@ gui-backend:
 check: fmt-check lint test gui-check
 
 # Cut a release: bump the workspace + GUI versions, commit, push, then push the
-# `v{{VERSION}}` tag. Mirrors AllMyStuff / MyOwnMesh. NOTE: a release workflow
-# that builds the signed `setup.exe` / `.msi` from the tag still needs to be
-# added under .github/workflows — today this only publishes the tag.
+# `v{{VERSION}}` tag. Mirrors AllMyStuff / MyOwnMesh. Pushing the tag triggers
+# `.github/workflows/release.yml`, which builds the Windows Tauri bundle (with
+# the pinned myownmesh + allmystuff-serve sidecars fetched in) and publishes the
+# `setup.exe` / `.msi` to the GitHub release. (The installer ships unsigned for
+# now — see docs/WINDOWS-CODE-SIGNING.md to add Authenticode signing.) Cut this
+# only after the pinned AllMyStuff release (.allmystuff-rev) is published, so the
+# serve sidecar resolves.
 [unix]
-[doc("Cut a release: bump versions, commit, push, tag.")]
+[doc("Cut a release: bump versions, commit, push, tag (triggers the build+publish workflow).")]
 release VERSION:
     @./scripts/bump-version.sh {{VERSION}}
     @if ! git diff --quiet Cargo.toml Cargo.lock gui/src-tauri/Cargo.toml gui/package.json; then \
