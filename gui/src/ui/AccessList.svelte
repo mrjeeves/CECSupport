@@ -21,7 +21,7 @@
   }
 
   function access(g: Grant): string {
-    return g.capabilities.includes("control") ? "View and control" : "View only";
+    return g.control ? "View and control" : "View only";
   }
 </script>
 
