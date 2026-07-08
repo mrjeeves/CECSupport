@@ -69,11 +69,27 @@ fn main() {
     // The runtime uses the target triple to find a dev-staged sidecar name.
     println!("cargo:rustc-env=DAEMON_SIDECAR_TRIPLE={}", target_triple());
     println!("cargo:rerun-if-env-changed=CEC_SKIP_SIDECAR");
+    println!("cargo:rerun-if-env-changed=CEC_REQUIRE_SIDECARS");
+
+    // A release build sets CEC_REQUIRE_SIDECARS=1 (see release.yml): then a
+    // sidecar that can't be bundled fails the build *loudly* instead of stamping
+    // a zero-byte stub — so a broken installer (green build, but no mesh inside)
+    // can never ship. Dev builds leave it unset and fall back to a stub (offline,
+    // or the pinned release not published yet).
+    let require = env::var_os("CEC_REQUIRE_SIDECARS").is_some();
 
     for sc in SIDECARS {
         println!("cargo:rerun-if-changed={}", rev_file(sc).display());
         println!("cargo:rerun-if-env-changed={}", sc.bin_env);
         if let Err(e) = bundle_sidecar(sc) {
+            if require {
+                panic!(
+                    "{} sidecar is required for a release build but could not be bundled: {e}. \
+                     Ensure the pinned release ({}) is published with its \
+                     {}-<platform> asset, then rebuild.",
+                    sc.base, sc.repo, sc.base
+                );
+            }
             println!(
                 "cargo:warning={} sidecar bundle skipped: {e} — the app still builds; \
                  at runtime it falls back to a reused/installed {} or one on PATH",
