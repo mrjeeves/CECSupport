@@ -86,10 +86,10 @@ class CecStore {
     return this.status?.hosting ?? false;
   }
 
-  /** The customer's Support number, grouped for reading aloud (e.g. XY40-0SHD). */
+  /** The customer's Support number, grouped for reading aloud (e.g. 123 456 789). */
   get grouped(): string {
     const n = this.status?.number ?? "";
-    if (n.length === 8) return `${n.slice(0, 4)}-${n.slice(4)}`;
+    if (n.length === 9) return `${n.slice(0, 3)} ${n.slice(3, 6)} ${n.slice(6)}`;
     return n;
   }
 
@@ -307,8 +307,8 @@ class CecStore {
 
   private loadDemo(): void {
     this.status = {
-      number: "XY400SHD",
-      network_id: "cec-xy400shd",
+      number: "123456789",
+      network_id: "cec-123456789",
       role: "client",
       hosting: true,
       label: "Reception PC",

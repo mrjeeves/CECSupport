@@ -14,18 +14,18 @@ is [MyOwnMesh](https://github.com/mrjeeves/MyOwnMesh). See
 
 ## What the customer sees
 
-1. **Their support number.** On launch the app shows a short code (e.g.
-   `XY40-0SHD`), big and clear, with a copy button and "read this to your
+1. **Their support number.** On launch the app shows a short number (9 digits,
+   e.g. `123 456 789`), big and clear, with a copy button and "read this to your
    technician". The number is derived from the device's key
    (`allmystuff_cec_protocol::support_id_from_device`), so no directory is
    needed — the technician derives the same number-to-room mapping locally.
 2. **It waits.** The app joins a MyOwnMesh network of type **Silent** whose
    `network_id` is derived from the number
-   (`network_id_for_number` → `cec-xy400shd`). A Silent mesh auto-dials nobody
+   (`network_id_for_number` → `cec-123456789`). A Silent mesh auto-dials nobody
    and never gossips a roster, so the customer is only *discoverable* to someone
    who already knows the number. It connects to no one on its own.
 3. **Approve or deny.** When a technician dials in, a modal appears:
-   "**‹Agent Name› is trying to connect to your computer**", with the 6-char
+   "**‹Agent Name› is trying to connect to your computer**", with the 6-digit
    verification code to check against what the technician reads out, and three
    choices — **Approve Once**, **Auto-Approve for 3 hours**, **Auto-Approve
    Forever** — plus **Deny**. (These map to `ApprovalScope::Once` /
@@ -77,8 +77,8 @@ everything the client needs.
 comes up it reuses an already-installed AllMyStuff node/daemon if one is present
 and new enough, and falls back to its own bundled copies otherwise. The release
 build stages the pinned versions into the bundle — `.myownmesh-rev` (`v0.2.32`)
-and `.allmystuff-rev` (`v0.2.20`) are those pins, which also match the
-`tag = "v0.2.20"` git deps in `gui/src-tauri/Cargo.toml`.
+and `.allmystuff-rev` (`v0.2.21`) are those pins, which also match the
+`tag = "v0.2.21"` git deps in `gui/src-tauri/Cargo.toml`.
 
 ## The node-control contract the client drives
 
@@ -116,9 +116,9 @@ CECSupport/
 ├── gui/                            Tauri + Svelte 5 client (its own workspace)
 │   ├── package.json, vite.config.ts, tsconfig.json, svelte.config.js
 │   ├── src/                        App.svelte, tauri.ts bridge, store, components
-│   └── src-tauri/                  Cargo.toml (v0.2.20 git deps), main.rs, tauri.conf.json
+│   └── src-tauri/                  Cargo.toml (v0.2.21 git deps), main.rs, tauri.conf.json
 ├── scripts/bump-version.sh         version bump used by `just release`
-├── .allmystuff-rev / .myownmesh-rev   sidecar version pins (v0.2.20 / v0.2.32)
+├── .allmystuff-rev / .myownmesh-rev   sidecar version pins (v0.2.21 / v0.2.32)
 ├── .github/workflows/ci.yml        service-crate CI + gui check/build
 ├── ARCHITECTURE.md · docs/         design + roadmap
 ```
