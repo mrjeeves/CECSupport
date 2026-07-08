@@ -119,7 +119,7 @@ CECSupport/
 │   └── src-tauri/                  Cargo.toml (v0.2.21 git deps), main.rs, tauri.conf.json
 ├── scripts/bump-version.sh         version bump used by `just release`
 ├── .allmystuff-rev / .myownmesh-rev   sidecar version pins (v0.2.21 / v0.2.32)
-├── .github/workflows/ci.yml        service-crate CI + gui check/build
+├── .github/workflows/             ci.yml (service crate + gui check) · release.yml (tag → Windows installer)
 ├── ARCHITECTURE.md · docs/         design + roadmap
 ```
 

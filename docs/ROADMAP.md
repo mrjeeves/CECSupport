@@ -67,8 +67,12 @@ this order for an end-to-end build:
    **`0.2.21`**; merge and tag `v0.2.21`. The node "CEC mode" builds against the
    `Silent`/`connect_peer` API over the daemon control socket.
 3. **CECSupport** — `gui/src-tauri` git deps pin `tag = "v0.2.21"`;
-   `.allmystuff-rev` = `v0.2.21`, `.myownmesh-rev` = `v0.2.32`. The release build
-   stages those pinned sidecars into the Tauri `setup.exe` / `.msi`.
+   `.allmystuff-rev` = `v0.2.21`, `.myownmesh-rev` = `v0.2.32`. `just release`
+   tags the repo, and `.github/workflows/release.yml` builds the Windows Tauri
+   bundle — the GUI's `build.rs` fetches those two pinned sidecars from their
+   releases and bundles them into the `setup.exe` / `.msi`, which the workflow
+   publishes to the GitHub release. (Cut this after AllMyStuff `v0.2.21` is
+   published, so the `allmystuff-serve` sidecar resolves.)
 4. **support.cec.direct** — published; its **Download for Windows** button points
    straight at the CEC Support `setup.exe` release. No install one-liners.
 
