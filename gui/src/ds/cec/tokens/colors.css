@@ -1,0 +1,49 @@
+/* ============================================================
+   CEC — Color tokens
+   Canvas: deep indigo-black with a faint purple cast.
+   Accent: magenta primary + violet ambient.
+   All values in oklch (the store's native color space).
+   ============================================================ */
+
+:root {
+  /* ---- Canvas / surfaces (raised in steps) ---- */
+  --bg:            oklch(0.135 0.022 285);  /* page base */
+  --bg-2:          oklch(0.165 0.028 285);  /* sunk panels, sections */
+  --surface:       oklch(0.205 0.034 285);  /* cards */
+  --surface-2:     oklch(0.245 0.040 285);  /* raised card / hover */
+  --border:        oklch(0.32 0.045 285);   /* hairlines */
+  --border-bright: oklch(0.42 0.06 285);    /* emphasized edges */
+
+  /* ---- Ink (text on dark) ---- */
+  --text:  oklch(0.97 0.004 285);  /* primary text, near-white */
+  --dim:   oklch(0.74 0.02 285);   /* secondary / body-on-card */
+  --faint: oklch(0.55 0.025 285);  /* tertiary / mono labels */
+
+  /* ---- Accents ---- */
+  --accent:      oklch(0.64 0.255 350);                          /* CEC magenta */
+  --accent-soft: color-mix(in oklch, var(--accent) 16%, transparent);  /* tints/fills */
+  --accent-line: color-mix(in oklch, var(--accent) 42%, transparent);  /* accent hairline */
+  --violet:      oklch(0.62 0.20 292);     /* ambient glow / secondary accent */
+  --violet-soft: oklch(0.62 0.20 292 / 0.14);
+  --bronze:      oklch(0.74 0.085 72);     /* trust badges / warranty seals */
+
+  /* ---- Semantic status ---- */
+  --ok:    oklch(0.80 0.17 150);   /* online / pass / green */
+  --warn:  oklch(0.78 0.16 75);    /* caution / "standard" / amber */
+
+  /* ---- Device telemetry gauge colors (KVM / live cards) ---- */
+  --g-cpu: oklch(0.74 0.17 58);    /* orange */
+  --g-gpu: oklch(0.80 0.17 150);   /* green */
+  --g-mem: oklch(0.72 0.14 245);   /* blue */
+  --g-red: oklch(0.60 0.24 25);    /* jog-dial red */
+
+  /* ---- Glitch RGB-split channels (brand motion accent) ---- */
+  --glitch-cyan:    oklch(0.75 0.15 195);
+  --glitch-magenta: var(--accent);
+
+  /* ---- Selection ---- */
+  --selection-bg: var(--accent);
+  --selection-fg: #ffffff;
+}
+
+::selection { background: var(--selection-bg); color: var(--selection-fg); }
