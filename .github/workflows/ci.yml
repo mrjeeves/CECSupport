@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The light root workspace — just the `cec-support-service` crate (systemd /
+  # launchd / Windows SCM installer). It has no webview or media deps, so it
+  # builds and tests fast on all three platforms; windows-latest verifies the
+  # Windows SCM backend where it actually runs.
+  rust:
+    name: Rust · ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: rustfmt
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo fmt --all --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: test
+        run: cargo test --workspace
+
+  # The Svelte front-end: typecheck + production build. This is the CEC Support
+  # client's hard validation — the Tauri Rust backend (`gui/src-tauri`) is NOT
+  # built in CI because it depends on AllMyStuff's node engine + the CEC crates
+  # via git, which only resolve once the sibling AllMyStuff branch is published.
+  # Add a `gui-backend` job (cargo check/test in gui/src-tauri, matrix over the
+  # three desktop OSes) once those deps are on a published ref.
+  gui:
+    name: GUI front-end
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: gui/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm build

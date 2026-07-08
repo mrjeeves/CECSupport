@@ -1,0 +1,79 @@
+# The CEC Support client's Rust crate.
+#
+# It lives OUTSIDE the repo's light root workspace (the root `Cargo.toml`
+# excludes `gui`) so a `cargo build`/`cargo test` at the repo root stays fast
+# and webview-free — exactly the split AllMyStuff and MyOwnMesh use. The empty
+# `[workspace]` table makes this crate its own single-member workspace root.
+#
+# NOTE: this crate does NOT compile in the CEC Support sandbox. It depends on
+# AllMyStuff's heavy node engine (webview + media stack: xcap / openh264 /
+# cpal / …) via git, and on the CEC crates that are only pushed once the
+# sibling AllMyStuff branch lands. The manifest and `src/main.rs` are written
+# to be correct; the frontend (`pnpm check` / `pnpm build`) is what this repo
+# validates. See the README's "What builds where" section.
+[workspace]
+
+[package]
+name = "cec-support"
+version = "0.1.0"
+description = "CEC Support — the calm, customer-facing remote-help client for Critical Error Computing. Shows your support number, prompts you to approve or deny a technician, lists who has standing access, and can install itself as a background service."
+authors = ["Chris Paul"]
+license = "MIT"
+edition = "2021"
+rust-version = "1.88.0"
+repository = "https://github.com/mrjeeves/CECSupport"
+
+# One binary serves both the GUI (bare launch) and the CLI/service verbs
+# (`cec-support run --service`, `cec-support service …`, `cec-support id`).
+[[bin]]
+name = "cec-support"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# `tray-icon` keeps CEC Support reachable from the notification area while it
+# waits in the background for a technician.
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-shell = "2"
+# "Open CEC Support when this computer starts" — a per-user login item
+# (Windows Run key / macOS LaunchAgent / Linux autostart), no admin needed.
+tauri-plugin-autostart = "2"
+# Single-instance guard: a second launch hands off to the running copy and
+# exits, instead of standing up a rival client fighting over the node socket.
+tauri-plugin-single-instance = "2"
+
+# The shared AllMyStuff node engine — presence, the CEC connect handshake, the
+# media planes, and the node control socket the client drives. Reused in "CEC
+# client (customer) mode". Git deps on the sibling branch that adds the CEC
+# node commands; not yet published, so this won't resolve in this sandbox.
+allmystuff-node = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.20" }
+# The CEC wire contract + Support-ID derivation, and the three-choice consent
+# store — the customer's per-technician approvals.
+allmystuff-cec-protocol = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.20" }
+allmystuff-cec-consent = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.20" }
+
+# The client's OWN OS-service installer (never AllMyStuff's), so installing the
+# background service never clobbers an existing AllMyStuff install.
+cec-support-service = { path = "../../crates/cec-support-service" }
+
+# Async runtime — Tauri commands run on it; setup drives node bring-up + the
+# event pump; the headless `run --service` agent blocks on it.
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "signal"] }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+parking_lot = "0.12"
+dirs = "5"
+anyhow = "1"
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

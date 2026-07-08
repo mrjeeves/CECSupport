@@ -1,0 +1,9 @@
+# Build-script environment for the CEC Support GUI workspace.
+#
+# CMAKE_POLICY_VERSION_MINIMUM: audiopus_sys (the `opus` crate's libopus
+# build, pulled in transitively through the AllMyStuff node engine) vendors a
+# CMakeLists whose `cmake_minimum_required` predates 3.5, which CMake 4.x
+# refuses outright. This is CMake's own documented escape hatch, read from the
+# environment since 4.0. Mirrors AllMyStuff's gui/src-tauri/.cargo/config.toml.
+[env]
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"

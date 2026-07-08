@@ -1,0 +1,44 @@
+# CEC Support — the client app repo.
+#
+# Most of the CEC logic lives in AllMyStuff (the shared node engine + the
+# technician-side secret tab): the wire contract (`allmystuff-cec-protocol`),
+# the three-choice consent store (`allmystuff-cec-consent`), and the node-engine
+# CEC mode. This repo is the **customer-facing Windows client** that reuses that
+# engine, plus its own service installer so it can run unattended without
+# clobbering an existing AllMyStuff install.
+#
+# This light workspace holds only what builds with no webview / media stack:
+#
+#   cec-support-service   the client's own OS service installer (Win SCM etc.)
+#
+# The Tauri + Svelte client GUI (`gui/`) — which embeds the AllMyStuff node in
+# "CEC client mode" — lives in its own excluded workspace, the same split
+# AllMyStuff and MyOwnMesh use, so `cargo build` here stays fast and webview-free.
+[workspace]
+resolver = "2"
+members = ["crates/cec-support-service"]
+exclude = ["gui"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88.0"
+license = "MIT"
+authors = ["Chris Paul"]
+repository = "https://github.com/mrjeeves/CECSupport"
+description = "CEC Support — one-tap remote help desk over a private mesh, by Critical Error Computing."
+
+[workspace.dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "5"
+libc = "0.2"
+tempfile = "3"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

@@ -1,0 +1,236 @@
+/* CEC Support — calm, plain-language design.
+ *
+ * This app is used by nervous, non-technical customers, often while something
+ * is already going wrong on their computer. So the look is deliberately quiet
+ * and reassuring: a soft neutral background, one trustworthy accent, large
+ * legible type, and big obvious buttons. Light theme first (daytime, calm),
+ * with a dark override for people who prefer it.
+ *
+ * No brand system is pulled in from the website on purpose (this is a native
+ * app, not a web page). The palette just leans on CEC's steady blue. */
+
+:root {
+  color-scheme: light dark;
+
+  --bg: #f4f6fb;
+  --surface: #ffffff;
+  --surface-2: #eef1f7;
+  --ink: #1b2430;
+  --ink-soft: #4a586b;
+  --ink-faint: #7a869a;
+  --line: #dde3ee;
+  --line-strong: #c7d0df;
+
+  /* CEC's steady blue — trust, not alarm. */
+  --accent: #2563c9;
+  --accent-strong: #1e50a8;
+  --accent-soft: rgba(37, 99, 201, 0.1);
+  --accent-ink: #1c4a9e;
+
+  --ok: #1a8f4c;
+  --ok-soft: rgba(26, 143, 76, 0.12);
+  --warn: #b7791f;
+  --warn-soft: rgba(183, 121, 31, 0.14);
+  --danger: #c0392b;
+  --danger-soft: rgba(192, 57, 43, 0.1);
+
+  --shadow-sm: 0 1px 2px rgba(20, 30, 50, 0.06), 0 1px 3px rgba(20, 30, 50, 0.05);
+  --shadow-md: 0 18px 40px -22px rgba(20, 30, 50, 0.35);
+  --shadow-lg: 0 40px 90px -44px rgba(20, 30, 50, 0.45);
+
+  --r-sm: 8px;
+  --r-md: 14px;
+  --r-lg: 20px;
+  --r-pill: 999px;
+
+  --font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Code", "Segoe UI Mono", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12151c;
+    --surface: #1a1f29;
+    --surface-2: #222835;
+    --ink: #eef2f8;
+    --ink-soft: #b3bece;
+    --ink-faint: #7f8da0;
+    --line: #2b3240;
+    --line-strong: #3a4353;
+
+    --accent: #5b93f0;
+    --accent-strong: #7aa8f5;
+    --accent-soft: rgba(91, 147, 240, 0.16);
+    --accent-ink: #9dc0fb;
+
+    --ok: #48c47e;
+    --ok-soft: rgba(72, 196, 126, 0.16);
+    --warn: #e0a94b;
+    --warn-soft: rgba(224, 169, 75, 0.16);
+    --danger: #ef6a5c;
+    --danger-soft: rgba(239, 106, 92, 0.16);
+
+    --shadow-md: 0 18px 40px -20px rgba(0, 0, 0, 0.6);
+    --shadow-lg: 0 40px 90px -40px rgba(0, 0, 0, 0.7);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  font-family: var(--font);
+  color: var(--ink);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+#app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* Buttons are large and obvious. The primary is a solid, confident blue; the
+ * rest are quiet until hovered. One learned affordance everywhere. */
+.btn {
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--ink);
+  padding: 0.7rem 1.1rem;
+  border-radius: var(--r-md);
+  font-size: 1rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  transition: transform 0.06s ease, box-shadow 0.12s ease, background 0.12s ease,
+    filter 0.12s ease;
+  box-shadow: var(--shadow-sm);
+}
+.btn:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent-strong);
+  color: #fff;
+}
+.btn.primary:hover:not(:disabled) {
+  background: var(--accent-strong);
+  filter: brightness(1.02);
+}
+.btn.ok {
+  background: var(--ok);
+  border-color: var(--ok);
+  color: #fff;
+}
+.btn.danger {
+  background: var(--surface);
+  border-color: var(--line-strong);
+  color: var(--danger);
+}
+.btn.danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+}
+.btn.ghost {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+.btn.ghost:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+.btn.big {
+  padding: 0.95rem 1.4rem;
+  font-size: 1.06rem;
+  width: 100%;
+}
+.btn.small {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.85rem;
+  border-radius: var(--r-sm);
+}
+.btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.65rem;
+  border-radius: var(--r-pill);
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: var(--surface-2);
+  color: var(--ink-soft);
+  border: 1px solid var(--line);
+}
+.chip.ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+  border-color: transparent;
+}
+.chip.warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+  border-color: transparent;
+}
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 22, 35, 0.55);
+  backdrop-filter: blur(3px);
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+  z-index: 50;
+  animation: fade 0.14s ease;
+}
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Thin, unobtrusive scrollbars. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: var(--r-pill);
+}

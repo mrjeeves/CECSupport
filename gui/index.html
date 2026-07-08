@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <title>CEC Support</title>
+    <!-- Painted before the bundle loads so the window never flashes.
+         Mirrors --bg in src/app.css. -->
+    <style>
+      html {
+        background: #f4f6fb;
+      }
+      @media (prefers-color-scheme: dark) {
+        html {
+          background: #12151c;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
