@@ -7,11 +7,13 @@
 //!   * `allmystuff-serve` — the AllMyStuff node binary, run in CEC client mode.
 //!
 //! `tauri_build` requires those files to exist at build time. In a real release
-//! build the pipeline stages signed binaries into `binaries/` first (and the
-//! *installer* additionally does reuse-or-bundle at install time — an existing,
-//! new-enough AllMyStuff/`myownmesh` install is reused, otherwise the bundled
-//! ones are used). Here we only need the slots to exist, so we stamp a
-//! zero-byte stub for any sidecar a release step didn't already provide. The
+//! build the pipeline stages the pinned, signed sidecars into `binaries/` first
+//! (the versions named in `.allmystuff-rev` / `.myownmesh-rev`), and the
+//! `setup.exe` / `.msi` bundle them — the customer installs one normal app, no
+//! terminal. Reuse-vs-bundle then happens at *runtime*: the client reuses an
+//! existing, new-enough AllMyStuff/`myownmesh` install if present, otherwise it
+//! uses these bundled copies. Here we only need the slots to exist, so we stamp
+//! a zero-byte stub for any sidecar a release step didn't already provide; the
 //! runtime treats a zero-byte stub as "not bundled" and falls back to a
 //! reused/installed binary, exactly like AllMyStuff's node discovery.
 

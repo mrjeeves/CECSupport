@@ -37,11 +37,14 @@ type-checker — and reviewed by inspection:
   `cec_deny`, `cec_revoke`, `cec_forget_node`, and the `cec://*` events). The
   Svelte frontend is type-checked (`pnpm check`); the node backend needs the
   Linux media stack **and** the MyOwnMesh `Silent` API below.
-- **CEC Support client GUI (`gui/`) + `cec-support` binary + installers** — the
-  Tauri + Svelte customer app (number screen, three-choice approve modal,
-  connected banner, access list, service toggle) and the `install.ps1` /
-  `install.sh` reuse-or-bundle installers. Frontend type-checked; the Tauri
-  backend depends on the AllMyStuff node engine (git dep) + media stack.
+- **CEC Support client GUI (`gui/`) + `cec-support` binary** — the Tauri + Svelte
+  customer app (number screen, three-choice approve modal, connected banner,
+  access list, service toggle). It installs like a **normal Windows app**: the
+  Tauri bundle is an NSIS `setup.exe` + `.msi` that ships the `allmystuff-serve`
+  node and the `myownmesh` daemon **inside it** (`externalBin`), so the customer
+  double-clicks one file — no terminal, no one-liners. Frontend type-checked; the
+  Tauri backend depends on the AllMyStuff node engine (git dep, `tag = "v0.2.20"`)
+  + media stack.
 
 ## The one substrate change
 
@@ -56,14 +59,16 @@ type-checker — and reviewed by inspection:
 Because the heavy pieces depend on each other across repos, they must land in
 this order for an end-to-end build:
 
-1. **MyOwnMesh** — merge `NetworkKind::Silent` + `connect_peer`; cut a tag (e.g.
-   `v0.2.32`).
-2. **AllMyStuff** — bump `.myownmesh-rev` to that tag; the node "CEC mode" then
-   compiles against the new `Silent`/`connect_peer` API. Merge; cut a tag.
-3. **CECSupport** — point the `gui/src-tauri` git deps at that AllMyStuff tag;
-   the client GUI then compiles against the node engine + CEC crates.
-4. **support.cec.direct** — publish; its install one-liners fetch
-   `mrjeeves/CECSupport`'s `scripts/install.{ps1,sh}`.
+1. **MyOwnMesh** — `NetworkKind::Silent` + `connect_peer` merged and tagged
+   **`v0.2.32`** ✓.
+2. **AllMyStuff** — `.myownmesh-rev` moved to `v0.2.32`, workspace bumped to
+   **`0.2.20`**; merge and tag `v0.2.20`. The node "CEC mode" builds against the
+   `Silent`/`connect_peer` API over the daemon control socket.
+3. **CECSupport** — `gui/src-tauri` git deps pin `tag = "v0.2.20"`;
+   `.allmystuff-rev` = `v0.2.20`, `.myownmesh-rev` = `v0.2.32`. The release build
+   stages those pinned sidecars into the Tauri `setup.exe` / `.msi`.
+4. **support.cec.direct** — published; its **Download for Windows** button points
+   straight at the CEC Support `setup.exe` release. No install one-liners.
 
 The light workspaces (the three tested crates above) build independently at
 every step.

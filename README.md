@@ -63,10 +63,22 @@ The client sets a CEC-specific home (`CEC_SUPPORT_HOME` → `MYOWNMESH_HOME`) an
 CEC's forked signaling app-id before bringing the node up, so its node socket,
 identity, and traffic are isolated from any AllMyStuff/MyOwnMesh install.
 
-The installers **reuse or bundle**: an existing AllMyStuff `allmystuff-serve`
-node and `myownmesh` daemon are reused when present and new enough (the daemon's
-bar is the `.myownmesh-rev` pin); otherwise the versions bundled with the CEC
-Support release are installed next to the client.
+## Install — a normal Windows app
+
+CEC Support installs like any other app: the customer downloads the **installer
+(`setup.exe`)** from [support.cec.direct](https://support.cec.direct) and
+double-clicks it. **No terminal, no separate downloads, nothing to piece
+together.** The installer is the Tauri bundle (`targets: all` → NSIS `setup.exe`
++ `.msi`), and it ships the `allmystuff-serve` node and the `myownmesh` daemon
+**inside it** as sidecars (`externalBin` in `tauri.conf.json`) — one package with
+everything the client needs.
+
+**Reuse, don't clobber** happens at *runtime*, not install time: when the client
+comes up it reuses an already-installed AllMyStuff node/daemon if one is present
+and new enough, and falls back to its own bundled copies otherwise. The release
+build stages the pinned versions into the bundle — `.myownmesh-rev` (`v0.2.32`)
+and `.allmystuff-rev` (`v0.2.20`) are those pins, which also match the
+`tag = "v0.2.20"` git deps in `gui/src-tauri/Cargo.toml`.
 
 ## The node-control contract the client drives
 
@@ -103,8 +115,8 @@ CECSupport/
 ├── gui/                            Tauri + Svelte 5 client (its own workspace)
 │   ├── package.json, vite.config.ts, tsconfig.json, svelte.config.js
 │   ├── src/                        App.svelte, tauri.ts bridge, store, components
-│   └── src-tauri/                  Cargo.toml (git deps), main.rs, tauri.conf.json
-├── scripts/install.ps1             Windows installer (primary)  ·  install.sh
+│   └── src-tauri/                  Cargo.toml (v0.2.20 git deps), main.rs, tauri.conf.json
+├── .allmystuff-rev / .myownmesh-rev   sidecar version pins (v0.2.20 / v0.2.32)
 ├── .github/workflows/ci.yml        service-crate CI + gui check/build
 ├── ARCHITECTURE.md · docs/         design + roadmap
 ```
