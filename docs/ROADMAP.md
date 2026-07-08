@@ -31,10 +31,12 @@ first). They are validated at the layer that *can* be checked — the frontend
 type-checker — and reviewed by inspection:
 
 - **AllMyStuff node "CEC mode" + technician GUI** — the secret "CEC Support"
-  settings tab (Agent Name + Customer number → dial), the "CEC Support" fleet
-  group on the device graph, "Forget this node", and the node-control command
-  surface (`cec_start_hosting`, `cec_dial`, `cec_pending`, `cec_approve`,
-  `cec_deny`, `cec_revoke`, `cec_forget_node`, and the `cec://*` events). The
+  settings tab (Agent Name + Customer number → dial), revealed only by a hidden
+  keyboard gesture. Dialed customers show as ordinary graph peers (no "fleet
+  group" — the CEC mesh is Silent, with no roster); the tab lists them from CEC
+  state via `cec_dialed`. The node-control command surface is `cec_start_hosting`,
+  `cec_dial`, `cec_pending`, `cec_approve`, `cec_deny`, `cec_revoke`, `cec_dialed`,
+  the app-wide `forget_node` (on every node's gear), and the `cec://*` events. The
   Svelte frontend is type-checked (`pnpm check`); the node backend needs the
   Linux media stack **and** the MyOwnMesh `Silent` API below.
 - **CEC Support client GUI (`gui/`) + `cec-support` binary** — the Tauri + Svelte

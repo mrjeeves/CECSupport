@@ -23,7 +23,8 @@ AllMyStuff's remote-control console**, layered on the same substrate:
 │  • crates/allmystuff-cec-protocol   the CEC wire contract + Support ID  │
 │  • crates/allmystuff-cec-consent    Once / 3-hours / Forever grants     │
 │  • GUI: a secret "CEC Support" tab (Agent Name + Customer number →      │
-│    dial) and a "CEC Support" fleet group on the device graph            │
+│    dial); dialed customers show as ordinary graph peers (no fleet       │
+│    group — the CEC mesh is Silent, with no roster)                      │
 └───────────────▲──────────────────────────────────────────────────────┘
                 │ embeds
 ┌───────────────┴──────────────────────────────────────────────────────┐
@@ -180,7 +181,8 @@ Under `CEC_SUPPORT_HOME` (default a CEC-specific dir, e.g.
 | `allmystuff-cec-protocol` — wire contract, Support ID, per-number room | AllMyStuff | ✅ implemented + tested |
 | `allmystuff-cec-consent` — Once/3h/Forever store | AllMyStuff | ✅ implemented + tested |
 | `NetworkKind::Silent` + `connect_peer` | MyOwnMesh | 🚧 the one substrate addition |
-| node "CEC mode" + technician secret tab + fleet group + forget-node | AllMyStuff | 🚧 |
+| node "CEC mode" + technician secret tab (dialed customers are ordinary graph peers) | AllMyStuff | 🚧 |
+| app-wide "Forget this node" on every node's gear | AllMyStuff | 🚧 |
 | `cec-support-service` — the client's own service installer | CECSupport | ✅ implemented + tested |
 | client GUI (`gui/`) + `cec-support` binary + installers | CECSupport | 🚧 |
 | website | support.cec.direct | 🚧 |
