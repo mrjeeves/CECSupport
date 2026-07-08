@@ -1,0 +1,17 @@
+# Rust
+/target
+**/target
+Cargo.lock.bak
+
+# Node / Tauri frontend
+gui/node_modules
+gui/dist
+gui/.svelte-kit
+gui/src-tauri/target
+gui/src-tauri/gen/schemas
+node_modules
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp

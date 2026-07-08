@@ -1,0 +1,18 @@
+[package]
+name = "cec-support-service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "CEC Support's own OS service installer — systemd / launchd / Windows SCM — so the client can run unattended (reconnect after reboots) under its own service identity, never clobbering an AllMyStuff install on the same machine."
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+dirs = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
