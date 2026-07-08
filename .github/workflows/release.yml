@@ -39,6 +39,12 @@ jobs:
       # the old policy floor for every CMake build in the job (same as
       # AllMyStuff's release).
       CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+      # Require the myownmesh + allmystuff-serve sidecars to actually bundle: if
+      # either can't be fetched, build.rs fails the build instead of stamping a
+      # zero-byte stub, so a release can never ship an installer without the mesh
+      # inside. (This is why cutting before the pinned AllMyStuff release is
+      # published now fails loudly rather than shipping a broken setup.exe.)
+      CEC_REQUIRE_SIDECARS: "1"
     steps:
       - uses: actions/checkout@v4
 
