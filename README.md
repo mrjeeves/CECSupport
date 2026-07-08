@@ -110,18 +110,32 @@ node), via the `service_*` Tauri commands.
 
 ```
 CECSupport/
+├── Justfile                        one-command ops (`just setup` / `dev` / `check` / `release`)
 ├── Cargo.toml                      light root workspace (service crate only)
 ├── crates/cec-support-service/     the client's OWN OS-service installer
 ├── gui/                            Tauri + Svelte 5 client (its own workspace)
 │   ├── package.json, vite.config.ts, tsconfig.json, svelte.config.js
 │   ├── src/                        App.svelte, tauri.ts bridge, store, components
 │   └── src-tauri/                  Cargo.toml (v0.2.20 git deps), main.rs, tauri.conf.json
+├── scripts/bump-version.sh         version bump used by `just release`
 ├── .allmystuff-rev / .myownmesh-rev   sidecar version pins (v0.2.20 / v0.2.32)
 ├── .github/workflows/ci.yml        service-crate CI + gui check/build
 ├── ARCHITECTURE.md · docs/         design + roadmap
 ```
 
 ## Build & run
+
+The `Justfile` wraps all of this — the same recipe set as AllMyStuff, minus the
+node-workspace bits it doesn't have. Install [`just`](https://just.systems) and:
+
+```sh
+just setup     # front-end deps (+ the Tauri prerequisites to install)
+just dev       # run the app with hot reload
+just check     # everything CI runs: fmt + clippy + test + gui typecheck/build
+just release 0.2.0   # bump versions, commit, push, tag
+```
+
+The individual commands, if you'd rather not use `just`:
 
 **Frontend (this repo's hard validation):**
 
