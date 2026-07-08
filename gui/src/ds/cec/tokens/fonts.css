@@ -1,0 +1,57 @@
+/* ============================================================
+   CEC — Self-hosted webfonts (subset: latin)
+   Saira Condensed = display · Saira = body · IBM Plex Mono = technical
+   ============================================================ */
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal; font-weight: 400; font-display: swap;
+  src: url(../assets/fonts/font-ibm-plex-mono-400.woff2) format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal; font-weight: 500; font-display: swap;
+  src: url(../assets/fonts/font-ibm-plex-mono-500.woff2) format('woff2');
+}
+
+@font-face {
+  font-family: 'Saira';
+  font-style: normal; font-weight: 400; font-stretch: 100%; font-display: swap;
+  src: url(../assets/fonts/font-saira-400.woff2) format('woff2');
+}
+@font-face {
+  font-family: 'Saira';
+  font-style: normal; font-weight: 500; font-stretch: 100%; font-display: swap;
+  src: url(../assets/fonts/font-saira-500.woff2) format('woff2');
+}
+@font-face {
+  font-family: 'Saira';
+  font-style: normal; font-weight: 600; font-stretch: 100%; font-display: swap;
+  src: url(../assets/fonts/font-saira-600.woff2) format('woff2');
+}
+@font-face {
+  font-family: 'Saira';
+  font-style: normal; font-weight: 700; font-stretch: 100%; font-display: swap;
+  src: url(../assets/fonts/font-saira-700.woff2) format('woff2');
+}
+
+@font-face {
+  font-family: 'Saira Condensed';
+  font-style: normal; font-weight: 400; font-display: swap;
+  src: url(../assets/fonts/font-saira-condensed-400.woff2) format('woff2');
+}
+@font-face {
+  font-family: 'Saira Condensed';
+  font-style: normal; font-weight: 500; font-display: swap;
+  src: url(../assets/fonts/font-saira-condensed-500.woff2) format('woff2');
+}
+@font-face {
+  font-family: 'Saira Condensed';
+  font-style: normal; font-weight: 600; font-display: swap;
+  src: url(../assets/fonts/font-saira-condensed-600.woff2) format('woff2');
+}
+@font-face {
+  font-family: 'Saira Condensed';
+  font-style: normal; font-weight: 700; font-display: swap;
+  src: url(../assets/fonts/font-saira-condensed-700.woff2) format('woff2');
+}

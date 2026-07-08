@@ -3,18 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="color-scheme" content="light dark" />
+    <meta name="color-scheme" content="dark" />
     <title>CEC Support</title>
-    <!-- Painted before the bundle loads so the window never flashes.
-         Mirrors --bg in src/app.css. -->
+    <!-- Painted before the bundle loads so the window never flashes. Mirrors the
+         CEC design system's --bg (src/ds/cec/tokens/colors.css). -->
     <style>
       html {
-        background: #f4f6fb;
-      }
-      @media (prefers-color-scheme: dark) {
-        html {
-          background: #12151c;
-        }
+        background: oklch(0.135 0.022 285);
       }
     </style>
   </head>
