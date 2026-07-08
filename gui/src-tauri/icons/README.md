@@ -1,9 +1,15 @@
-# Icons — PLACEHOLDERS
+# App icons
 
-These icon files are copied verbatim from AllMyStuff so the Tauri bundle
-manifest (`tauri.conf.json` → `bundle.icon`) is complete and the app builds.
+The CEC "critical error" brand mark (cyan bracket-triangle + magenta bar),
+generated at every size Tauri needs from `assets/cec-logo.png`:
 
-**They must be replaced with CEC Support branding before any real release.**
-Regenerate with `pnpm tauri icon path/to/cec-support-logo.png`, which produces
-the full `32x32.png` / `128x128.png` / `128x128@2x.png` / `icon.icns` /
-`icon.ico` / `icon.png` set.
+| File | Size | Used by |
+|------|------|---------|
+| `32x32.png` | 32 | Linux / small |
+| `128x128.png` · `128x128@2x.png` | 128 / 256 | Linux / macOS |
+| `icon.png` | 512 | source / Linux |
+| `icon.ico` | 16–256 (multi) | **Windows** taskbar, exe, installer |
+| `icon.icns` | 128–512 | macOS app |
+
+These are the real brand — not AllMyStuff placeholders. If the logo art
+changes, re-generate the whole set from the new source at the same sizes.
