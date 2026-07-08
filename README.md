@@ -14,18 +14,18 @@ is [MyOwnMesh](https://github.com/mrjeeves/MyOwnMesh). See
 
 ## What the customer sees
 
-1. **Their support number.** On launch the app shows a short code (e.g.
-   `XY40-0SHD`), big and clear, with a copy button and "read this to your
+1. **Their support number.** On launch the app shows a short number (9 digits,
+   e.g. `123 456 789`), big and clear, with a copy button and "read this to your
    technician". The number is derived from the device's key
    (`allmystuff_cec_protocol::support_id_from_device`), so no directory is
    needed — the technician derives the same number-to-room mapping locally.
 2. **It waits.** The app joins a MyOwnMesh network of type **Silent** whose
    `network_id` is derived from the number
-   (`network_id_for_number` → `cec-xy400shd`). A Silent mesh auto-dials nobody
+   (`network_id_for_number` → `cec-123456789`). A Silent mesh auto-dials nobody
    and never gossips a roster, so the customer is only *discoverable* to someone
    who already knows the number. It connects to no one on its own.
 3. **Approve or deny.** When a technician dials in, a modal appears:
-   "**‹Agent Name› is trying to connect to your computer**", with the 6-char
+   "**‹Agent Name› is trying to connect to your computer**", with the 6-digit
    verification code to check against what the technician reads out, and three
    choices — **Approve Once**, **Auto-Approve for 3 hours**, **Auto-Approve
    Forever** — plus **Deny**. (These map to `ApprovalScope::Once` /

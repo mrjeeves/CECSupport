@@ -11,9 +11,9 @@ export type ApprovalScope = "once" | "three_hours" | "forever";
 /** `cec_status` → the customer's own support identity + hosting state. */
 export interface CecStatus {
   /** The short Support number the customer reads to their technician,
-   *  e.g. "XY400SHD". */
+   *  e.g. "123456789". */
   number: string;
-  /** The number-derived Silent-mesh `network_id` (e.g. "cec-xy400shd"). */
+  /** The number-derived Silent-mesh `network_id` (e.g. "cec-123456789"). */
   network_id: string;
   /** This node's role — always "client" for the customer app. */
   role: string;
@@ -34,7 +34,7 @@ export interface ConnectRequest {
   want_control: boolean;
   /** This dial's session id. */
   session_id: string;
-  /** The 6-char code the customer reads back to confirm the technician. */
+  /** The 6-digit code the customer reads back to confirm the technician. */
   verification_code: string;
 }
 

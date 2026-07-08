@@ -58,8 +58,8 @@ Support uses a new MyOwnMesh network type, **`Silent`**:
   out-of-band (below), not via network governance.
 
 On top of that, the **`network_id` is derived from the customer's number**
-(`allmystuff_cec_protocol::network_id_for_number`, e.g. number `XY400SHD` →
-room `cec-xy400shd`). The consequences are the whole trust model:
+(`allmystuff_cec_protocol::network_id_for_number`, e.g. number `123456789` →
+room `cec-123456789`). The consequences are the whole trust model:
 
 - Each customer effectively has **their own secret room**. A technician who
   hasn't been told the number can't even compute the `network_id`, so they can't
@@ -100,19 +100,19 @@ advertise presence, wait
                                            connect_peer(customer)         ─┐
    ◀───────────── inbound offer + connect-request (agent_name) ───────────┘
 prompt: "‹Agent Name› is trying to
- connect" + 6-char verification code
+ connect" + 6-digit verification code
  [Approve Once] [3 hours] [Forever] [Deny]
    │
    ├─ approve(scope) → consent grant + mesh approve → session goes Active
    │                                                  customer appears on the
-   │                                                  graph, "CEC Support" fleet
+   │                                                  graph as a normal peer
    ├─ screen frames ─────────────────────────────────▶ view
    │  ◀──────────────────────────────── input events (if control granted)
    │  (every frame re-checked against the grant)
    └─ Revoke / "Forget this technician" → teardown, immediately
 ```
 
-The 6-char verification code and the Agent Name let the customer confirm *who*
+The 6-digit verification code and the Agent Name let the customer confirm *who*
 they're letting in before approving — the human check on top of the ed25519
 mutual authentication MyOwnMesh already performs.
 
