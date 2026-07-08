@@ -77,8 +77,8 @@ everything the client needs.
 comes up it reuses an already-installed AllMyStuff node/daemon if one is present
 and new enough, and falls back to its own bundled copies otherwise. The release
 build stages the pinned versions into the bundle — `.myownmesh-rev` (`v0.2.32`)
-and `.allmystuff-rev` (`v0.2.20`) are those pins, which also match the
-`tag = "v0.2.20"` git deps in `gui/src-tauri/Cargo.toml`.
+and `.allmystuff-rev` (`v0.2.21`) are those pins, which also match the
+`tag = "v0.2.21"` git deps in `gui/src-tauri/Cargo.toml`.
 
 ## The node-control contract the client drives
 
@@ -116,9 +116,9 @@ CECSupport/
 ├── gui/                            Tauri + Svelte 5 client (its own workspace)
 │   ├── package.json, vite.config.ts, tsconfig.json, svelte.config.js
 │   ├── src/                        App.svelte, tauri.ts bridge, store, components
-│   └── src-tauri/                  Cargo.toml (v0.2.20 git deps), main.rs, tauri.conf.json
+│   └── src-tauri/                  Cargo.toml (v0.2.21 git deps), main.rs, tauri.conf.json
 ├── scripts/bump-version.sh         version bump used by `just release`
-├── .allmystuff-rev / .myownmesh-rev   sidecar version pins (v0.2.20 / v0.2.32)
+├── .allmystuff-rev / .myownmesh-rev   sidecar version pins (v0.2.21 / v0.2.32)
 ├── .github/workflows/ci.yml        service-crate CI + gui check/build
 ├── ARCHITECTURE.md · docs/         design + roadmap
 ```

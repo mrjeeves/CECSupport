@@ -45,7 +45,7 @@ type-checker — and reviewed by inspection:
   Tauri bundle is an NSIS `setup.exe` + `.msi` that ships the `allmystuff-serve`
   node and the `myownmesh` daemon **inside it** (`externalBin`), so the customer
   double-clicks one file — no terminal, no one-liners. Frontend type-checked; the
-  Tauri backend depends on the AllMyStuff node engine (git dep, `tag = "v0.2.20"`)
+  Tauri backend depends on the AllMyStuff node engine (git dep, `tag = "v0.2.21"`)
   + media stack.
 
 ## The one substrate change
@@ -64,10 +64,10 @@ this order for an end-to-end build:
 1. **MyOwnMesh** — `NetworkKind::Silent` + `connect_peer` merged and tagged
    **`v0.2.32`** ✓.
 2. **AllMyStuff** — `.myownmesh-rev` moved to `v0.2.32`, workspace bumped to
-   **`0.2.20`**; merge and tag `v0.2.20`. The node "CEC mode" builds against the
+   **`0.2.21`**; merge and tag `v0.2.21`. The node "CEC mode" builds against the
    `Silent`/`connect_peer` API over the daemon control socket.
-3. **CECSupport** — `gui/src-tauri` git deps pin `tag = "v0.2.20"`;
-   `.allmystuff-rev` = `v0.2.20`, `.myownmesh-rev` = `v0.2.32`. The release build
+3. **CECSupport** — `gui/src-tauri` git deps pin `tag = "v0.2.21"`;
+   `.allmystuff-rev` = `v0.2.21`, `.myownmesh-rev` = `v0.2.32`. The release build
    stages those pinned sidecars into the Tauri `setup.exe` / `.msi`.
 4. **support.cec.direct** — published; its **Download for Windows** button points
    straight at the CEC Support `setup.exe` release. No install one-liners.
