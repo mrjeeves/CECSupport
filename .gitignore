@@ -9,6 +9,8 @@ gui/dist
 gui/.svelte-kit
 gui/src-tauri/target
 gui/src-tauri/gen/schemas
+# Sidecar binaries staged by gui/src-tauri/build.rs (the reused node + daemon).
+gui/src-tauri/binaries
 node_modules
 
 # OS / editor
