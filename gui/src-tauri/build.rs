@@ -71,6 +71,14 @@ fn main() {
     println!("cargo:rerun-if-env-changed=CEC_SKIP_SIDECAR");
     println!("cargo:rerun-if-env-changed=CEC_REQUIRE_SIDECARS");
 
+    // Stamp the pinned AllMyStuff version (`.allmystuff-rev`, the same tag the
+    // `allmystuff-serve` sidecar is fetched at) into the binary so the running
+    // app can read it via `option_env!("ALLMYSTUFF_PIN")` and ask a reused,
+    // separately-installed `allmystuff-serve` it doesn't own to update up to it.
+    if let Some(pin) = read_allmystuff_pin() {
+        println!("cargo:rustc-env=ALLMYSTUFF_PIN={pin}");
+    }
+
     // A release build sets CEC_REQUIRE_SIDECARS=1 (see release.yml): then a
     // sidecar that can't be bundled fails the build *loudly* instead of stamping
     // a zero-byte stub — so a broken installer (green build, but no mesh inside)
@@ -140,6 +148,16 @@ fn repo_root() -> PathBuf {
 /// A sidecar's pin file at the repo root (`.myownmesh-rev` / `.allmystuff-rev`).
 fn rev_file(sc: &Sidecar) -> PathBuf {
     repo_root().join(sc.rev_file)
+}
+
+/// The pinned AllMyStuff version from `.allmystuff-rev` (e.g. `v0.2.22`),
+/// trimmed. `None` for a missing or empty file (an unpinned dev build).
+fn read_allmystuff_pin() -> Option<String> {
+    let path = repo_root().join(".allmystuff-rev");
+    println!("cargo:rerun-if-changed={}", path.display());
+    let raw = fs::read_to_string(path).ok()?;
+    let pin = raw.trim();
+    (!pin.is_empty()).then(|| pin.to_string())
 }
 
 fn bundle_sidecar(sc: &Sidecar) -> Result<(), String> {

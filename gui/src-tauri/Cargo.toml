@@ -48,11 +48,11 @@ tauri-plugin-single-instance = "2"
 # media planes, and the node control socket the client drives. Reused in "CEC
 # client (customer) mode". Git deps on the sibling branch that adds the CEC
 # node commands; not yet published, so this won't resolve in this sandbox.
-allmystuff-node = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.21" }
+allmystuff-node = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.22" }
 # The CEC wire contract + Support-ID derivation, and the three-choice consent
 # store — the customer's per-technician approvals.
-allmystuff-cec-protocol = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.21" }
-allmystuff-cec-consent = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.21" }
+allmystuff-cec-protocol = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.22" }
+allmystuff-cec-consent = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.22" }
 
 # The client's OWN OS-service installer (never AllMyStuff's), so installing the
 # background service never clobbers an existing AllMyStuff install.

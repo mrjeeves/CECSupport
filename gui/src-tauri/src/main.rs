@@ -35,11 +35,21 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
-use allmystuff_node::node_control::{ensure_node_running, NodeChild, NodeClient, NodeEvent};
+use allmystuff_node::node_control::{ensure_node_running_pinned, NodeChild, NodeClient, NodeEvent};
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 use tauri::{Emitter, Manager, RunEvent, State};
 use tauri_plugin_autostart::ManagerExt;
+
+/// The AllMyStuff version this build pins its bundled `allmystuff-serve` at,
+/// stamped by `build.rs` from `.allmystuff-rev` (e.g. `v0.2.22`). Passed to the
+/// node bring-up so a **reused, separately-installed** `allmystuff-serve` CEC
+/// doesn't own — e.g. one a co-installed AllMyStuff GUI started on a shared home
+/// — is asked to update itself to a version CEC can work with, the same way
+/// AllMyStuff keeps a reused `myownmesh` current. `None` (an unpinned dev build)
+/// skips the check. CEC's *own* bundled sidecar is already at this pin, so the
+/// check is a no-op on a normal install.
+const ALLMYSTUFF_PIN: Option<&str> = option_env!("ALLMYSTUFF_PIN");
 
 /// Shared Tauri state: the client's handle to the node, plus the node child we
 /// spawned (if any) so it's killed when the app exits. A reused service node
@@ -66,7 +76,7 @@ fn default_cec_home() -> PathBuf {
 /// AllMyStuff install: a CEC-specific home (so the node control socket +
 /// identity are distinct) and CEC's forked signaling app-id (so CEC peers only
 /// ever meet other CEC peers). Must run before [`NodeClient::new`] or
-/// [`ensure_node_running`], since both read the home from the environment.
+/// [`ensure_node_running_pinned`], since both read the home from the environment.
 fn apply_cec_env() {
     use allmystuff_cec_protocol::{CEC_HOME_ENV, CEC_TRYSTERO_APP_ID};
 
@@ -515,7 +525,8 @@ fn run_gui() -> ExitCode {
             tauri::async_runtime::spawn(async move {
                 // One node per machine (CEC-isolated home): reuse a running CEC
                 // service node, else spawn a transient one tied to this app.
-                match ensure_node_running().await {
+                // The pin keeps a reused, not-ours node current to what CEC needs.
+                match ensure_node_running_pinned(ALLMYSTUFF_PIN).await {
                     Ok(child) => {
                         if let Some(c) = child {
                             handle.state::<AppState>().node_child.lock().replace(c);
@@ -563,7 +574,7 @@ fn run_agent(_service: bool) -> ExitCode {
     };
     rt.block_on(async {
         // Hold the child so it (and the mesh daemon under it) dies with us.
-        let _child = match ensure_node_running().await {
+        let _child = match ensure_node_running_pinned(ALLMYSTUFF_PIN).await {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("cec-support: couldn't bring up the CEC node: {e:#}");
@@ -630,7 +641,10 @@ fn run_id() -> ExitCode {
         }
     };
     rt.block_on(async {
-        let _child = ensure_node_running().await.ok().flatten();
+        let _child = ensure_node_running_pinned(ALLMYSTUFF_PIN)
+            .await
+            .ok()
+            .flatten();
         wait_for_node().await;
         let node = match NodeClient::new() {
             Ok(n) => n,
