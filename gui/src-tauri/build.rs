@@ -184,8 +184,12 @@ fn bundle_sidecar(sc: &Sidecar) -> Result<(), String> {
         }
     }
 
-    // 2. Sibling checkout (release before debug) — the all-repos dev loop.
+    // 2. Sibling checkout (matching the current build profile) — the all-repos
+    //    dev loop. Watch the picked binary so rebuilding the sidecar in its own
+    //    repo re-runs this script and re-stages, with no change needed on the
+    //    CEC side (otherwise a `just dev` here keeps serving the last stage).
     if let Some(p) = sibling_binary(sc) {
+        println!("cargo:rerun-if-changed={}", p.display());
         let sig = format!("sib:{}:{}", p.display(), file_mtime(&p));
         if !staged_matches(&slot, &sentinel, &sig) {
             stage(&p, &slot)?;
@@ -249,7 +253,15 @@ fn nonempty_file(p: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// A built binary in a sibling `../<repo>[/sub]/target/{release,debug}/<base>`.
+/// A built binary in a sibling `../<repo>[/sub]/target/{profile}/<base>`.
+///
+/// Prefers the profile **CEC itself is currently building** (`PROFILE`): a
+/// `just dev` (debug) build takes the sibling's `debug/` binary — the one an
+/// all-repos dev loop rebuilds — so a stale `release/allmystuff-serve.exe` from
+/// some past `cargo build --release` can no longer shadow a freshly rebuilt
+/// `debug/` one. (That shadowing is what silently bundled an old node into
+/// `just dev`.) The opposite profile is a fallback for when only it was built,
+/// and a `--target <triple>/` build outranks a plain one within each profile.
 fn sibling_binary(sc: &Sidecar) -> Option<PathBuf> {
     let mut base_dir = repo_root().parent()?.join(sc.sibling_repo);
     if !sc.sibling_target_sub.is_empty() {
@@ -258,12 +270,13 @@ fn sibling_binary(sc: &Sidecar) -> Option<PathBuf> {
     let target = base_dir.join("target");
     let name = format!("{}{}", sc.base, exe_suffix());
     let triple = target_triple();
-    // With or without a `--target <triple>` segment; release before debug.
+    let profile = env::var("PROFILE").unwrap_or_else(|_| "debug".into());
+    let other = if profile == "release" { "debug" } else { "release" };
     let candidates = [
-        target.join(&triple).join("release").join(&name),
-        target.join("release").join(&name),
-        target.join(&triple).join("debug").join(&name),
-        target.join("debug").join(&name),
+        target.join(&triple).join(&profile).join(&name),
+        target.join(&profile).join(&name),
+        target.join(&triple).join(other).join(&name),
+        target.join(other).join(&name),
     ];
     candidates.into_iter().find(|p| nonempty_file(p))
 }
