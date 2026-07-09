@@ -73,12 +73,15 @@ fn default_cec_home() -> PathBuf {
 }
 
 /// Force the reused AllMyStuff node into **CEC client mode**, isolated from any
-/// AllMyStuff install: a CEC-specific home (so the node control socket +
-/// identity are distinct) and CEC's forked signaling app-id (so CEC peers only
-/// ever meet other CEC peers). Must run before [`NodeClient::new`] or
+/// AllMyStuff install: a CEC-specific home so the node control socket, identity,
+/// and state are distinct. Must run before [`NodeClient::new`] or
 /// [`ensure_node_running_pinned`], since both read the home from the environment.
+///
+/// It deliberately does *not* fork the signaling app-id: each support session is
+/// already isolated by its per-number `network_id` (`cec-<number>`), so the
+/// technician and customer meet on the default app-id with no env override.
 fn apply_cec_env() {
-    use allmystuff_cec_protocol::{CEC_HOME_ENV, CEC_TRYSTERO_APP_ID};
+    use allmystuff_cec_protocol::CEC_HOME_ENV;
 
     let home = std::env::var_os(CEC_HOME_ENV)
         .map(PathBuf::from)
@@ -88,9 +91,6 @@ fn apply_cec_env() {
     // override) unless the caller already pinned one.
     if std::env::var_os("MYOWNMESH_HOME").is_none() {
         std::env::set_var("MYOWNMESH_HOME", &home);
-    }
-    if std::env::var_os("MYOWNMESH_TRYSTERO_APP_ID").is_none() {
-        std::env::set_var("MYOWNMESH_TRYSTERO_APP_ID", CEC_TRYSTERO_APP_ID);
     }
 }
 

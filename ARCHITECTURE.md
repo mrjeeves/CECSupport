@@ -151,12 +151,14 @@ never disturbs an AllMyStuff service on the same machine.
 
 ## Isolation from other MyOwnMesh ecosystems
 
-CEC Support forks the three MyOwnMesh interop constants (see
-`allmystuff-cec-protocol`) so its traffic never lands in an AllMyStuff /
-MyOwnMesh / MyOwnLLM room and its signatures never cross-verify:
+CEC Support forks MyOwnMesh's signing tags and home dir (see
+`allmystuff-cec-protocol`) so its signatures never cross-verify against an
+AllMyStuff / MyOwnMesh / MyOwnLLM mesh and its identity + state never collide
+with an existing install. It deliberately does **not** fork the signaling
+app-id: each support session is already isolated by its per-number `network_id`
+(`cec-<number>`), which seeds a distinct room handle, so technician and customer
+meet on the default app-id with no env override.
 
-- `MYOWNMESH_TRYSTERO_APP_ID` = `cec-support-mesh-v1` (global to CEC; per-customer
-  secrecy comes from the number-derived `network_id`).
 - signing domain tags `cec-support-mesh-auth-v1:` / `cec-support-network-state-v1:`.
 - home dir via `CEC_SUPPORT_HOME` (a `MYOWNMESH_HOME` override), so identity +
   state never collide with an existing AllMyStuff install.
