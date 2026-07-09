@@ -42,7 +42,7 @@ use tauri::{Emitter, Manager, RunEvent, State};
 use tauri_plugin_autostart::ManagerExt;
 
 /// The AllMyStuff version this build pins its bundled `allmystuff-serve` at,
-/// stamped by `build.rs` from `.allmystuff-rev` (e.g. `v0.2.23`). Passed to the
+/// stamped by `build.rs` from `.allmystuff-rev` (e.g. `v0.2.25`). Passed to the
 /// node bring-up so a **reused, separately-installed** `allmystuff-serve` CEC
 /// doesn't own — e.g. one a co-installed AllMyStuff GUI started on a shared home
 /// — is asked to update itself to a version CEC can work with, the same way

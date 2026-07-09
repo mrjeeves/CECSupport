@@ -150,7 +150,7 @@ fn rev_file(sc: &Sidecar) -> PathBuf {
     repo_root().join(sc.rev_file)
 }
 
-/// The pinned AllMyStuff version from `.allmystuff-rev` (e.g. `v0.2.23`),
+/// The pinned AllMyStuff version from `.allmystuff-rev` (e.g. `v0.2.25`),
 /// trimmed. `None` for a missing or empty file (an unpinned dev build).
 fn read_allmystuff_pin() -> Option<String> {
     let path = repo_root().join(".allmystuff-rev");
