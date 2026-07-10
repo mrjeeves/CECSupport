@@ -34,7 +34,9 @@ export interface ConnectRequest {
   want_control: boolean;
   /** This dial's session id. */
   session_id: string;
-  /** The 6-digit code the customer reads back to confirm the technician. */
+  /** A 6-digit code the node still emits, kept for wire compatibility. The
+   *  approval UI no longer surfaces it — the customer confirms the technician by
+   *  the Agent Name shown ("‹Agent› is trying to connect"), not a read-out code. */
   verification_code: string;
 }
 

@@ -4,18 +4,17 @@
 
   let { request }: { request: ConnectRequest } = $props();
 
+  // "Approve once" and the 3-hour window are the two choices a customer gets.
+  // The "forever" / always-on grant is intentionally omitted for now — it's
+  // reserved for a future premier-subscriber tier that doesn't exist yet, so we
+  // don't offer it. (The wire still understands `forever`; we just don't show
+  // it.)
   const choices: { scope: ApprovalScope; label: string; hint: string; cls: string }[] = [
     { scope: "once", label: "Approve once", hint: "Just for right now", cls: "primary" },
     {
       scope: "three_hours",
       label: "Auto-approve for 3 hours",
       hint: "Handy for a repair that may need a restart",
-      cls: "",
-    },
-    {
-      scope: "forever",
-      label: "Auto-approve from now on",
-      hint: "Until you remove them in Settings",
       cls: "",
     },
   ];
@@ -37,11 +36,10 @@
       </div>
     </div>
 
-    <div class="code">
-      <span class="code-label">Verification code</span>
-      <span class="code-value">{request.verification_code}</span>
-      <span class="code-hint">Only continue if your technician reads out this same code.</span>
-    </div>
+    <p class="verify">
+      Only continue if you're expecting <strong>{request.agent_name}</strong> to connect —
+      that's the name your technician will have told you to look for.
+    </p>
 
     <div class="choices">
       {#each choices as c (c.scope)}
@@ -104,35 +102,20 @@
     line-height: 1.4;
   }
 
-  .code {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.3rem;
-    padding: 0.9rem;
+  .verify {
+    margin: 0;
+    padding: 0.8rem 0.95rem;
     border-radius: var(--r-md);
     background: var(--surface-2);
-    border: 1px dashed var(--line-strong);
-  }
-  .code-label {
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: var(--ink-faint);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-  .code-value {
-    font-family: var(--mono);
-    font-size: 1.9rem;
-    font-weight: 700;
-    letter-spacing: 0.24em;
-    color: var(--ink);
-  }
-  .code-hint {
-    font-size: 0.82rem;
+    border: 1px solid var(--line);
+    font-size: 0.9rem;
     color: var(--ink-soft);
     text-align: center;
-    line-height: 1.35;
+    line-height: 1.4;
+  }
+  .verify strong {
+    color: var(--ink);
+    font-weight: 650;
   }
 
   .choices {
