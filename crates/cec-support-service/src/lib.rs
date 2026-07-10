@@ -383,11 +383,21 @@ mod launchd {
 
 #[cfg(windows)]
 mod windows {
+    use std::os::windows::process::CommandExt;
+
     use super::*;
+
+    /// `sc.exe` is a console program; spawned from the `windows_subsystem =
+    /// "windows"` GUI (which has no console of its own) each call would flash
+    /// a terminal window. CREATE_NO_WINDOW keeps every invocation invisible —
+    /// the GUI polls `is_installed` at startup, so without it the app opens
+    /// with console flicker.
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
     pub(super) fn is_installed() -> bool {
         std::process::Command::new("sc")
             .args(["query", WINDOWS_SERVICE_NAME])
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false)
@@ -443,6 +453,7 @@ mod windows {
     fn sc(args: &[&str]) -> Result<()> {
         let status = std::process::Command::new("sc")
             .args(args)
+            .creation_flags(CREATE_NO_WINDOW)
             .status()
             .context("running sc.exe (run as Administrator)")?;
         if !status.success() {

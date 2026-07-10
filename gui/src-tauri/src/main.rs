@@ -444,6 +444,14 @@ async fn run_event_pump(app: tauri::AppHandle, node: Arc<NodeClient>) {
     loop {
         // A client doesn't require whichever app spawned the engine: nothing
         // answering the socket means it's our turn to bring the stack up.
+        // Probe with patience first — a serve that is *starting* (spawned,
+        // socket not bound yet) must not read as "gone": respawning over it
+        // would kill-on-drop the very child being waited on, and the stack
+        // would flap spawn/kill forever. Only a socket that stays dead across
+        // the whole grace window is really gone.
+        if !NodeClient::probe().await {
+            wait_for_node().await;
+        }
         if !NodeClient::probe().await {
             tracing::info!("node is gone — bringing the shared stack back up");
             match ensure_node_running_pinned(ALLMYSTUFF_PIN).await {
