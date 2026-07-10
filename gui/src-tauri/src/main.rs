@@ -14,9 +14,10 @@
 //! ```
 //!
 //! Like AllMyStuff's GUI, the Rust side is a **thin client of the per-machine
-//! node**: it brings up (or reuses) an `allmystuff-serve` node — here forced
-//! into CEC-isolated mode via [`apply_cec_env`] so it never collides with an
-//! AllMyStuff install — and drives it over the node control socket. Every
+//! node**: it brings up (or reuses) the *same* `allmystuff-serve` stack an
+//! AllMyStuff install runs — one `myownmesh` daemon, one node, one identity
+//! per machine; the apps are layered clients of that shared engine, not
+//! silos — and drives it over the node control socket. Every
 //! `cec_*` Tauri command is one short request; the node's `cec://*` events are
 //! re-emitted onto Tauri's bus so the Svelte front-end sees them live.
 //!
@@ -60,11 +61,14 @@ struct AppState {
 }
 
 // ---------------------------------------------------------------------------
-// CEC isolation
+// CEC environment
 // ---------------------------------------------------------------------------
 
-/// A CEC-specific home dir, so identity + rosters + the node socket never
-/// collide with an AllMyStuff / MyOwnMesh install on the same machine.
+/// CEC Support's own app-file home (service state, logs). The **mesh stack is
+/// deliberately not here**: the daemon, the node, their sockets, and the
+/// machine identity all live in the shared `~/.myownmesh` home, because CEC is
+/// a client of the same per-machine engine AllMyStuff runs — the two apps must
+/// address the same stack to ride (or bring up) the same node.
 fn default_cec_home() -> PathBuf {
     dirs::data_dir()
         .map(|d| d.join("CEC Support"))
@@ -72,35 +76,26 @@ fn default_cec_home() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(".cec-support"))
 }
 
-/// Force the reused AllMyStuff node into **CEC client mode**, isolated from any
-/// AllMyStuff install: a CEC-specific home so the node control socket, identity,
-/// and state are distinct. Must run before [`NodeClient::new`] or
-/// [`ensure_node_running_pinned`], since both read the home from the environment.
+/// Prepare the environment for the shared per-machine stack. CEC Support is a
+/// *client* of the same engine AllMyStuff runs — one `myownmesh` daemon, one
+/// `allmystuff-serve`, shared control sockets, one identity per machine — so
+/// this deliberately does **not** fork `MYOWNMESH_HOME`. (It used to, which
+/// split identity/state into a CEC-private silo while the Windows control
+/// pipes stayed shared: the app then only worked when AllMyStuff had already
+/// brought the stack up under the real home.)
 ///
-/// It deliberately does *not* fork the signaling app-id: each support session is
-/// already isolated by its per-number `network_id` (`cec-<number>`), so the
-/// technician and customer meet on the **default** app-id with no env override.
-/// It goes further and *clears* any inherited `MYOWNMESH_TRYSTERO_APP_ID`: the
-/// room handle is `SHA-256(app_id : network_id)`, so a stray override in the
-/// shell (e.g. left over from old debugging) would fork the customer's whole
-/// daemon into a private room the technician never computes — and the dial would
-/// silently never connect. CEC never wants a forked app-id, so we force default.
+/// It still clears any inherited `MYOWNMESH_TRYSTERO_APP_ID`: the room handle
+/// is `SHA-256(app_id : network_id)`, so a stray override in the shell would
+/// fork this daemon's rendezvous space and the dial would silently never
+/// connect. CEC always wants the default app-id.
 fn apply_cec_env() {
     use allmystuff_cec_protocol::CEC_HOME_ENV;
 
+    // CEC's own app files keep their home; the mesh home is untouched.
     let home = std::env::var_os(CEC_HOME_ENV)
         .map(PathBuf::from)
         .unwrap_or_else(default_cec_home);
     std::env::set_var(CEC_HOME_ENV, &home);
-    // Point the node + myownmesh daemon at the CEC home (a MYOWNMESH_HOME
-    // override) unless the caller already pinned one.
-    if std::env::var_os("MYOWNMESH_HOME").is_none() {
-        std::env::set_var("MYOWNMESH_HOME", &home);
-    }
-    // Pin the customer to the default signaling app-id. A stray
-    // MYOWNMESH_TRYSTERO_APP_ID inherited from the environment would fork the
-    // daemon's rendezvous space and make the technician's dial land in a
-    // different room — clear it so CEC always meets on the default.
     std::env::remove_var("MYOWNMESH_TRYSTERO_APP_ID");
 }
 
@@ -441,10 +436,30 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 
 /// Subscribe to the node's event stream and re-emit each event on Tauri's bus,
 /// so the Svelte front-end sees the `cec://*` events live. Reconnects if the
-/// node restarts.
+/// node restarts — and if the node is *gone* (the app that spawned it exited,
+/// taking the kill-on-close serve with it), brings the shared stack back up
+/// itself and re-hosts, so this app keeps working solo or side by side.
 async fn run_event_pump(app: tauri::AppHandle, node: Arc<NodeClient>) {
     use tokio::sync::mpsc;
     loop {
+        // A client doesn't require whichever app spawned the engine: nothing
+        // answering the socket means it's our turn to bring the stack up.
+        if !NodeClient::probe().await {
+            tracing::info!("node is gone — bringing the shared stack back up");
+            match ensure_node_running_pinned(ALLMYSTUFF_PIN).await {
+                Ok(Some(child)) => {
+                    app.state::<AppState>().node_child.lock().replace(child);
+                }
+                Ok(None) => {}
+                Err(e) => tracing::warn!("couldn't bring the node back up: {e:#}"),
+            }
+            wait_for_node().await;
+            // A fresh serve isn't hosting: re-advertise so this machine stays
+            // dialable (idempotent when the room is already joined).
+            if let Err(e) = node.request("cec_start_hosting", json!({})).await {
+                tracing::warn!("cec_start_hosting after node respawn failed: {e:#}");
+            }
+        }
         let (tx, mut rx) = mpsc::channel::<NodeEvent>(256);
         if let Err(e) = node.subscribe_events(tx).await {
             tracing::warn!("node event subscribe failed: {e:#}; retrying");
@@ -533,9 +548,11 @@ fn run_gui() -> ExitCode {
 
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                // One node per machine (CEC-isolated home): reuse a running CEC
-                // service node, else spawn a transient one tied to this app.
-                // The pin keeps a reused, not-ours node current to what CEC needs.
+                // One node per machine, shared with AllMyStuff: reuse whatever
+                // is already serving the control socket (an AllMyStuff GUI's
+                // node, a service node), else spawn a transient one tied to
+                // this app. The pin keeps a reused, not-ours node current to
+                // what CEC needs.
                 match ensure_node_running_pinned(ALLMYSTUFF_PIN).await {
                     Ok(child) => {
                         if let Some(c) = child {
@@ -705,8 +722,8 @@ COMMANDS:
 }
 
 fn main() -> ExitCode {
-    // Every path shares CEC's isolated home + signaling app-id, resolved before
-    // any node socket is addressed.
+    // Every path resolves the CEC app home + clears any stray app-id override
+    // before the shared node socket is addressed.
     apply_cec_env();
 
     // Elevated Windows service action: `<exe> --service-do <verb>` — run the

@@ -149,32 +149,35 @@ heard of AllMyStuff still gets a self-contained app. Its background service uses
 its **own** identity (`cec-support-service`, service name `CECSupport`) so it
 never disturbs an AllMyStuff service on the same machine.
 
-## Isolation from other MyOwnMesh ecosystems
+## One stack per machine — layered clients, not silos
 
-CEC Support forks MyOwnMesh's signing tags and home dir (see
-`allmystuff-cec-protocol`) so its signatures never cross-verify against an
-AllMyStuff / MyOwnMesh / MyOwnLLM mesh and its identity + state never collide
-with an existing install. It deliberately does **not** fork the signaling
-app-id: each support session is already isolated by its per-number `network_id`
-(`cec-<number>`), which seeds a distinct room handle, so technician and customer
-meet on the default app-id with no env override.
+CEC Support, AllMyStuff, and MyOwnMesh are **layers of one engine**: MyOwnMesh
+is the mesh daemon, `allmystuff-serve` is the node riding it, and each app is a
+client of that same per-machine stack over the shared control sockets. CEC
+Support does **not** fork `MYOWNMESH_HOME`, the signaling app-id, or the
+machine identity — one daemon, one node, one device id, whichever app brought
+it up. Either app runs solo (it spawns the stack itself) or side by side (it
+reuses the running one); neither requires the other's GUI. Per-session privacy
+comes from the number-derived `network_id` (`cec-<number>`), which seeds each
+support session's own room handle — not from siloing the apps.
 
-- signing domain tags `cec-support-mesh-auth-v1:` / `cec-support-network-state-v1:`.
-- home dir via `CEC_SUPPORT_HOME` (a `MYOWNMESH_HOME` override), so identity +
-  state never collide with an existing AllMyStuff install.
+`CEC_SUPPORT_HOME` holds only CEC's **own app files** (service state, logs);
+the mesh stack's home stays the shared `~/.myownmesh`.
 
 ## Persistent state
 
-Under `CEC_SUPPORT_HOME` (default a CEC-specific dir, e.g.
-`%LOCALAPPDATA%\CEC Support` on Windows):
+Mesh state lives in the shared `~/.myownmesh` home (`MYOWNMESH_HOME`):
 
-- `.secrets/identity.json` (0600) — the device ed25519 key; the number is
-  derived from it.
+- `.secrets/identity.json` (0600) — the machine's ed25519 key; the Support
+  number is derived from it (one identity per machine, shared with AllMyStuff).
 - the consent store (0600) — persistent grants (3-hours + Forever), written
   atomically; a corrupt file is quarantined, never fatal.
 - Transient "currently reachable / in a session" state is re-asserted each run,
   never persisted — so a machine is never silently reachable across reboots
   unless the customer installed the service.
+
+CEC's own app files (service state, logs) live under `CEC_SUPPORT_HOME`
+(default e.g. `%LOCALAPPDATA%\CEC Support` on Windows).
 
 ## Crate / component map
 

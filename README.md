@@ -59,9 +59,11 @@ Plus its **own** OS-service installer, `crates/cec-support-service` (in this
 repo), under its own service identity so installing the background service never
 touches an AllMyStuff install on the same machine.
 
-The client sets a CEC-specific home (`CEC_SUPPORT_HOME` → `MYOWNMESH_HOME`) and
-CEC's forked signaling app-id before bringing the node up, so its node socket,
-identity, and traffic are isolated from any AllMyStuff/MyOwnMesh install.
+The client rides the **same per-machine stack** an AllMyStuff install runs —
+one `myownmesh` daemon, one `allmystuff-serve`, shared control sockets, one
+machine identity. It reuses a running node or brings the stack up itself, so it
+works solo or side by side with AllMyStuff; per-session privacy comes from each
+support number's own room, not from siloing the apps.
 
 ## Install — a normal Windows app
 
