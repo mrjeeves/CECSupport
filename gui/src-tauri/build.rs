@@ -384,8 +384,26 @@ fn download_release_asset(sc: &Sidecar, tag: &str, staging: &Path) -> Result<Pat
     let archive = staging.join(&asset);
     let _ = fs::remove_file(&archive);
 
+    // Say so before going to the network: this step is why a build can sit on
+    // the final crate for a while, and without the line it reads as a hang.
+    println!("cargo:warning=[{}] downloading {asset} from {} {tag}…", sc.base, sc.repo);
+    // Bounded fetch: a stalled connection must fail the step, not wedge the
+    // whole build indefinitely (--retry would otherwise multiply the wait).
+    // On timeout/failure a dev build falls back to the stub path and keeps
+    // building; a release build still hard-fails via CEC_REQUIRE_SIDECARS.
     let status = Command::new("curl")
-        .args(["-fSL", "--retry", "3", "-o"])
+        .args([
+            "-fSL",
+            "--connect-timeout",
+            "15",
+            "--max-time",
+            "120",
+            "--retry",
+            "3",
+            "--retry-max-time",
+            "180",
+            "-o",
+        ])
         .arg(&archive)
         .arg(&url)
         .status()
