@@ -99,6 +99,29 @@ fn apply_cec_env() {
     std::env::remove_var("MYOWNMESH_TRYSTERO_APP_ID");
 }
 
+/// Open the on-disk log at `<CEC home>/logs/cec-support.log`, shifting a file
+/// past ~5 MB to `.old` first (one generation — history without unbounded
+/// growth). `None` (unwritable dir, no home) means stdout-only logging.
+/// Relies on [`apply_cec_env`] having resolved the home already.
+fn open_log_file() -> Option<std::fs::File> {
+    let home = std::env::var_os(allmystuff_cec_protocol::CEC_HOME_ENV).map(PathBuf::from)?;
+    let dir = home.join("logs");
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join("cec-support.log");
+    if let Ok(meta) = std::fs::metadata(&path) {
+        if meta.len() > 5 * 1024 * 1024 {
+            let old = dir.join("cec-support.log.old");
+            let _ = std::fs::remove_file(&old);
+            let _ = std::fs::rename(&path, &old);
+        }
+    }
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .ok()
+}
+
 // ---------------------------------------------------------------------------
 // CEC node-control commands (the fixed contract the sibling node implements)
 // ---------------------------------------------------------------------------
@@ -754,10 +777,23 @@ fn main() -> ExitCode {
     }
 
     let log = std::env::var("CEC_SUPPORT_LOG").unwrap_or_else(|_| "info,cec_support=info".into());
-    tracing_subscriber::fmt()
+    // Tee the log to a file under the CEC home: a `windows_subsystem =
+    // "windows"` build has no console, so without this an installed app leaves
+    // no evidence when something goes wrong. Any file trouble falls back to
+    // stdout-only — logging must never block startup.
+    let builder = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::new(log))
-        .with_target(false)
-        .init();
+        .with_target(false);
+    match open_log_file() {
+        Some(file) => {
+            use tracing_subscriber::fmt::writer::MakeWriterExt;
+            builder
+                .with_ansi(false)
+                .with_writer(std::io::stdout.and(std::sync::Arc::new(file)))
+                .init();
+        }
+        None => builder.init(),
+    }
 
     let args: Vec<String> = std::env::args().skip(1).collect();
 
