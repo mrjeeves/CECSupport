@@ -165,18 +165,31 @@ fn bundle_sidecar(sc: &Sidecar) -> Result<(), String> {
     fs::create_dir_all(&bin_dir).map_err(|e| e.to_string())?;
     let slot = slot_path(sc);
     let sentinel = bin_dir.join(format!(".bundled-{}", sc.base));
+    // Release mode (`CEC_REQUIRE_SIDECARS`, set by release.yml *and* `just
+    // gui-build`): hermetic sidecars. Only the pinned, checksum-verified
+    // release asset may fill the slot — never a sibling checkout or whatever
+    // binary happens to be lying on the build machine. Dev mode keeps the
+    // sibling convenience, but every staged binary still has to prove itself
+    // (see [`verify_slot`]) before the build stamps it.
+    let release_mode = env::var_os("CEC_REQUIRE_SIDECARS").is_some();
+    let pin = read_pin(sc).as_deref().and_then(parse_semver);
 
     if env::var_os("CEC_SKIP_SIDECAR").is_some() {
         return Err("CEC_SKIP_SIDECAR set".into());
     }
 
-    // 1. Explicit override.
+    // 1. Explicit override — a deliberate human act, honored in both modes,
+    //    but verified like every other source.
     if let Ok(p) = env::var(sc.bin_env) {
         let p = PathBuf::from(p);
         if nonempty_file(&p) {
             let sig = format!("bin:{}:{}", p.display(), file_mtime(&p));
-            if !staged_matches(&slot, &sentinel, &sig) {
+            let fresh = !staged_matches(&slot, &sentinel, &sig);
+            if fresh {
                 stage(&p, &slot)?;
+            }
+            verify_slot(sc, &slot, pin, false)?;
+            if fresh {
                 let _ = fs::write(&sentinel, &sig);
                 println!("cargo:warning=[{}] bundled from {}", sc.base, sc.bin_env);
             }
@@ -185,36 +198,44 @@ fn bundle_sidecar(sc: &Sidecar) -> Result<(), String> {
     }
 
     // 2. Sibling checkout (matching the current build profile) — the all-repos
-    //    dev loop. Watch the picked binary so rebuilding the sidecar in its own
-    //    repo re-runs this script and re-stages, with no change needed on the
-    //    CEC side (otherwise a `just dev` here keeps serving the last stage).
-    if let Some(p) = sibling_binary(sc) {
-        // Watch the picked binary either way, so rebuilding the sibling (which
-        // may bring it up to the pin) re-runs this script and re-stages.
-        println!("cargo:rerun-if-changed={}", p.display());
-        if sibling_is_current(sc, &p) {
-            let sig = format!("sib:{}:{}", p.display(), file_mtime(&p));
-            if !staged_matches(&slot, &sentinel, &sig) {
-                stage(&p, &slot)?;
-                let _ = fs::write(&sentinel, &sig);
-                println!(
-                    "cargo:warning=[{}] bundled from sibling {} checkout",
-                    sc.base, sc.sibling_repo
-                );
+    //    dev loop. DEV ONLY: a release build must be reproducible from the pin,
+    //    not from the state of a neighbouring checkout. Watch the picked binary
+    //    so rebuilding the sidecar in its own repo re-runs this script and
+    //    re-stages.
+    if !release_mode {
+        if let Some(p) = sibling_binary(sc) {
+            println!("cargo:rerun-if-changed={}", p.display());
+            if sibling_is_current(sc, &p) {
+                let sig = format!("sib:{}:{}", p.display(), file_mtime(&p));
+                let fresh = !staged_matches(&slot, &sentinel, &sig);
+                if fresh {
+                    stage(&p, &slot)?;
+                }
+                verify_slot(sc, &slot, pin, false)?;
+                if fresh {
+                    let _ = fs::write(&sentinel, &sig);
+                    println!(
+                        "cargo:warning=[{}] bundled from sibling {} checkout",
+                        sc.base, sc.sibling_repo
+                    );
+                }
+                return Ok(());
             }
-            return Ok(());
+            // A sibling older than the pin (or one that wouldn't state its
+            // version) must not shadow the pinned release — that's what
+            // bundled a stale/wedged node into `just dev`. Fall through to
+            // the pinned download; rebuild the sibling to use it again.
+            println!(
+                "cargo:warning=[{}] sibling {} checkout is not usable at the {} pin — \
+                 fetching the pinned release instead (update+rebuild the sibling to use it)",
+                sc.base, sc.sibling_repo, sc.rev_file
+            );
         }
-        // A sibling *older than the pin* must not shadow the pinned release —
-        // that's what silently bundled a stale node into `just dev`. Fall through
-        // to the release download; rebuild/update the sibling to use it again.
-        println!(
-            "cargo:warning=[{}] sibling {} checkout is older than the {} pin — \
-             fetching the pinned release instead (update+rebuild the sibling to use it)",
-            sc.base, sc.sibling_repo, sc.rev_file
-        );
     }
 
-    // 3. Prebuilt release asset for the pinned tag.
+    // 3. Prebuilt release asset for the pinned tag — the only source a release
+    //    build accepts. Checksum-verified in download_release_asset; version-
+    //    verified (exact match to the pin) before the sentinel is stamped.
     let rev = fs::read_to_string(rev_file(sc))
         .map(|s| s.trim().to_string())
         .ok()
@@ -222,6 +243,7 @@ fn bundle_sidecar(sc: &Sidecar) -> Result<(), String> {
         .ok_or_else(|| format!("no {} pin and no override/sibling binary", sc.rev_file))?;
     let sig = format!("rev:{rev}");
     if staged_matches(&slot, &sentinel, &sig) {
+        verify_slot(sc, &slot, pin, true)?;
         return Ok(());
     }
     let out_dir = PathBuf::from(env::var("OUT_DIR").map_err(|e| e.to_string())?);
@@ -230,6 +252,7 @@ fn bundle_sidecar(sc: &Sidecar) -> Result<(), String> {
 
     let staged_bin = download_release_asset(sc, &rev, &staging)?;
     stage(&staged_bin, &slot)?;
+    verify_slot(sc, &slot, pin, true)?;
     let _ = fs::write(&sentinel, &sig);
     println!(
         "cargo:warning=[{}] sidecar ready ({} bytes) from {} {rev}",
@@ -237,6 +260,40 @@ fn bundle_sidecar(sc: &Sidecar) -> Result<(), String> {
         fs::metadata(&slot).map(|m| m.len()).unwrap_or(0),
         sc.repo
     );
+    Ok(())
+}
+
+/// The staged slot must prove itself before the build stamps it: answer
+/// `--version` (bounded — see [`binary_version`]) and satisfy the pin, `>=`
+/// for dev sources (a dev sibling legitimately runs ahead) or `==` for a
+/// pinned download. On failure the slot is deleted so a bad binary can't
+/// linger for a later build (or the runtime's dev-slot lookup) to find. This
+/// is the invariant that makes a green build mean "runnable sidecars at the
+/// pinned versions": a wedged, corrupt, or ancient binary can never ship.
+fn verify_slot(
+    sc: &Sidecar,
+    slot: &Path,
+    pin: Option<(u64, u64, u64)>,
+    exact: bool,
+) -> Result<(), String> {
+    let Some(have) = binary_version(slot) else {
+        let _ = fs::remove_file(slot);
+        return Err(format!(
+            "staged {} wouldn't report a version — refusing to bundle it",
+            sc.base
+        ));
+    };
+    if let Some(want) = pin {
+        let ok = if exact { have == want } else { have >= want };
+        if !ok {
+            let _ = fs::remove_file(slot);
+            let rel = if exact { "exactly" } else { "at least" };
+            return Err(format!(
+                "staged {} is v{}.{}.{} but the pin wants {rel} v{}.{}.{}",
+                sc.base, have.0, have.1, have.2, want.0, want.1, want.2
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -306,7 +363,19 @@ fn sibling_is_current(sc: &Sidecar, bin: &Path) -> bool {
     };
     match binary_version(bin) {
         Some(have) => have >= want,
-        None => true, // couldn't read a version — don't punish the dev loop
+        None => {
+            // A binary that can't state its version can't be trusted to run a
+            // mesh either (wedged, corrupt, ancient). With a pinned release
+            // available, never bundle an unverifiable sibling — leniency here
+            // is exactly how a broken sibling exe became "app stuck at
+            // Starting up".
+            println!(
+                "cargo:warning=[{}] sibling {} wouldn't report a version — rejecting it",
+                sc.base,
+                bin.display()
+            );
+            false
+        }
     }
 }
 
@@ -374,8 +443,7 @@ fn binary_version(bin: &Path) -> Option<(u64, u64, u64)> {
                     let _ = child.kill();
                     let _ = child.wait();
                     println!(
-                        "cargo:warning={} --version didn't answer within 5s — killed it; \
-                         treating the sibling as current",
+                        "cargo:warning={} --version didn't answer within 5s — killed it",
                         bin.display()
                     );
                     return None;
@@ -407,6 +475,84 @@ fn release_platform_name(triple: &str) -> Result<&'static str, String> {
 /// Download + extract `<base>-<platform>.{tar.gz,zip}` for `tag`, returning the
 /// path to the extracted binary. Shells out to `curl` + `tar` / `Expand-Archive`
 /// so the build needs no extra crates.
+/// Run a staging subprocess with a hard deadline, killing it on overrun.
+/// Everything build.rs shells out to must be bounded — an unbounded child
+/// hangs the whole build at the final crate with no output.
+fn run_bounded(
+    cmd: &mut Command,
+    what: &str,
+    secs: u64,
+) -> Result<std::process::Output, String> {
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| format!("{what} spawn failed: {e}"))?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                return child
+                    .wait_with_output()
+                    .map_err(|e| format!("{what} output: {e}"));
+            }
+            Ok(None) => {
+                if std::time::Instant::now() > deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!("{what} didn't finish within {secs}s — killed"));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("{what} wait failed: {e}"));
+            }
+        }
+    }
+}
+
+/// Verify a downloaded archive against the `<asset>.sha256` its release
+/// publishes. Fails closed: no readable checksum, no bundle — a release
+/// asset without its checksum is as suspect as a mismatch.
+fn verify_archive_sha256(archive: &Path, url: &str) -> Result<(), String> {
+    let sha_url = format!("{url}.sha256");
+    let out = run_bounded(
+        Command::new("curl").args([
+            "-fSL",
+            "--connect-timeout",
+            "15",
+            "--max-time",
+            "30",
+            &sha_url,
+        ]),
+        "sha256 fetch",
+        45,
+    )?;
+    if !out.status.success() {
+        return Err(format!("couldn't fetch {sha_url} to verify the download"));
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let want = text.split_whitespace().next().unwrap_or("").to_lowercase();
+    if want.len() != 64 || !want.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(format!("{sha_url} didn't contain a sha256"));
+    }
+    let bytes = fs::read(archive).map_err(|e| e.to_string())?;
+    let got = {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(&bytes);
+        format!("{:x}", h.finalize())
+    };
+    if got != want {
+        return Err(format!(
+            "sha256 mismatch for {} (expected {want}, got {got}) — refusing the download",
+            archive.display()
+        ));
+    }
+    Ok(())
+}
+
 fn download_release_asset(sc: &Sidecar, tag: &str, staging: &Path) -> Result<PathBuf, String> {
     let triple = target_triple();
     let platform = release_platform_name(&triple)?;
@@ -447,17 +593,23 @@ fn download_release_asset(sc: &Sidecar, tag: &str, staging: &Path) -> Result<Pat
     if fs::metadata(&archive).map(|m| m.len()).unwrap_or(0) == 0 {
         return Err("downloaded archive is empty".into());
     }
+    // The release publishes `<asset>.sha256` — verify before trusting the
+    // bytes. A proxy error page or truncated download must never become the
+    // bundled mesh engine.
+    verify_archive_sha256(&archive, &url)?;
 
     if windows {
-        let out = Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command"])
-            .arg(format!(
-                "Expand-Archive -Force -Path '{}' -DestinationPath '{}'",
-                archive.display(),
-                staging.display()
-            ))
-            .output()
-            .map_err(|e| format!("Expand-Archive spawn failed: {e}"))?;
+        let out = run_bounded(
+            Command::new("powershell")
+                .args(["-NoProfile", "-NonInteractive", "-Command"])
+                .arg(format!(
+                    "Expand-Archive -Force -Path '{}' -DestinationPath '{}'",
+                    archive.display(),
+                    staging.display()
+                )),
+            "Expand-Archive",
+            60,
+        )?;
         if !out.status.success() {
             return Err(format!(
                 "Expand-Archive failed: {}",
@@ -465,13 +617,11 @@ fn download_release_asset(sc: &Sidecar, tag: &str, staging: &Path) -> Result<Pat
             ));
         }
     } else {
-        let out = Command::new("tar")
-            .arg("-xzf")
-            .arg(&archive)
-            .arg("-C")
-            .arg(staging)
-            .output()
-            .map_err(|e| format!("tar spawn failed: {e}"))?;
+        let out = run_bounded(
+            Command::new("tar").arg("-xzf").arg(&archive).arg("-C").arg(staging),
+            "tar",
+            60,
+        )?;
         if !out.status.success() {
             return Err(format!(
                 "tar failed: {}",
