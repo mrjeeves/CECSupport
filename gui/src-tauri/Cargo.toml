@@ -31,6 +31,9 @@ path = "src/main.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+# Sidecar download verification: build.rs checks each fetched release asset
+# against its published `.sha256` before bundling it.
+sha2 = "0.10"
 
 [dependencies]
 # `tray-icon` keeps CEC Support reachable from the notification area while it

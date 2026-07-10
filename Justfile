@@ -63,15 +63,19 @@ build-release:
 
 # Build the desktop installer: the NSIS `setup.exe` + `.msi` on Windows (what a
 # customer downloads), or the `.deb`/`.AppImage`/`.dmg` on Linux/macOS.
+# CEC_REQUIRE_SIDECARS=1 makes a local installer build behave exactly like CI:
+# hermetic sidecars — only the pinned, checksum-verified release assets are
+# bundled (never a sibling checkout or stray binary), and a sidecar that can't
+# be fetched+verified fails the build loudly instead of stamping a stub.
 [unix]
-[doc("Build the desktop installer bundle.")]
+[doc("Build the desktop installer bundle (hermetic sidecars, like CI).")]
 gui-build:
-    @cd gui && pnpm install --silent && pnpm tauri build
+    @cd gui && pnpm install --silent && CEC_REQUIRE_SIDECARS=1 pnpm tauri build
 
 [windows]
-[doc("Build the desktop installer bundle.")]
+[doc("Build the desktop installer bundle (hermetic sidecars, like CI).")]
 gui-build:
-    @cd gui; pnpm install --silent; pnpm tauri build
+    @cd gui; pnpm install --silent; $env:CEC_REQUIRE_SIDECARS='1'; pnpm tauri build
 
 # Print this computer's CEC Support number — the code a customer reads out to
 # their technician. Runs the `cec-support` binary's CLI (needs the full
