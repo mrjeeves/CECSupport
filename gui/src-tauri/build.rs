@@ -338,24 +338,57 @@ fn parse_semver(s: &str) -> Option<(u64, u64, u64)> {
 
 /// `<bin> --version` parsed to `(major, minor, patch)` — the first `X.Y.Z` token
 /// in its output (e.g. `allmystuff-serve 0.2.26`). `None` if the binary won't
-/// run or prints nothing parseable. Runs only in the dev path (a sibling exists
-/// only in an all-repos checkout), and `--version` is a one-shot CLI verb, so it
-/// returns immediately.
+/// run, prints nothing parseable, or doesn't answer in time.
+///
+/// **Bounded**: this step executes a foreign binary during the build, and a
+/// sibling that wedges at startup (AV interference, a lock held by a running
+/// daemon) would otherwise hang the whole build at the final crate with no
+/// output. Poll up to 5s, then kill it and treat the sibling as current —
+/// `--version` is a one-shot CLI verb, so a healthy binary answers instantly.
 fn binary_version(bin: &Path) -> Option<(u64, u64, u64)> {
     let mut cmd = Command::new(bin);
-    cmd.arg("--version");
+    cmd.arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
-    let out = cmd.output().ok()?;
-    if !out.status.success() {
-        return None;
+    let mut child = cmd.spawn().ok()?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    return None;
+                }
+                use std::io::Read;
+                let mut s = String::new();
+                child.stdout.take()?.read_to_string(&mut s).ok()?;
+                return s.split_whitespace().find_map(parse_semver);
+            }
+            Ok(None) => {
+                if std::time::Instant::now() > deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    println!(
+                        "cargo:warning={} --version didn't answer within 5s — killed it; \
+                         treating the sibling as current",
+                        bin.display()
+                    );
+                    return None;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
     }
-    String::from_utf8_lossy(&out.stdout)
-        .split_whitespace()
-        .find_map(parse_semver)
 }
 
 /// GitHub release platform name for a Rust target triple (matches the asset
