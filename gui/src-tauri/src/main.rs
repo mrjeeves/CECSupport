@@ -79,7 +79,12 @@ fn default_cec_home() -> PathBuf {
 ///
 /// It deliberately does *not* fork the signaling app-id: each support session is
 /// already isolated by its per-number `network_id` (`cec-<number>`), so the
-/// technician and customer meet on the default app-id with no env override.
+/// technician and customer meet on the **default** app-id with no env override.
+/// It goes further and *clears* any inherited `MYOWNMESH_TRYSTERO_APP_ID`: the
+/// room handle is `SHA-256(app_id : network_id)`, so a stray override in the
+/// shell (e.g. left over from old debugging) would fork the customer's whole
+/// daemon into a private room the technician never computes — and the dial would
+/// silently never connect. CEC never wants a forked app-id, so we force default.
 fn apply_cec_env() {
     use allmystuff_cec_protocol::CEC_HOME_ENV;
 
@@ -92,6 +97,11 @@ fn apply_cec_env() {
     if std::env::var_os("MYOWNMESH_HOME").is_none() {
         std::env::set_var("MYOWNMESH_HOME", &home);
     }
+    // Pin the customer to the default signaling app-id. A stray
+    // MYOWNMESH_TRYSTERO_APP_ID inherited from the environment would fork the
+    // daemon's rendezvous space and make the technician's dial land in a
+    // different room — clear it so CEC always meets on the default.
+    std::env::remove_var("MYOWNMESH_TRYSTERO_APP_ID");
 }
 
 // ---------------------------------------------------------------------------
