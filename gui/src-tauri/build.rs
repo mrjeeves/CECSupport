@@ -189,17 +189,29 @@ fn bundle_sidecar(sc: &Sidecar) -> Result<(), String> {
     //    repo re-runs this script and re-stages, with no change needed on the
     //    CEC side (otherwise a `just dev` here keeps serving the last stage).
     if let Some(p) = sibling_binary(sc) {
+        // Watch the picked binary either way, so rebuilding the sibling (which
+        // may bring it up to the pin) re-runs this script and re-stages.
         println!("cargo:rerun-if-changed={}", p.display());
-        let sig = format!("sib:{}:{}", p.display(), file_mtime(&p));
-        if !staged_matches(&slot, &sentinel, &sig) {
-            stage(&p, &slot)?;
-            let _ = fs::write(&sentinel, &sig);
-            println!(
-                "cargo:warning=[{}] bundled from sibling {} checkout",
-                sc.base, sc.sibling_repo
-            );
+        if sibling_is_current(sc, &p) {
+            let sig = format!("sib:{}:{}", p.display(), file_mtime(&p));
+            if !staged_matches(&slot, &sentinel, &sig) {
+                stage(&p, &slot)?;
+                let _ = fs::write(&sentinel, &sig);
+                println!(
+                    "cargo:warning=[{}] bundled from sibling {} checkout",
+                    sc.base, sc.sibling_repo
+                );
+            }
+            return Ok(());
         }
-        return Ok(());
+        // A sibling *older than the pin* must not shadow the pinned release —
+        // that's what silently bundled a stale node into `just dev`. Fall through
+        // to the release download; rebuild/update the sibling to use it again.
+        println!(
+            "cargo:warning=[{}] sibling {} checkout is older than the {} pin — \
+             fetching the pinned release instead (update+rebuild the sibling to use it)",
+            sc.base, sc.sibling_repo, sc.rev_file
+        );
     }
 
     // 3. Prebuilt release asset for the pinned tag.
@@ -279,6 +291,71 @@ fn sibling_binary(sc: &Sidecar) -> Option<PathBuf> {
         target.join(other).join(&name),
     ];
     candidates.into_iter().find(|p| nonempty_file(p))
+}
+
+/// Whether a sibling binary is new enough to bundle: its `--version` is at or
+/// above the pinned release named in `rev_file`. A missing / non-semver pin (a
+/// sha or branch) or an unreadable `--version` returns `true` — we trust the
+/// sibling rather than break a dev loop; only a *confident* "older than the pin"
+/// (both sides parse, sibling is behind) demotes it to the pinned download. This
+/// is what stops a forgotten, stale sibling checkout from shadowing the pin and
+/// bundling an old node into `just dev`.
+fn sibling_is_current(sc: &Sidecar, bin: &Path) -> bool {
+    let Some(want) = read_pin(sc).as_deref().and_then(parse_semver) else {
+        return true; // no comparable pin — keep the sibling
+    };
+    match binary_version(bin) {
+        Some(have) => have >= want,
+        None => true, // couldn't read a version — don't punish the dev loop
+    }
+}
+
+/// A sidecar's pinned tag from its `rev_file`, trimmed; `None` if missing/empty.
+fn read_pin(sc: &Sidecar) -> Option<String> {
+    let raw = fs::read_to_string(rev_file(sc)).ok()?;
+    let pin = raw.trim().to_string();
+    (!pin.is_empty()).then_some(pin)
+}
+
+/// Parse a `vX.Y.Z` / `X.Y.Z` tag into a comparable tuple. `None` for a
+/// non-release pin (a commit sha or branch name), which can't be ordered.
+fn parse_semver(s: &str) -> Option<(u64, u64, u64)> {
+    let s = s.trim();
+    let s = s.strip_prefix('v').unwrap_or(s);
+    let mut it = s.split('.');
+    let major = it.next()?.parse().ok()?;
+    let minor = it.next()?.parse().ok()?;
+    // The patch field may carry a pre-release/build suffix (e.g. "3-rc1"); take
+    // its leading digits only.
+    let patch = it
+        .next()?
+        .split(|c: char| !c.is_ascii_digit())
+        .next()?
+        .parse()
+        .ok()?;
+    Some((major, minor, patch))
+}
+
+/// `<bin> --version` parsed to `(major, minor, patch)` — the first `X.Y.Z` token
+/// in its output (e.g. `allmystuff-serve 0.2.26`). `None` if the binary won't
+/// run or prints nothing parseable. Runs only in the dev path (a sibling exists
+/// only in an all-repos checkout), and `--version` is a one-shot CLI verb, so it
+/// returns immediately.
+fn binary_version(bin: &Path) -> Option<(u64, u64, u64)> {
+    let mut cmd = Command::new(bin);
+    cmd.arg("--version");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let out = cmd.output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .find_map(parse_semver)
 }
 
 /// GitHub release platform name for a Rust target triple (matches the asset
