@@ -34,23 +34,28 @@
       );
       const win = getCurrentWindow();
       const factor = await win.scaleFactor();
+      // setSize sets the *inner* size; the decorations (title bar, borders)
+      // ride on top of it, so the work-area clamp must subtract them.
+      const inner = (await win.innerSize()).toLogical(factor);
       const outer = (await win.outerSize()).toLogical(factor);
-      let target = outer.height + overflow;
+      const decorations = Math.max(0, outer.height - inner.height);
+      let target = inner.height + overflow;
       const monitor = await currentMonitor();
       if (monitor) {
         // Grow downward from where the window sits, but never past the work
         // area's bottom edge (the taskbar keeps its ground).
         const area = monitor.workArea ?? { position: monitor.position, size: monitor.size };
         const top = (await win.outerPosition()).toLogical(monitor.scaleFactor).y;
-        const bottom =
-          (area.position.y + area.size.height) / monitor.scaleFactor;
-        target = Math.min(target, Math.max(outer.height, bottom - top));
+        const bottom = (area.position.y + area.size.height) / monitor.scaleFactor;
+        target = Math.min(target, bottom - top - decorations);
       }
-      if (target > outer.height + 1) {
-        await win.setSize(new LogicalSize(outer.width, target));
+      if (target > inner.height + 1) {
+        await win.setSize(new LogicalSize(inner.width, target));
       }
-    } catch {
-      // Web mode or an API mismatch — the scroll container handles it.
+    } catch (e) {
+      // Web mode has no window to grow; anything else deserves a trace —
+      // a silent catch here once hid a missing capabilities grant.
+      console.warn("grow-to-fit:", e);
     }
   }
 
