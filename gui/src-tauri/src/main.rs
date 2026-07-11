@@ -462,8 +462,29 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 /// node restarts — and if the node is *gone* (the app that spawned it exited,
 /// taking the kill-on-close serve with it), brings the shared stack back up
 /// itself and re-hosts, so this app keeps working solo or side by side.
+/// Bring the shared stack back up and re-advertise hosting — the pump's
+/// respawn body. A fresh serve isn't hosting, and `cec_start_hosting` is
+/// idempotent, so the re-host is always safe.
+async fn respawn_and_rehost(app: &tauri::AppHandle, node: &NodeClient) {
+    match ensure_node_running_pinned(ALLMYSTUFF_PIN).await {
+        Ok(Some(child)) => {
+            app.state::<AppState>().node_child.lock().replace(child);
+        }
+        Ok(None) => {}
+        Err(e) => tracing::warn!("couldn't bring the node back up: {e:#}"),
+    }
+    wait_for_node().await;
+    if let Err(e) = node.request("cec_start_hosting", json!({})).await {
+        tracing::warn!("cec_start_hosting after node respawn failed: {e:#}");
+    }
+}
+
 async fn run_event_pump(app: tauri::AppHandle, node: Arc<NodeClient>) {
     use tokio::sync::mpsc;
+    // Consecutive grace windows the socket stayed dead while OUR child kept
+    // running — the wedged-not-gone state. Only a repeat offender earns a
+    // deliberate, owner-controlled restart.
+    let mut wedged_rounds: u32 = 0;
     loop {
         // A client doesn't require whichever app spawned the engine: nothing
         // answering the socket means it's our turn to bring the stack up.
@@ -476,20 +497,40 @@ async fn run_event_pump(app: tauri::AppHandle, node: Arc<NodeClient>) {
             wait_for_node().await;
         }
         if !NodeClient::probe().await {
-            tracing::info!("node is gone — bringing the shared stack back up");
-            match ensure_node_running_pinned(ALLMYSTUFF_PIN).await {
-                Ok(Some(child)) => {
-                    app.state::<AppState>().node_child.lock().replace(child);
+            // Dead socket through the grace window — but if OUR child is still
+            // running, the serve is alive behind a busy/wedged socket, not
+            // gone: respawning would spawn a bind-loser and then kill the live
+            // serve when the old handle is replaced (the spawn/kill metronome).
+            // Only respawn over a child confirmed dead; a serve wedged for
+            // three straight windows gets a deliberate owner restart instead.
+            let own_alive = app
+                .state::<AppState>()
+                .node_child
+                .lock()
+                .as_mut()
+                .map(|c| c.is_alive())
+                .unwrap_or(false);
+            if own_alive {
+                wedged_rounds += 1;
+                if wedged_rounds >= 3 {
+                    tracing::warn!(
+                        "node socket dead across {wedged_rounds} grace windows with our serve alive — restarting it deliberately"
+                    );
+                    app.state::<AppState>().node_child.lock().take();
+                    wedged_rounds = 0;
+                    respawn_and_rehost(&app, &node).await;
+                } else {
+                    tracing::warn!(
+                        "node socket unresponsive but our serve is still running — not respawning over it ({wedged_rounds}/3)"
+                    );
                 }
-                Ok(None) => {}
-                Err(e) => tracing::warn!("couldn't bring the node back up: {e:#}"),
+            } else {
+                wedged_rounds = 0;
+                tracing::info!("node is gone — bringing the shared stack back up");
+                respawn_and_rehost(&app, &node).await;
             }
-            wait_for_node().await;
-            // A fresh serve isn't hosting: re-advertise so this machine stays
-            // dialable (idempotent when the room is already joined).
-            if let Err(e) = node.request("cec_start_hosting", json!({})).await {
-                tracing::warn!("cec_start_hosting after node respawn failed: {e:#}");
-            }
+        } else {
+            wedged_rounds = 0;
         }
         let (tx, mut rx) = mpsc::channel::<NodeEvent>(256);
         if let Err(e) = node.subscribe_events(tx).await {
