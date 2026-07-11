@@ -175,6 +175,11 @@ class CecStore {
    *  bounded per-iteration; ends when the number arrives or the store is
    *  destroyed. */
   private async bringUp(): Promise<void> {
+    // Demo mode owns its state: loadDemo() paints it once, and this loop's
+    // web-mode nulls must never race it clean — it used to eat the demo's
+    // grants (the access list never showed in previews), and the moment the
+    // demo status carried a number it ate the spec card too.
+    if (this.demo) return;
     for (;;) {
       if (this.stopped) return;
       // Idempotent join of our own Silent mesh; a null (node still starting)
@@ -487,6 +492,31 @@ class CecStore {
       manager: "windows",
       installed: false,
       service_name: "CECSupport",
+    };
+    // The spec card is a headline feature — the demo shows it fully dressed:
+    // usage, disks, temps, and the identity pair in the title.
+    this.specs = {
+      hostname: "RECEPTION-01",
+      os: "Windows 11 Pro 24H2",
+      cpu: { brand: "AMD Ryzen 5 5600G", cores: 6, threads: 12, max_mhz: 4464 },
+      memory: {
+        total_bytes: 16 * 1024 ** 3,
+        available_bytes: Math.round(9.3 * 1024 ** 3),
+      },
+      gpus: [{ name: "AMD Radeon Graphics", vram_bytes: null }],
+      disks: [
+        {
+          name: "Samsung SSD 970 EVO",
+          mount: "C:",
+          total_bytes: 500 * 1000 ** 3,
+          available_bytes: 212 * 1000 ** 3,
+          removable: false,
+        },
+      ],
+      temps: [
+        { label: "ACPI\\ThermalZone\\TZ00_0", celsius: 47.5 },
+        { label: "coretemp Package id 0", celsius: 52.1 },
+      ],
     };
   }
 

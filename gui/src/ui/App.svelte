@@ -140,17 +140,6 @@
     </div>
   </main>
 
-  <!-- The identity bar: the pair CEC matches on, on screen the whole time —
-       whatever view is up, whatever state the ask is in. The technician's
-       card spells the same "Name (HOSTNAME)", so "what does the bottom of
-       the window say?" always resolves a call. -->
-  {#if store.grouped || store.computerName}
-    <footer class="idbar">
-      {#if store.computerName}<span class="id-name">{store.computerName}</span>{/if}
-      {#if store.grouped}<span class="id-num">CEC Support {store.grouped}</span>{/if}
-    </footer>
-  {/if}
-
   {#if request}
     <ApproveModal {request} />
   {/if}
@@ -221,28 +210,6 @@
   .content .back {
     align-self: flex-start;
     margin-bottom: -0.5rem;
-  }
-
-  .idbar {
-    flex: 0 0 auto;
-    display: flex;
-    justify-content: center;
-    align-items: baseline;
-    gap: 0.9rem;
-    flex-wrap: wrap;
-    padding: 0.45rem 1rem;
-    border-top: 1px solid var(--line);
-    background: var(--surface);
-    font-size: 0.75rem;
-    color: var(--ink-soft);
-  }
-  .id-name {
-    font-weight: 600;
-  }
-  .id-num {
-    font-variant-numeric: tabular-nums;
-    letter-spacing: 0.03em;
-    color: var(--ink-faint);
   }
 
   .toast {
