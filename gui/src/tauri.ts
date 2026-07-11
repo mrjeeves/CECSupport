@@ -140,15 +140,17 @@ export function openTiktok(): void {
   void tryInvoke("open_tiktok");
 }
 
-/** The help/asking state changed (`cec://help`). The field this app cares
- *  about is `asking: false` — the node auto-withdraws the ask the moment a
- *  session is approved (help arrived), and the waiting card must follow. */
+/** The help/asking state changed (`cec://help`). `asking: false` means the
+ *  node auto-withdrew the ask (help arrived) and the waiting card must
+ *  follow. `watchers` rides every beacon the node sends: how many live
+ *  peers the broadcast actually reached — 0 is "still raising your hand",
+ *  1+ is "CEC can see you". */
 export async function onCecHelp(
-  cb: (e: { asking?: boolean }) => void,
+  cb: (e: { asking?: boolean; watchers?: number }) => void,
 ): Promise<() => void> {
   if (!isTauri()) return () => {};
   const { listen } = await import("@tauri-apps/api/event");
-  return listen<{ asking?: boolean }>("cec://help", (e) => cb(e.payload));
+  return listen<{ asking?: boolean; watchers?: number }>("cec://help", (e) => cb(e.payload));
 }
 
 /** The technician requests currently awaiting the customer's decision. */
