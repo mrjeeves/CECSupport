@@ -34,23 +34,28 @@
       );
       const win = getCurrentWindow();
       const factor = await win.scaleFactor();
+      // setSize sets the *inner* size; the decorations (title bar, borders)
+      // ride on top of it, so the work-area clamp must subtract them.
+      const inner = (await win.innerSize()).toLogical(factor);
       const outer = (await win.outerSize()).toLogical(factor);
-      let target = outer.height + overflow;
+      const decorations = Math.max(0, outer.height - inner.height);
+      let target = inner.height + overflow;
       const monitor = await currentMonitor();
       if (monitor) {
         // Grow downward from where the window sits, but never past the work
         // area's bottom edge (the taskbar keeps its ground).
         const area = monitor.workArea ?? { position: monitor.position, size: monitor.size };
         const top = (await win.outerPosition()).toLogical(monitor.scaleFactor).y;
-        const bottom =
-          (area.position.y + area.size.height) / monitor.scaleFactor;
-        target = Math.min(target, Math.max(outer.height, bottom - top));
+        const bottom = (area.position.y + area.size.height) / monitor.scaleFactor;
+        target = Math.min(target, bottom - top - decorations);
       }
-      if (target > outer.height + 1) {
-        await win.setSize(new LogicalSize(outer.width, target));
+      if (target > inner.height + 1) {
+        await win.setSize(new LogicalSize(inner.width, target));
       }
-    } catch {
-      // Web mode or an API mismatch — the scroll container handles it.
+    } catch (e) {
+      // Web mode has no window to grow; anything else deserves a trace —
+      // a silent catch here once hid a missing capabilities grant.
+      console.warn("grow-to-fit:", e);
     }
   }
 
@@ -108,34 +113,48 @@
     {#if store.view === "settings"}
       <SettingsPanel />
     {:else if store.view === "number"}
-      <!-- The classic phone flow, one step behind the front door. -->
-      <button class="btn ghost small back" onclick={() => (store.view = "start")}>
-        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" />
-        </svg>
-        Back
-      </button>
-      <NumberScreen />
-      {#if store.contactVisible}<ContactCard />{/if}
-      <ConnectedBanner />
-      <!-- The spec card sits between the number box and the access list, so a
-           technician on the phone can just ask the customer to read it. -->
-      <SpecSheet />
-      <AccessList />
+      <!-- Two columns when the window affords it: the flow on the left, the
+           computer's card + CEC's contact points as a rail on the right —
+           small monitors are short before they're narrow, so the stats live
+           beside the conversation, not under it. Collapses to one column on
+           narrow windows, where the height-grow logic takes over. -->
+      <div class="cols">
+        <div class="col">
+          <!-- The classic phone flow, one step behind the front door. -->
+          <button class="btn ghost small back" onclick={() => (store.view = "start")}>
+            <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" />
+            </svg>
+            Back
+          </button>
+          <NumberScreen />
+          <ConnectedBanner />
+          <AccessList />
+        </div>
+        <aside class="col">
+          {#if store.contactVisible}<ContactCard />{/if}
+          <SpecSheet />
+        </aside>
+      </div>
     {:else}
-      <StartScreen />
-      <!-- CEC's contact card appears the moment the ask goes up and stays for
-           the rest of the run — help arriving withdraws the ask, not the
-           phone number. Live status shows on the front door too — a customer
-           who asked for help never opens the number screen, but "X is viewing
-           your screen" and "who can connect to your computer" must never be
-           hidden behind a navigation step while they're true. The spec card
-           sits between the buttons and the access list, same as the number
-           view. -->
-      {#if store.contactVisible}<ContactCard />{/if}
-      <ConnectedBanner />
-      <SpecSheet />
-      <AccessList />
+      <!-- Same two-column shape as the number view. CEC's contact card
+           appears the moment the ask goes up and stays for the rest of the
+           run — help arriving withdraws the ask, not the phone number. Live
+           status shows on the front door too — a customer who asked for help
+           never opens the number screen, but "X is viewing your screen" and
+           "who can connect to your computer" must never be hidden behind a
+           navigation step while they're true. -->
+      <div class="cols">
+        <div class="col">
+          <StartScreen />
+          <ConnectedBanner />
+          <AccessList />
+        </div>
+        <aside class="col">
+          {#if store.contactVisible}<ContactCard />{/if}
+          <SpecSheet />
+        </aside>
+      </div>
     {/if}
     </div>
   </main>
@@ -205,6 +224,28 @@
     flex-direction: column;
     gap: 1.1rem;
     align-items: center;
+  }
+  /* Side-by-side when the window affords it: the tallest column sets the
+     height the grow logic asks for; narrow windows stack back to one. */
+  .cols {
+    width: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 30rem) minmax(0, 30rem);
+    justify-content: center;
+    gap: 1.1rem;
+    align-items: start;
+  }
+  .col {
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+    align-items: center;
+    min-width: 0;
+  }
+  @media (max-width: 880px) {
+    .cols {
+      grid-template-columns: minmax(0, 30rem);
+    }
   }
   /* The number screen's way home — hugs the card column's left edge. */
   .content .back {
