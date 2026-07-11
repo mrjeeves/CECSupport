@@ -53,6 +53,15 @@
   const temps = $derived(specs?.temps ?? []);
 </script>
 
+{#if !specs && store.specsPending}
+  <!-- The scan takes a few seconds after boot; hold the card's spot with a
+       quiet reading state instead of an empty rail. Resolves either into the
+       real card or (older node, no command) into nothing. -->
+  <section class="card sheet pending" role="status" aria-label="Reading this computer's specs">
+    <span class="spin" aria-hidden="true"></span>
+    <p class="pending-note">Reading this computer's specs…</p>
+  </section>
+{/if}
 {#if specs}
   <section class="card sheet" aria-label="Computer specifications">
     <h3 class="title">{title}</h3>
@@ -110,6 +119,35 @@
     display: flex;
     flex-direction: column;
     gap: 0.7rem;
+  }
+  .sheet.pending {
+    align-items: center;
+    justify-content: center;
+    min-height: 9rem;
+    gap: 0.8rem;
+  }
+  .spin {
+    width: 1.6rem;
+    height: 1.6rem;
+    border-radius: 50%;
+    border: 3px solid var(--line);
+    border-top-color: var(--accent);
+    animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spin {
+      animation: none;
+    }
+  }
+  .pending-note {
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--ink-faint);
   }
   .title {
     margin: 0;
