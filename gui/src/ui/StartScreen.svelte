@@ -10,15 +10,25 @@
 <section class="start card">
   {#if store.askingHelp}
     <div class="waiting" role="status" aria-live="polite">
-      <span class="pulse" aria-hidden="true"></span>
-      <h2>Help is on the way</h2>
-      <p class="sub">
-        You're in line — a CEC technician will connect shortly. Keep this
-        window open. Nothing is shared until you approve them by name.
-      </p>
-      <!-- CEC's contact card renders just below this card (App mounts it
-           whenever the ask is live or was ever raised); the identity pair we
-           match on lives in the app's permanent bottom bar. -->
+      <!-- Two honest phases, keyed to the node's dispatched-to count: the
+           hand is either still going up (no beacon has reached a watcher
+           yet — spinner) or provably seen (a live watcher received it —
+           breathing dot). No decorative waiting. -->
+      {#if (store.helpWatchers ?? 0) > 0}
+        <span class="pulse" aria-hidden="true"></span>
+        <h2>Help is on the way</h2>
+        <p class="sub">
+          CEC can see your hand — a technician will connect shortly. Keep
+          this window open. Nothing is shared until you approve them by name.
+        </p>
+      {:else}
+        <span class="hand-spin" aria-hidden="true"></span>
+        <h2>Raising your hand…</h2>
+        <p class="sub">
+          Connecting to CEC — this usually takes a few seconds. Keep this
+          window open. Nothing is shared until you approve someone by name.
+        </p>
+      {/if}
       <button class="btn danger" disabled={store.busy} onclick={() => void store.cancelHelp()}>
         Stop asking
       </button>
@@ -121,6 +131,25 @@
     50% {
       transform: scale(1.35);
       opacity: 0.55;
+    }
+  }
+  /* The hand-going-up phase: a working spinner, not a resting pulse. */
+  .hand-spin {
+    width: 1.2rem;
+    height: 1.2rem;
+    border-radius: 50%;
+    border: 3px solid var(--line);
+    border-top-color: var(--accent);
+    animation: hand-spin 0.9s linear infinite;
+  }
+  @keyframes hand-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .hand-spin {
+      animation: none;
     }
   }
 </style>
