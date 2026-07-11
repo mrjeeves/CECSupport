@@ -6,6 +6,7 @@
   import SpecSheet from "./SpecSheet.svelte";
   import StartScreen from "./StartScreen.svelte";
   import ApproveModal from "./ApproveModal.svelte";
+  import ContactCard from "./ContactCard.svelte";
   import ConnectedBanner from "./ConnectedBanner.svelte";
   import AccessList from "./AccessList.svelte";
   import SettingsPanel from "./SettingsPanel.svelte";
@@ -115,6 +116,7 @@
         Back
       </button>
       <NumberScreen />
+      {#if store.contactVisible}<ContactCard />{/if}
       <ConnectedBanner />
       <!-- The spec card sits between the number box and the access list, so a
            technician on the phone can just ask the customer to read it. -->
@@ -122,11 +124,15 @@
       <AccessList />
     {:else}
       <StartScreen />
-      <!-- Live status shows on the front door too — a customer who asked for
-           help never opens the number screen, but "X is viewing your screen"
-           and "who can connect to your computer" must never be hidden behind
-           a navigation step while they're true. The spec card sits between
-           the buttons and the access list, same as the number view. -->
+      <!-- CEC's contact card appears the moment the ask goes up and stays for
+           the rest of the run — help arriving withdraws the ask, not the
+           phone number. Live status shows on the front door too — a customer
+           who asked for help never opens the number screen, but "X is viewing
+           your screen" and "who can connect to your computer" must never be
+           hidden behind a navigation step while they're true. The spec card
+           sits between the buttons and the access list, same as the number
+           view. -->
+      {#if store.contactVisible}<ContactCard />{/if}
       <ConnectedBanner />
       <SpecSheet />
       <AccessList />

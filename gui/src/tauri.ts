@@ -130,6 +130,16 @@ export function machineTemps(): Promise<{
   return tryInvoke<{ temps: MachineSpecs["temps"] }>("machine_temps");
 }
 
+/** Open CEC's TikTok in the system browser — the waiting screen's "catch us
+ *  live" link. The URL lives backend-side; web mode opens a plain tab. */
+export function openTiktok(): void {
+  if (!isTauri()) {
+    window.open("https://www.tiktok.com/@criticalerrorcomputing", "_blank");
+    return;
+  }
+  void tryInvoke("open_tiktok");
+}
+
 /** The help/asking state changed (`cec://help`). The field this app cares
  *  about is `asking: false` — the node auto-withdraws the ask the moment a
  *  session is approved (help arrived), and the waiting card must follow. */

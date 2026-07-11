@@ -9,7 +9,9 @@
   import { store } from "../store.svelte";
 
   const specs = $derived(store.specs);
-  const title = $derived(store.status?.label?.trim() || specs?.hostname || "This computer");
+  /** "Name (HOSTNAME)" — the identity pair, spelled exactly like the
+   *  technician's card so matching up is a read, not a guess. */
+  const title = $derived(store.computerName || "This computer");
 
   /** "16 GB" / "512 GB" / "1.8 TB" — spec-sheet sizes, one decimal max. */
   function gb(bytes: number | null | undefined): string {
@@ -54,6 +56,9 @@
 {#if specs}
   <section class="card sheet" aria-label="Computer specifications">
     <h3 class="title">{title}</h3>
+    {#if store.grouped}
+      <p class="idnum">CEC Support {store.grouped}</p>
+    {/if}
     <div class="grid">
       <span class="k">CPU</span>
       <span class="v">{cpuLine}</span>
@@ -110,6 +115,15 @@
     margin: 0;
     font-size: 1rem;
     font-weight: 700;
+  }
+  /* The Support Number, right under the machine name — the two things we
+     match on, together at the top of the computer's own card. */
+  .idnum {
+    margin: -0.45rem 0 0;
+    font-size: 0.75rem;
+    color: var(--ink-faint);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.03em;
   }
   .grid {
     display: grid;

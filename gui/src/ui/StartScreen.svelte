@@ -16,6 +16,9 @@
         You're in line — a CEC technician will connect shortly. Keep this
         window open. Nothing is shared until you approve them by name.
       </p>
+      <!-- CEC's contact card renders just below this card (App mounts it
+           whenever the ask is live or was ever raised); the identity pair we
+           match on lives in the app's permanent bottom bar. -->
       <button class="btn danger" disabled={store.busy} onclick={() => void store.cancelHelp()}>
         Stop asking
       </button>
@@ -30,12 +33,14 @@
         Raise your hand — a CEC technician sees your request and connects.
         You approve them before they can see anything.
       </p>
-      <button class="btn big" onclick={() => (store.view = "number")}>
-        Show Support Number
-      </button>
-      <p class="sub">
-        Already on the phone with us? Show your number and read it out.
-      </p>
+      <!-- The number is the quiet fallback, not a second front door: it only
+           matters when a technician asks for it, or to confirm you're you. -->
+      <div class="alt">
+        <button class="btn ghost small" onclick={() => (store.view = "number")}>
+          Show Support Number
+        </button>
+        <p class="sub tiny">If we ask for your number — or you'd like to confirm it.</p>
+      </div>
     </div>
   {/if}
 </section>
@@ -72,6 +77,25 @@
     font-size: 0.85rem;
     color: var(--ink-soft);
     line-height: 1.45;
+  }
+  /* The demoted fallback: a slim button and a whispered caption, clearly
+     subordinate to the Ask button above. */
+  .alt {
+    margin-top: 0.4rem;
+    padding-top: 0.9rem;
+    border-top: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.35rem;
+  }
+  .alt .btn {
+    align-self: center;
+  }
+  .sub.tiny {
+    margin: 0;
+    font-size: 0.75rem;
+    color: var(--ink-faint);
   }
 
   .waiting {

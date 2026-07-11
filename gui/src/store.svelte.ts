@@ -115,6 +115,25 @@ class CecStore {
     return n;
   }
 
+  /** "Name (HOSTNAME)" — the same pair the technician's card shows, so both
+   *  sides can match word for word. Empty until the node answers. */
+  get computerName(): string {
+    const label = this.status?.label?.trim() ?? "";
+    const host = this.specs?.hostname?.trim() ?? "";
+    if (label && host && label.toLowerCase() !== host.toLowerCase()) {
+      return `${label} (${host})`;
+    }
+    return label || host || "";
+  }
+
+  /** Once the customer has asked for help, CEC's contact card stays up for
+   *  the rest of the run — the conversation outlives the ask (help arriving
+   *  withdraws the ask, and the customer still wants the phone number). */
+  contactPinned = $state(false);
+  get contactVisible(): boolean {
+    return this.askingHelp || this.contactPinned;
+  }
+
   /** Set on destroy so the bring-up retry loop ends with the store. */
   private stopped = false;
 
@@ -156,6 +175,11 @@ class CecStore {
    *  bounded per-iteration; ends when the number arrives or the store is
    *  destroyed. */
   private async bringUp(): Promise<void> {
+    // Demo mode owns its state: loadDemo() paints it once, and this loop's
+    // web-mode nulls must never race it clean — it used to eat the demo's
+    // grants (the access list never showed in previews), and the moment the
+    // demo status carried a number it ate the spec card too.
+    if (this.demo) return;
     for (;;) {
       if (this.stopped) return;
       // Idempotent join of our own Silent mesh; a null (node still starting)
@@ -200,8 +224,13 @@ class CecStore {
     this.pending = await cecPending();
     this.grants = await cecGrants();
     // The node is the truth for the ask (it withdraws it itself on approval,
-    // and a restart drops it) — mirror it whenever the status lands.
-    if (this.status) this.askingHelp = this.status.asking_help === true;
+    // and a restart drops it) — mirror it whenever the status lands. Pinning
+    // only ever latches on: an ask in flight across an app restart re-pins
+    // the contact card, and nothing unpins it.
+    if (this.status) {
+      this.askingHelp = this.status.asking_help === true;
+      if (this.askingHelp) this.contactPinned = true;
+    }
   }
 
   private async loadGrants(): Promise<void> {
@@ -336,12 +365,14 @@ class CecStore {
   async askHelp(): Promise<void> {
     if (this.demo) {
       this.askingHelp = true;
+      this.contactPinned = true;
       return;
     }
     this.busy = true;
     try {
       await cecAskHelp(true);
       this.askingHelp = true;
+      this.contactPinned = true;
     } catch (e) {
       this.notify(`Couldn't ask for help: ${errMsg(e)}`);
     } finally {
@@ -461,6 +492,31 @@ class CecStore {
       manager: "windows",
       installed: false,
       service_name: "CECSupport",
+    };
+    // The spec card is a headline feature — the demo shows it fully dressed:
+    // usage, disks, temps, and the identity pair in the title.
+    this.specs = {
+      hostname: "RECEPTION-01",
+      os: "Windows 11 Pro 24H2",
+      cpu: { brand: "AMD Ryzen 5 5600G", cores: 6, threads: 12, max_mhz: 4464 },
+      memory: {
+        total_bytes: 16 * 1024 ** 3,
+        available_bytes: Math.round(9.3 * 1024 ** 3),
+      },
+      gpus: [{ name: "AMD Radeon Graphics", vram_bytes: null }],
+      disks: [
+        {
+          name: "Samsung SSD 970 EVO",
+          mount: "C:",
+          total_bytes: 500 * 1000 ** 3,
+          available_bytes: 212 * 1000 ** 3,
+          removable: false,
+        },
+      ],
+      temps: [
+        { label: "ACPI\\ThermalZone\\TZ00_0", celsius: 47.5 },
+        { label: "coretemp Package id 0", celsius: 52.1 },
+      ],
     };
   }
 
