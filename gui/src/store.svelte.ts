@@ -16,6 +16,7 @@ import {
   backgroundGet,
   backgroundSet,
   cecApprove,
+  cecAskHelp,
   cecDeny,
   cecForgetNode,
   cecGrants,
@@ -27,6 +28,7 @@ import {
   cecStopHosting,
   isTauri,
   onCecGrants,
+  onCecHelp,
   onCecRequest,
   onCecSession,
   serviceInstall,
@@ -69,7 +71,13 @@ class CecStore {
   keepBackground = $state(false);
   /** Unix seconds, re-read each second so expiry countdowns tick. */
   now = $state(Math.floor(Date.now() / 1000));
-  view = $state<"home" | "settings">("home");
+  /** Which screen is showing. `start` is the front door (Ask for help / Show
+   *  Support Number); `number` is the classic number screen behind it. */
+  view = $state<"start" | "number" | "settings">("start");
+  /** Whether this machine is currently asking for help on the global help
+   *  room — drives the start screen's waiting card. Synced from `cec_status`
+   *  and cleared live by the `cec://help` event when help arrives. */
+  askingHelp = $state(false);
   toast = $state<string | null>(null);
   busy = $state(false);
 
@@ -108,6 +116,13 @@ class CecStore {
     this.unlisteners.push(await onCecRequest((r) => this.onRequest(r)));
     this.unlisteners.push(await onCecSession((s) => this.onSession(s)));
     this.unlisteners.push(await onCecGrants((g) => (this.grants = g)));
+    this.unlisteners.push(
+      await onCecHelp((e) => {
+        // The node withdraws the ask itself when a session is approved (help
+        // arrived) — the waiting card must follow without a manual refresh.
+        if (e.asking === false) this.askingHelp = false;
+      }),
+    );
 
     // The node comes up in parallel with this webview — on a fresh machine its
     // first start (identity generation, first-run AV scans of the sidecars)
@@ -155,6 +170,9 @@ class CecStore {
     this.status = await cecStatus();
     this.pending = await cecPending();
     this.grants = await cecGrants();
+    // The node is the truth for the ask (it withdraws it itself on approval,
+    // and a restart drops it) — mirror it whenever the status lands.
+    if (this.status) this.askingHelp = this.status.asking_help === true;
   }
 
   private async loadGrants(): Promise<void> {
@@ -274,6 +292,42 @@ class CecStore {
     if (on) await cecStartHosting();
     else await cecStopHosting();
     this.status = await cecStatus();
+  }
+
+  /** "Ask for help": beacon this machine onto the global help room until a
+   *  technician connects or the customer cancels. The node brings hosting up
+   *  as part of the ask, so a tap on a fresh launch still just works. */
+  async askHelp(): Promise<void> {
+    if (this.demo) {
+      this.askingHelp = true;
+      return;
+    }
+    this.busy = true;
+    try {
+      await cecAskHelp(true);
+      this.askingHelp = true;
+    } catch (e) {
+      this.notify(`Couldn't ask for help: ${errMsg(e)}`);
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  /** Withdraw the ask ("Stop asking"). */
+  async cancelHelp(): Promise<void> {
+    if (this.demo) {
+      this.askingHelp = false;
+      return;
+    }
+    this.busy = true;
+    try {
+      await cecAskHelp(false);
+      this.askingHelp = false;
+    } catch (e) {
+      this.notify(`Couldn't stop the request: ${errMsg(e)}`);
+    } finally {
+      this.busy = false;
+    }
   }
 
   async setLabel(label: string): Promise<void> {
