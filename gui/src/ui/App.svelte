@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from "svelte";
   import { store } from "../store.svelte";
   import NumberScreen from "./NumberScreen.svelte";
+  import StartScreen from "./StartScreen.svelte";
   import ApproveModal from "./ApproveModal.svelte";
   import ConnectedBanner from "./ConnectedBanner.svelte";
   import AccessList from "./AccessList.svelte";
@@ -27,7 +28,7 @@
     <button
       class="btn ghost small"
       aria-label={store.view === "settings" ? "Back" : "Settings"}
-      onclick={() => (store.view = store.view === "settings" ? "home" : "settings")}
+      onclick={() => (store.view = store.view === "settings" ? "start" : "settings")}
     >
       {#if store.view === "settings"}
         <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -47,10 +48,23 @@
   <main class="content">
     {#if store.view === "settings"}
       <SettingsPanel />
-    {:else}
+    {:else if store.view === "number"}
+      <!-- The classic phone flow, one step behind the front door. -->
+      <button class="btn ghost small back" onclick={() => (store.view = "start")}>
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" />
+        </svg>
+        Back
+      </button>
       <NumberScreen />
       <ConnectedBanner />
       <AccessList />
+    {:else}
+      <StartScreen />
+      <!-- A live session shows on the front door too — a customer who asked
+           for help never opened the number screen, but "X is viewing your
+           screen" must never be off-screen while it's true. -->
+      <ConnectedBanner />
     {/if}
   </main>
 
@@ -114,6 +128,11 @@
     flex-direction: column;
     gap: 1.1rem;
     align-items: center;
+  }
+  /* The number screen's way home — hugs the card column's left edge. */
+  .content .back {
+    align-self: flex-start;
+    margin-bottom: -0.5rem;
   }
 
   .toast {

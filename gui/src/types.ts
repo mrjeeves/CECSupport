@@ -19,6 +19,9 @@ export interface CecStatus {
   role: string;
   /** Whether we've joined our own Silent mesh and are waiting for a dial. */
   hosting: boolean;
+  /** Whether this node is currently asking for help on the global help room
+   *  (the "Ask for help" button's live state). Absent from an older node. */
+  asking_help?: boolean;
   /** This computer's friendly name, if the customer set one. */
   label?: string;
 }

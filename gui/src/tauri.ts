@@ -99,6 +99,21 @@ export function cecStopHosting(): Promise<null> {
   return tryInvoke("cec_stop_hosting");
 }
 
+/** Raise (or withdraw) the ask on the global help room. Errors surface — the
+ *  customer must know their tap didn't take, not wait on a dead beacon. */
+export function cecAskHelp(on: boolean): Promise<void> {
+  return mustInvoke("cec_ask_help", { on });
+}
+
+/** The help/asking state changed (`cec://help`). The field this app cares
+ *  about is `asking: false` — the node auto-withdraws the ask the moment a
+ *  session is approved (help arrived), and the waiting card must follow. */
+export async function onCecHelp(cb: (e: { asking?: boolean }) => void): Promise<() => void> {
+  if (!isTauri()) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<{ asking?: boolean }>("cec://help", (e) => cb(e.payload));
+}
+
 /** The technician requests currently awaiting the customer's decision. */
 export async function cecPending(): Promise<ConnectRequest[]> {
   const r = await tryInvoke<ConnectRequest[]>("cec_pending");

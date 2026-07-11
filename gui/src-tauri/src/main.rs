@@ -204,6 +204,18 @@ async fn cec_stop_hosting(state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+/// Raise (or withdraw) the ask on the global help room. While on, this node
+/// beacons "I need help" to every CEC technician; a technician answers by
+/// dialing our own number room, so the normal approval still gates everything.
+#[tauri::command]
+async fn cec_ask_help(state: State<'_, AppState>, on: bool) -> Result<Value, String> {
+    state
+        .node
+        .request("cec_ask_help", json!({ "on": on }))
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// The technician requests currently awaiting a decision (drives the modal).
 #[tauri::command]
 async fn cec_pending(state: State<'_, AppState>) -> Result<Value, String> {
@@ -651,6 +663,7 @@ fn run_gui() -> ExitCode {
             cec_status,
             cec_start_hosting,
             cec_stop_hosting,
+            cec_ask_help,
             cec_pending,
             cec_approve,
             cec_deny,
