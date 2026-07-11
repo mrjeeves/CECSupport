@@ -24,6 +24,7 @@ import {
   cecRevoke,
   cecSetLabel,
   machineSpecs,
+  machineTemps,
   cecStartHosting,
   cecStatus,
   cecStopHosting,
@@ -90,6 +91,7 @@ class CecStore {
   private unlisteners: Array<() => void> = [];
   private timer: ReturnType<typeof setInterval> | undefined;
   private toastTimer: ReturnType<typeof setTimeout> | undefined;
+  private tempsTimer: ReturnType<typeof setInterval> | undefined;
 
   /** The connect request to prompt about (first pending), or null. */
   get request(): ConnectRequest | null {
@@ -108,7 +110,8 @@ class CecStore {
   /** The customer's Support number, grouped for reading aloud (e.g. 123 456 789). */
   get grouped(): string {
     const n = this.status?.number ?? "";
-    if (n.length === 9) return `${n.slice(0, 3)} ${n.slice(3, 6)} ${n.slice(6)}`;
+    if (n.length === 9)
+      return `${n.slice(0, 3)} ${n.slice(3, 6)} ${n.slice(6)}`;
     return n;
   }
 
@@ -162,8 +165,13 @@ class CecStore {
       if (this.status?.number) {
         // Node's up — pull the spec card's scan once. Not part of refresh():
         // a full hardware scan per event would be waste for numbers that
-        // barely move.
+        // barely move. Temps are the exception — the card's one moving
+        // number — so they get their own lazy poll against the node's
+        // scan-free machine_temps.
         this.specs = await machineSpecs();
+        if (this.specs) {
+          this.tempsTimer = setInterval(() => void this.pollTemps(), 30_000);
+        }
         return;
       }
       await new Promise((r) => setTimeout(r, 2000));
@@ -176,6 +184,15 @@ class CecStore {
     this.unlisteners = [];
     if (this.timer) clearInterval(this.timer);
     if (this.toastTimer) clearTimeout(this.toastTimer);
+    if (this.tempsTimer) clearInterval(this.tempsTimer);
+  }
+
+  /** Refresh just the spec card's temps. A null (older node, node briefly
+   *  down) keeps the last reading rather than blanking the row. */
+  private async pollTemps(): Promise<void> {
+    if (!this.specs) return;
+    const t = await machineTemps();
+    if (t?.temps) this.specs.temps = t.temps;
   }
 
   async refresh(): Promise<void> {
@@ -206,7 +223,10 @@ class CecStore {
         want_control: r.want_control,
       },
     };
-    this.pending = [...this.pending.filter((p) => p.session_id !== r.session_id), r];
+    this.pending = [
+      ...this.pending.filter((p) => p.session_id !== r.session_id),
+      r,
+    ];
   }
 
   private onSession(s: SessionEvent): void {
@@ -242,7 +262,9 @@ class CecStore {
     this.busy = true;
     try {
       await cecApprove(req.tech, scope, req.session_id, req.want_control);
-      this.pending = this.pending.filter((p) => p.session_id !== req.session_id);
+      this.pending = this.pending.filter(
+        (p) => p.session_id !== req.session_id,
+      );
       await this.loadGrants();
       this.notify(
         scope === "once"
@@ -262,7 +284,9 @@ class CecStore {
     this.busy = true;
     try {
       await cecDeny(req.tech, req.session_id);
-      this.pending = this.pending.filter((p) => p.session_id !== req.session_id);
+      this.pending = this.pending.filter(
+        (p) => p.session_id !== req.session_id,
+      );
       const next = { ...this.sessions };
       delete next[req.session_id];
       this.sessions = next;

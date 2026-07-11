@@ -13,9 +13,9 @@
       {
         "label": "main",
         "title": "CEC Support",
-        "width": 440,
-        "height": 660,
-        "minWidth": 380,
+        "width": 500,
+        "height": 700,
+        "minWidth": 400,
         "minHeight": 520,
         "resizable": true,
         "fullscreen": false,

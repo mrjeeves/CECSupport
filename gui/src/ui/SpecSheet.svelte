@@ -3,8 +3,8 @@
   // buttons (or the number box) and the access list, so a technician on the
   // phone can ask "what does it say under CPU?" and the customer just reads
   // it. Titled with the computer's name. Data comes straight off the node's
-  // local scan (`machine_specs`); no temperatures — the scanner reads no
-  // sensors, and this card never invents numbers. Hidden entirely until the
+  // local scan (`machine_specs`). Temps show only when the OS exposes
+  // sensors — the card never invents numbers. Hidden entirely until the
   // scan lands (or on an older node without the command).
   import { store } from "../store.svelte";
 
@@ -39,6 +39,16 @@
   const disks = $derived.by(() =>
     [...(specs?.disks ?? [])].sort((a, b) => Number(a.removable) - Number(b.removable)),
   );
+
+  /** Sensor labels as the OS names them are driver-speak
+   *  ("ACPI\ThermalZone\TZ00_0", "coretemp Package id 0"); shorten the noisy
+   *  prefixes but never rename — a technician can still match what the
+   *  customer reads to a vendor tool. */
+  function tempLabel(label: string): string {
+    const tail = label.split("\\").pop() ?? label;
+    return tail.replace(/^coretemp\s+/i, "").trim() || label;
+  }
+  const temps = $derived(specs?.temps ?? []);
 </script>
 
 {#if specs}
@@ -70,6 +80,16 @@
               ></span>
             </span>
           </div>
+        {/each}
+      </div>
+    {/if}
+    {#if temps.length > 0}
+      <div class="temps" aria-label="Temperatures">
+        {#each temps as t (t.label)}
+          <span class="temp" title={t.label}>
+            <span class="temp-label">{tempLabel(t.label)}</span>
+            <span class="temp-val">{Math.round(t.celsius)}°C</span>
+          </span>
         {/each}
       </div>
     {/if}
@@ -150,6 +170,36 @@
     height: 100%;
     background: var(--accent);
     border-radius: inherit;
+  }
+
+  .temps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.5rem;
+    border-top: 1px solid var(--line);
+    padding-top: 0.6rem;
+  }
+  .temp {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.35rem;
+    padding: 0.15rem 0.55rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface);
+  }
+  .temp-label {
+    font-size: 0.72rem;
+    color: var(--ink-soft);
+    max-width: 11rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .temp-val {
+    font-size: 0.78rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
   }
 
   .os {

@@ -215,6 +215,17 @@ async fn machine_specs(state: State<'_, AppState>) -> Result<Value, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Temps alone — the sensor read without the full scan, cheap enough for the
+/// spec card to poll so its one moving number actually moves.
+#[tauri::command]
+async fn machine_temps(state: State<'_, AppState>) -> Result<Value, String> {
+    state
+        .node
+        .request("machine_temps", json!({}))
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Raise (or withdraw) the ask on the global help room. While on, this node
 /// beacons "I need help" to every CEC technician; a technician answers by
 /// dialing our own number room, so the normal approval still gates everything.
@@ -676,6 +687,7 @@ fn run_gui() -> ExitCode {
             cec_stop_hosting,
             cec_ask_help,
             machine_specs,
+            machine_temps,
             cec_pending,
             cec_approve,
             cec_deny,

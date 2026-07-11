@@ -27,12 +27,16 @@ export interface CecStatus {
 }
 
 /** `machine_specs` → this machine's headline hardware, for the front door's
- *  spec card. No temperatures: the scanner reads no sensors, and the card
- *  never invents numbers. Absent from an older node (the card just hides). */
+ *  spec card. Absent from an older node (the card just hides). */
 export interface MachineSpecs {
   hostname: string;
   os: string;
-  cpu: { brand: string; cores: number | null; threads: number; max_mhz: number | null };
+  cpu: {
+    brand: string;
+    cores: number | null;
+    threads: number;
+    max_mhz: number | null;
+  };
   memory: { total_bytes: number; available_bytes: number };
   gpus: Array<{ name: string; vram_bytes: number | null }>;
   disks: Array<{
@@ -42,6 +46,11 @@ export interface MachineSpecs {
     available_bytes: number;
     removable: boolean;
   }>;
+  /** Temperature sensors as the OS exposes them, °C. Empty on most consumer
+   *  Windows boards (no ACPI zone without a vendor driver) and absent from a
+   *  pre-0.2.35 node — the card hides the row in both cases; it never invents
+   *  numbers. */
+  temps?: Array<{ label: string; celsius: number }>;
 }
 
 /** A technician's inbound connect request — drives the 3-choice modal.
