@@ -20,7 +20,7 @@
   </div>
   <p class="note">
     Haven't talked to us yet? Call, or catch the live — we'll match you by
-    the name and Support Number on your computer's card below.
+    the name and Support Number on your computer's card.
   </p>
 </section>
 
