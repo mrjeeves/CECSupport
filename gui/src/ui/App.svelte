@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { store } from "../store.svelte";
+  import { isTauri } from "../tauri";
   import NumberScreen from "./NumberScreen.svelte";
   import SpecSheet from "./SpecSheet.svelte";
   import StartScreen from "./StartScreen.svelte";
@@ -10,10 +11,65 @@
   import SettingsPanel from "./SettingsPanel.svelte";
   import cecLogo from "../assets/cec-logo.png";
 
+  let contentEl = $state<HTMLElement | null>(null);
+  let flowEl = $state<HTMLElement | null>(null);
+
+  // Grow the window (never shrink it) when the vertical flow outgrows the
+  // viewport — a spec card landing, a session banner appearing — so the
+  // customer isn't handed a scrollbar the screen has room to absorb. Clamped
+  // to the monitor's work area, and grow-only so it never fights a size the
+  // user chose. The content column stays a scroll container for whatever the
+  // work area can't absorb.
+  let growTimer: ReturnType<typeof setTimeout> | undefined;
+  let growObserver: ResizeObserver | undefined;
+
+  async function growToFit(): Promise<void> {
+    if (!contentEl) return;
+    const overflow = contentEl.scrollHeight - contentEl.clientHeight;
+    if (overflow <= 1) return;
+    try {
+      const { getCurrentWindow, LogicalSize, currentMonitor } = await import(
+        "@tauri-apps/api/window"
+      );
+      const win = getCurrentWindow();
+      const factor = await win.scaleFactor();
+      const outer = (await win.outerSize()).toLogical(factor);
+      let target = outer.height + overflow;
+      const monitor = await currentMonitor();
+      if (monitor) {
+        // Grow downward from where the window sits, but never past the work
+        // area's bottom edge (the taskbar keeps its ground).
+        const area = monitor.workArea ?? { position: monitor.position, size: monitor.size };
+        const top = (await win.outerPosition()).toLogical(monitor.scaleFactor).y;
+        const bottom =
+          (area.position.y + area.size.height) / monitor.scaleFactor;
+        target = Math.min(target, Math.max(outer.height, bottom - top));
+      }
+      if (target > outer.height + 1) {
+        await win.setSize(new LogicalSize(outer.width, target));
+      }
+    } catch {
+      // Web mode or an API mismatch — the scroll container handles it.
+    }
+  }
+
   onMount(() => {
     void store.init();
+    if (isTauri() && flowEl) {
+      // Observe the inner flow, not the scroll container: the flow's box is
+      // its content height, so it fires exactly when the page gets taller.
+      growObserver = new ResizeObserver(() => {
+        clearTimeout(growTimer);
+        growTimer = setTimeout(() => void growToFit(), 120);
+      });
+      growObserver.observe(flowEl);
+    }
   });
-  onDestroy(() => store.destroy());
+  onDestroy(() => {
+    store.destroy();
+    growObserver?.disconnect();
+    clearTimeout(growTimer);
+  });
 
   // Narrow the current request to a plain variable so it can be passed to the
   // modal as a non-null prop (a getter can't be narrowed by `{#if}`).
@@ -46,7 +102,8 @@
     </button>
   </header>
 
-  <main class="content">
+  <main class="content" bind:this={contentEl}>
+    <div class="flow" bind:this={flowEl}>
     {#if store.view === "settings"}
       <SettingsPanel />
     {:else if store.view === "number"}
@@ -74,6 +131,7 @@
       <SpecSheet />
       <AccessList />
     {/if}
+    </div>
   </main>
 
   {#if request}
@@ -132,6 +190,11 @@
     flex: 1 1 auto;
     overflow-y: auto;
     padding: 1.4rem;
+  }
+  /* The measured column: its box height IS the content height, which is what
+     the grow-to-fit observer watches (the scroll container's own box never
+     changes when content does). */
+  .flow {
     display: flex;
     flex-direction: column;
     gap: 1.1rem;

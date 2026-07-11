@@ -42,7 +42,10 @@ export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-async function rawInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+async function rawInvoke<T>(
+  cmd: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
   const { invoke } = await import("@tauri-apps/api/core");
   return (await invoke(cmd, args)) as T;
 }
@@ -50,7 +53,10 @@ async function rawInvoke<T>(cmd: string, args?: Record<string, unknown>): Promis
 /** Invoke a backend command, returning null (not throwing) in web mode or on
  *  failure — the calm default for a customer app that must never show a stack
  *  trace for a transient hiccup. */
-async function tryInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T | null> {
+async function tryInvoke<T>(
+  cmd: string,
+  args?: Record<string, unknown>,
+): Promise<T | null> {
   if (!isTauri()) return null;
   try {
     return await rawInvoke<T>(cmd, args);
@@ -63,7 +69,10 @@ async function tryInvoke<T>(cmd: string, args?: Record<string, unknown>): Promis
 /** Invoke a command that must surface its error to the caller (an approve /
  *  deny the customer explicitly tapped, where silent failure would be worse
  *  than a message). No-op-safe in web mode. */
-async function mustInvoke(cmd: string, args?: Record<string, unknown>): Promise<void> {
+async function mustInvoke(
+  cmd: string,
+  args?: Record<string, unknown>,
+): Promise<void> {
   if (!isTauri()) return;
   await rawInvoke(cmd, args);
 }
@@ -113,10 +122,20 @@ export function machineSpecs(): Promise<MachineSpecs | null> {
   return tryInvoke<MachineSpecs>("machine_specs");
 }
 
+/** Temps alone — no full scan behind it, cheap to poll. Null in web mode or
+ *  on an older node (no such command); the poller just stops updating then. */
+export function machineTemps(): Promise<{
+  temps: MachineSpecs["temps"];
+} | null> {
+  return tryInvoke<{ temps: MachineSpecs["temps"] }>("machine_temps");
+}
+
 /** The help/asking state changed (`cec://help`). The field this app cares
  *  about is `asking: false` — the node auto-withdraws the ask the moment a
  *  session is approved (help arrived), and the waiting card must follow. */
-export async function onCecHelp(cb: (e: { asking?: boolean }) => void): Promise<() => void> {
+export async function onCecHelp(
+  cb: (e: { asking?: boolean }) => void,
+): Promise<() => void> {
   if (!isTauri()) return () => {};
   const { listen } = await import("@tauri-apps/api/event");
   return listen<{ asking?: boolean }>("cec://help", (e) => cb(e.payload));
@@ -179,7 +198,9 @@ export function cecSetLabel(label: string): Promise<null> {
 
 /** A technician is dialing in — drive the 3-choice Approve modal. Returns an
  *  unlisten fn (a no-op in web mode). */
-export async function onCecRequest(cb: (r: ConnectRequest) => void): Promise<() => void> {
+export async function onCecRequest(
+  cb: (r: ConnectRequest) => void,
+): Promise<() => void> {
   if (!isTauri()) return () => {};
   const { listen } = await import("@tauri-apps/api/event");
   return listen<ConnectRequest>("cec://request", (e) => cb(e.payload));
@@ -187,17 +208,23 @@ export async function onCecRequest(cb: (r: ConnectRequest) => void): Promise<() 
 
 /** A session's state changed (connecting / active / ended) — update the
  *  Connected banner. */
-export async function onCecSession(cb: (s: SessionEvent) => void): Promise<() => void> {
+export async function onCecSession(
+  cb: (s: SessionEvent) => void,
+): Promise<() => void> {
   if (!isTauri()) return () => {};
   const { listen } = await import("@tauri-apps/api/event");
   return listen<SessionEvent>("cec://session", (e) => cb(e.payload));
 }
 
 /** The standing-grants set changed — refresh the "who can reach me" list. */
-export async function onCecGrants(cb: (grants: Grant[]) => void): Promise<() => void> {
+export async function onCecGrants(
+  cb: (grants: Grant[]) => void,
+): Promise<() => void> {
   if (!isTauri()) return () => {};
   const { listen } = await import("@tauri-apps/api/event");
-  return listen<{ grants: Grant[] }>("cec://grants", (e) => cb(e.payload.grants ?? []));
+  return listen<{ grants: Grant[] }>("cec://grants", (e) =>
+    cb(e.payload.grants ?? []),
+  );
 }
 
 // ---- background service (the local cec-support-service crate) -----------
