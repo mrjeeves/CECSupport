@@ -85,6 +85,11 @@ class CecStore {
    *  answers — the card hides). Fetched once the node is up; a fresh scan
    *  each launch is plenty for a spec sheet. */
   specs = $state<MachineSpecs | null>(null);
+  /** True until the one-shot spec fetch resolves — the card shows a reading
+   *  skeleton meanwhile. Goes false on ANY resolution: with data the card
+   *  fills in, with null (an older node without the command) it hides — a
+   *  spinner must never outlive the possibility of an answer. */
+  specsPending = $state(true);
   toast = $state<string | null>(null);
   busy = $state(false);
 
@@ -124,14 +129,6 @@ class CecStore {
       return `${label} (${host})`;
     }
     return label || host || "";
-  }
-
-  /** Once the customer has asked for help, CEC's contact card stays up for
-   *  the rest of the run — the conversation outlives the ask (help arriving
-   *  withdraws the ask, and the customer still wants the phone number). */
-  contactPinned = $state(false);
-  get contactVisible(): boolean {
-    return this.askingHelp || this.contactPinned;
   }
 
   /** Set on destroy so the bring-up retry loop ends with the store. */
@@ -193,6 +190,7 @@ class CecStore {
         // number — so they get their own lazy poll against the node's
         // scan-free machine_temps.
         this.specs = await machineSpecs();
+        this.specsPending = false;
         if (this.specs) {
           this.tempsTimer = setInterval(() => void this.pollTemps(), 30_000);
         }
@@ -224,13 +222,8 @@ class CecStore {
     this.pending = await cecPending();
     this.grants = await cecGrants();
     // The node is the truth for the ask (it withdraws it itself on approval,
-    // and a restart drops it) — mirror it whenever the status lands. Pinning
-    // only ever latches on: an ask in flight across an app restart re-pins
-    // the contact card, and nothing unpins it.
-    if (this.status) {
-      this.askingHelp = this.status.asking_help === true;
-      if (this.askingHelp) this.contactPinned = true;
-    }
+    // and a restart drops it) — mirror it whenever the status lands.
+    if (this.status) this.askingHelp = this.status.asking_help === true;
   }
 
   private async loadGrants(): Promise<void> {
@@ -365,14 +358,12 @@ class CecStore {
   async askHelp(): Promise<void> {
     if (this.demo) {
       this.askingHelp = true;
-      this.contactPinned = true;
       return;
     }
     this.busy = true;
     try {
       await cecAskHelp(true);
       this.askingHelp = true;
-      this.contactPinned = true;
     } catch (e) {
       this.notify(`Couldn't ask for help: ${errMsg(e)}`);
     } finally {
@@ -495,6 +486,7 @@ class CecStore {
     };
     // The spec card is a headline feature — the demo shows it fully dressed:
     // usage, disks, temps, and the identity pair in the title.
+    this.specsPending = false;
     this.specs = {
       hostname: "RECEPTION-01",
       os: "Windows 11 Pro 24H2",

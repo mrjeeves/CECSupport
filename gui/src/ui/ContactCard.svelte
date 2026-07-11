@@ -1,9 +1,9 @@
 <script lang="ts">
-  // CEC's contact points — how an ask becomes a conversation. Appears the
-  // moment the customer asks for help and stays up for the rest of the run
-  // (help arriving withdraws the ask, not the phone number). The identity
-  // pair we match on (Support Number + computer name) lives in the app's
-  // permanent bottom bar, so this card is purely "how to reach us".
+  // CEC's contact points — how an ask becomes a conversation. Lives at the
+  // top of the right-hand rail, always: the space is there, and the phone
+  // number is useful before, during, and after an ask. The identity pair we
+  // match on (Support Number + computer name) heads the spec card beneath,
+  // so this card is purely "how to reach us".
   import { openTiktok } from "../tauri";
 </script>
 

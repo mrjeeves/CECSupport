@@ -132,14 +132,13 @@
           <AccessList />
         </div>
         <aside class="col">
-          {#if store.contactVisible}<ContactCard />{/if}
+          <ContactCard />
           <SpecSheet />
         </aside>
       </div>
     {:else}
-      <!-- Same two-column shape as the number view. CEC's contact card
-           appears the moment the ask goes up and stays for the rest of the
-           run — help arriving withdraws the ask, not the phone number. Live
+      <!-- Same two-column shape as the number view. The rail has the room,
+           so CEC's contact points simply live there — no appearing act. Live
            status shows on the front door too — a customer who asked for help
            never opens the number screen, but "X is viewing your screen" and
            "who can connect to your computer" must never be hidden behind a
@@ -151,7 +150,7 @@
           <AccessList />
         </div>
         <aside class="col">
-          {#if store.contactVisible}<ContactCard />{/if}
+          <ContactCard />
           <SpecSheet />
         </aside>
       </div>
