@@ -212,6 +212,19 @@ export async function autostartSet(enabled: boolean): Promise<boolean> {
   return r ?? enabled;
 }
 
+/** Whether closing the window keeps the app running in the tray (opt-in —
+ *  off means the close button really quits). */
+export async function backgroundGet(): Promise<boolean> {
+  const r = await tryInvoke<boolean>("background_get");
+  return r ?? false;
+}
+
+/** Flip keep-running-in-background. Returns the resulting state. */
+export async function backgroundSet(enabled: boolean): Promise<boolean> {
+  const r = await tryInvoke<boolean>("background_set", { enabled });
+  return r ?? enabled;
+}
+
 /** Copy text to the clipboard — used by the "copy my number" button. Uses the
  *  browser clipboard API (available in the Tauri webview too). */
 export async function copyToClipboard(text: string): Promise<boolean> {

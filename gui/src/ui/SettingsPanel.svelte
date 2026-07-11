@@ -12,6 +12,12 @@
     }
   });
 
+  // The background-service install is parked for now: run-on-boot (below) is
+  // the default way CEC Support survives a restart, and the service returns
+  // when its story (reboot-and-reconnect mid-repair) is ready. Flip this to
+  // bring the whole card back — the commands and the service crate stay wired.
+  const SHOW_SERVICE = false;
+
   let serviceSupported = $derived(store.service?.supported ?? false);
   let serviceInstalled = $derived(store.service?.installed ?? false);
 </script>
@@ -32,6 +38,7 @@
     </div>
   </section>
 
+  {#if SHOW_SERVICE}
   <section class="card block">
     <h3>Background service</h3>
     <p class="desc">
@@ -58,9 +65,15 @@
       </button>
     {/if}
   </section>
+  {/if}
 
   <section class="card block">
     <h3>Startup</h3>
+    <p class="desc">
+      CEC Support opens with this computer by default, so your technician can
+      reach you after a restart. Closing the window quits the app unless you
+      choose to keep it waiting in the background.
+    </p>
     <label class="toggle">
       <input
         type="checkbox"
@@ -68,6 +81,14 @@
         onchange={(e) => void store.setAutostart(e.currentTarget.checked)}
       />
       <span>Open CEC Support when this computer starts</span>
+    </label>
+    <label class="toggle">
+      <input
+        type="checkbox"
+        checked={store.keepBackground}
+        onchange={(e) => void store.setKeepBackground(e.currentTarget.checked)}
+      />
+      <span>Keep running in the background when the window is closed</span>
     </label>
   </section>
 

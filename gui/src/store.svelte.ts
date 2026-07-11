@@ -13,6 +13,8 @@ import {
   appVersion,
   autostartGet,
   autostartSet,
+  backgroundGet,
+  backgroundSet,
   cecApprove,
   cecDeny,
   cecForgetNode,
@@ -62,6 +64,9 @@ class CecStore {
   grants = $state<Grant[]>([]);
   service = $state<ServiceStatus | null>(null);
   autostart = $state(false);
+  /** Opt-in: closing the window keeps the app in the tray. Off by default —
+   *  the close button really quits. */
+  keepBackground = $state(false);
   /** Unix seconds, re-read each second so expiry countdowns tick. */
   now = $state(Math.floor(Date.now() / 1000));
   view = $state<"home" | "settings">("home");
@@ -114,6 +119,7 @@ class CecStore {
 
     this.service = await serviceStatus();
     this.autostart = await autostartGet();
+    this.keepBackground = await backgroundGet();
 
     this.timer = setInterval(() => {
       this.now = Math.floor(Date.now() / 1000);
@@ -313,6 +319,10 @@ class CecStore {
 
   async setAutostart(on: boolean): Promise<void> {
     this.autostart = await autostartSet(on);
+  }
+
+  async setKeepBackground(on: boolean): Promise<void> {
+    this.keepBackground = await backgroundSet(on);
   }
 
   // ---- toasts ----------------------------------------------------------
