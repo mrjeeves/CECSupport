@@ -58,6 +58,9 @@ const ALLMYSTUFF_PIN: Option<&str> = option_env!("ALLMYSTUFF_PIN");
 struct AppState {
     node: Arc<NodeClient>,
     node_child: Mutex<Option<NodeChild>>,
+    /// Opt-in "keep running in the background": when set, closing the window
+    /// hides to the tray instead of quitting. Off by default — close quits.
+    keep_background: std::sync::atomic::AtomicBool,
 }
 
 // ---------------------------------------------------------------------------
@@ -120,6 +123,48 @@ fn open_log_file() -> Option<std::fs::File> {
         .append(true)
         .open(&path)
         .ok()
+}
+
+// ---------------------------------------------------------------------------
+// GUI preferences (`<CEC home>/gui-settings.json`)
+// ---------------------------------------------------------------------------
+
+/// The GUI's own tiny preference file. Lives in the CEC app home (not the
+/// shared mesh home — these are this app's choices, not the machine's).
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct GuiSettings {
+    /// One-shot marker: the run-on-boot default has been applied, or the user
+    /// has made an explicit choice — either way, never re-default after this,
+    /// so turning autostart off *stays* off across launches.
+    #[serde(default)]
+    autostart_decided: bool,
+    /// Opt-in: closing the window hides to the tray instead of quitting.
+    #[serde(default)]
+    keep_background: bool,
+}
+
+fn gui_settings_path() -> Option<PathBuf> {
+    std::env::var_os(allmystuff_cec_protocol::CEC_HOME_ENV)
+        .map(|h| PathBuf::from(h).join("gui-settings.json"))
+}
+
+fn load_gui_settings() -> GuiSettings {
+    gui_settings_path()
+        .and_then(|p| std::fs::read(p).ok())
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+fn save_gui_settings(s: &GuiSettings) {
+    let Some(path) = gui_settings_path() else {
+        return;
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(bytes) = serde_json::to_vec_pretty(s) {
+        let _ = std::fs::write(&path, bytes);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -405,7 +450,35 @@ fn autostart_set(app: tauri::AppHandle, enabled: bool) -> Result<bool, String> {
     } else {
         mgr.disable().map_err(|e| e.to_string())?;
     }
+    // An explicit choice — the run-on-boot default must never re-apply over
+    // it on a later launch.
+    let mut s = load_gui_settings();
+    if !s.autostart_decided {
+        s.autostart_decided = true;
+        save_gui_settings(&s);
+    }
     Ok(mgr.is_enabled().unwrap_or(enabled))
+}
+
+/// Whether "keep running in the background" is on — closing the window then
+/// hides to the tray instead of quitting. Off by default: close means close.
+#[tauri::command]
+fn background_get(state: State<'_, AppState>) -> bool {
+    state
+        .keep_background
+        .load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Flip the keep-running-in-background option and persist it.
+#[tauri::command]
+fn background_set(state: State<'_, AppState>, enabled: bool) -> bool {
+    state
+        .keep_background
+        .store(enabled, std::sync::atomic::Ordering::Relaxed);
+    let mut s = load_gui_settings();
+    s.keep_background = enabled;
+    save_gui_settings(&s);
+    enabled
 }
 
 // ---------------------------------------------------------------------------
@@ -593,10 +666,42 @@ fn run_gui() -> ExitCode {
             service_restart,
             autostart_get,
             autostart_set,
+            background_get,
+            background_set,
         ])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // Close means close — quitting is the default. Only the
+                // explicit "keep running in the background" option turns the
+                // close into a hide-to-tray (Quit then lives in the tray menu).
+                let keep = window
+                    .state::<AppState>()
+                    .keep_background
+                    .load(std::sync::atomic::Ordering::Relaxed);
+                if keep {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .setup(move |app| {
             if let Err(e) = build_tray(app.handle()) {
                 tracing::warn!("couldn't create the tray icon: {e}");
+            }
+            // Run-on-boot is the default — a support tool that isn't there
+            // after a reboot doesn't support anyone. Applied exactly once
+            // (and only marked done when the registration took, so a failed
+            // attempt retries next launch); after that the user's own toggle
+            // is the last word, including "off".
+            let mut settings = load_gui_settings();
+            if !settings.autostart_decided {
+                match app.autolaunch().enable() {
+                    Ok(()) => {
+                        settings.autostart_decided = true;
+                        save_gui_settings(&settings);
+                    }
+                    Err(e) => tracing::warn!("couldn't register run-on-boot: {e}"),
+                }
             }
             // The window is created hidden (tauri.conf `visible: false`) so a
             // start-minimized login-item launch never flashes; reveal it now
@@ -616,6 +721,7 @@ fn run_gui() -> ExitCode {
             app.manage(AppState {
                 node: node.clone(),
                 node_child: Mutex::new(None),
+                keep_background: std::sync::atomic::AtomicBool::new(settings.keep_background),
             });
 
             let handle = app.handle().clone();
