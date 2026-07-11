@@ -505,6 +505,7 @@ class CecStore {
     this.specs = {
       hostname: "RECEPTION-01",
       os: "Windows 11 Pro 24H2",
+      board: "ASUS PRIME B550-PLUS",
       cpu: { brand: "AMD Ryzen 5 5600G", cores: 6, threads: 12, max_mhz: 4464 },
       memory: {
         total_bytes: 16 * 1024 ** 3,

@@ -77,6 +77,10 @@
         <span class="k">{specs.gpus.length > 1 ? `GPU ${i + 1}` : "GPU"}</span>
         <span class="v">{g.name}{g.vram_bytes ? ` · ${gb(g.vram_bytes)}` : ""}</span>
       {/each}
+      {#if specs.board}
+        <span class="k">Board</span>
+        <span class="v">{specs.board}</span>
+      {/if}
     </div>
     {#if disks.length > 0}
       <div class="disks">
