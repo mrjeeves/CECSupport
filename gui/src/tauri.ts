@@ -31,6 +31,7 @@ import type {
   ConnectRequest,
   Grant,
   ApprovalScope,
+  MachineSpecs,
   SessionEvent,
   ServiceStatus,
   ServiceResult,
@@ -103,6 +104,13 @@ export function cecStopHosting(): Promise<null> {
  *  customer must know their tap didn't take, not wait on a dead beacon. */
 export function cecAskHelp(on: boolean): Promise<void> {
   return mustInvoke("cec_ask_help", { on });
+}
+
+/** This machine's headline hardware for the spec card. Null in web mode, on
+ *  an older node (no such command), or while the node is still starting —
+ *  the card simply doesn't render then. */
+export function machineSpecs(): Promise<MachineSpecs | null> {
+  return tryInvoke<MachineSpecs>("machine_specs");
 }
 
 /** The help/asking state changed (`cec://help`). The field this app cares

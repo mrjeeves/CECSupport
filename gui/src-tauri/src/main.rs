@@ -204,6 +204,17 @@ async fn cec_stop_hosting(state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+/// This machine's headline hardware (CPU / RAM / GPUs / disks) off a fresh
+/// scan — the front door's spec card.
+#[tauri::command]
+async fn machine_specs(state: State<'_, AppState>) -> Result<Value, String> {
+    state
+        .node
+        .request("machine_specs", json!({}))
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Raise (or withdraw) the ask on the global help room. While on, this node
 /// beacons "I need help" to every CEC technician; a technician answers by
 /// dialing our own number room, so the normal approval still gates everything.
@@ -664,6 +675,7 @@ fn run_gui() -> ExitCode {
             cec_start_hosting,
             cec_stop_hosting,
             cec_ask_help,
+            machine_specs,
             cec_pending,
             cec_approve,
             cec_deny,

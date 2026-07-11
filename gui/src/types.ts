@@ -26,6 +26,24 @@ export interface CecStatus {
   label?: string;
 }
 
+/** `machine_specs` → this machine's headline hardware, for the front door's
+ *  spec card. No temperatures: the scanner reads no sensors, and the card
+ *  never invents numbers. Absent from an older node (the card just hides). */
+export interface MachineSpecs {
+  hostname: string;
+  os: string;
+  cpu: { brand: string; cores: number | null; threads: number; max_mhz: number | null };
+  memory: { total_bytes: number; available_bytes: number };
+  gpus: Array<{ name: string; vram_bytes: number | null }>;
+  disks: Array<{
+    name: string;
+    mount: string | null;
+    total_bytes: number;
+    available_bytes: number;
+    removable: boolean;
+  }>;
+}
+
 /** A technician's inbound connect request — drives the 3-choice modal.
  *  Carried by `cec_pending` (a snapshot list) and the `cec://request` event. */
 export interface ConnectRequest {
