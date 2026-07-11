@@ -215,6 +215,17 @@ async fn machine_specs(state: State<'_, AppState>) -> Result<Value, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Open CEC's TikTok in the system browser — the waiting screen's "catch us
+/// live" link. The URL is hardcoded here (not a parameter) so the webview
+/// never gains an open-anything primitive.
+#[tauri::command]
+async fn open_tiktok(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_shell::ShellExt as _;
+    app.shell()
+        .open("https://www.tiktok.com/@criticalerrorcomputing", None)
+        .map_err(|e| e.to_string())
+}
+
 /// Temps alone — the sensor read without the full scan, cheap enough for the
 /// spec card to poll so its one moving number actually moves.
 #[tauri::command]
@@ -688,6 +699,7 @@ fn run_gui() -> ExitCode {
             cec_ask_help,
             machine_specs,
             machine_temps,
+            open_tiktok,
             cec_pending,
             cec_approve,
             cec_deny,
