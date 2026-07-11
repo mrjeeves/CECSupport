@@ -93,16 +93,24 @@ class CecStore {
     return n;
   }
 
+  /** Set on destroy so the bring-up retry loop ends with the store. */
+  private stopped = false;
+
   async init(): Promise<void> {
     this.version = await appVersion();
 
-    // Join our own Silent mesh and wait — idempotent, safe to call at startup.
-    await cecStartHosting();
-    await this.refresh();
-
+    // Listeners first, so nothing the node emits during bring-up is missed.
     this.unlisteners.push(await onCecRequest((r) => this.onRequest(r)));
     this.unlisteners.push(await onCecSession((s) => this.onSession(s)));
     this.unlisteners.push(await onCecGrants((g) => (this.grants = g)));
+
+    // The node comes up in parallel with this webview — on a fresh machine its
+    // first start (identity generation, first-run AV scans of the sidecars)
+    // takes many seconds. A single early fetch returns null and the UI would
+    // sit at "Starting up…" forever over a perfectly healthy node. Keep asking
+    // until the node answers with our number, then settle into event-driven
+    // updates. Runs in the background so the rest of init never blocks on it.
+    void this.bringUp();
 
     this.service = await serviceStatus();
     this.autostart = await autostartGet();
@@ -114,7 +122,23 @@ class CecStore {
     if (this.demo) this.loadDemo();
   }
 
+  /** Host + fetch status until the node answers (see init). Idempotent and
+   *  bounded per-iteration; ends when the number arrives or the store is
+   *  destroyed. */
+  private async bringUp(): Promise<void> {
+    for (;;) {
+      if (this.stopped) return;
+      // Idempotent join of our own Silent mesh; a null (node still starting)
+      // is retried on the next round.
+      await cecStartHosting();
+      await this.refresh();
+      if (this.status?.number) return;
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+
   destroy(): void {
+    this.stopped = true;
     for (const un of this.unlisteners) un();
     this.unlisteners = [];
     if (this.timer) clearInterval(this.timer);
