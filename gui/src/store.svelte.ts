@@ -23,6 +23,7 @@ import {
   cecPending,
   cecRevoke,
   cecSetLabel,
+  machineSpecs,
   cecStartHosting,
   cecStatus,
   cecStopHosting,
@@ -42,6 +43,7 @@ import type {
   ConnectRequest,
   Grant,
   LiveSession,
+  MachineSpecs,
   ServiceStatus,
   SessionEvent,
 } from "./types";
@@ -78,6 +80,10 @@ class CecStore {
    *  room — drives the start screen's waiting card. Synced from `cec_status`
    *  and cleared live by the `cec://help` event when help arrives. */
   askingHelp = $state(false);
+  /** This machine's headline hardware for the spec card (null until the node
+   *  answers — the card hides). Fetched once the node is up; a fresh scan
+   *  each launch is plenty for a spec sheet. */
+  specs = $state<MachineSpecs | null>(null);
   toast = $state<string | null>(null);
   busy = $state(false);
 
@@ -153,7 +159,13 @@ class CecStore {
       // is retried on the next round.
       await cecStartHosting();
       await this.refresh();
-      if (this.status?.number) return;
+      if (this.status?.number) {
+        // Node's up — pull the spec card's scan once. Not part of refresh():
+        // a full hardware scan per event would be waste for numbers that
+        // barely move.
+        this.specs = await machineSpecs();
+        return;
+      }
       await new Promise((r) => setTimeout(r, 2000));
     }
   }

@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from "svelte";
   import { store } from "../store.svelte";
   import NumberScreen from "./NumberScreen.svelte";
+  import SpecSheet from "./SpecSheet.svelte";
   import StartScreen from "./StartScreen.svelte";
   import ApproveModal from "./ApproveModal.svelte";
   import ConnectedBanner from "./ConnectedBanner.svelte";
@@ -58,14 +59,19 @@
       </button>
       <NumberScreen />
       <ConnectedBanner />
+      <!-- The spec card sits between the number box and the access list, so a
+           technician on the phone can just ask the customer to read it. -->
+      <SpecSheet />
       <AccessList />
     {:else}
       <StartScreen />
       <!-- Live status shows on the front door too — a customer who asked for
            help never opens the number screen, but "X is viewing your screen"
            and "who can connect to your computer" must never be hidden behind
-           a navigation step while they're true. -->
+           a navigation step while they're true. The spec card sits between
+           the buttons and the access list, same as the number view. -->
       <ConnectedBanner />
+      <SpecSheet />
       <AccessList />
     {/if}
   </main>
