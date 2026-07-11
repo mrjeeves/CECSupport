@@ -48,6 +48,9 @@
     <button class="btn ghost small demo" onclick={() => store.simulateDial()}>
       Preview the approval prompt
     </button>
+    <button class="btn ghost small demo" onclick={() => store.simulatePurchase()}>
+      Preview the purchase prompt
+    </button>
   {/if}
 </section>
 

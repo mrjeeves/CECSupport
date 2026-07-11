@@ -289,7 +289,10 @@ async fn cec_deny(
 ) -> Result<(), String> {
     state
         .node
-        .request("cec_deny", json!({ "tech": tech, "session_id": session_id }))
+        .request(
+            "cec_deny",
+            json!({ "tech": tech, "session_id": session_id }),
+        )
         .await
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -348,6 +351,61 @@ async fn cec_set_label(state: State<'_, AppState>, label: String) -> Result<(), 
     Ok(())
 }
 
+/// Report where the customer is in a purchase ask — `seen` / `opened` /
+/// `claimed` / `declined`. The state is validated here (like `cec_approve`'s
+/// scope) so a malformed value is rejected before it reaches the node. (The
+/// app-state handle is injected by type, so the JS `state` arg keeps its
+/// natural name.)
+#[tauri::command]
+async fn cec_purchase_status(
+    app_state: State<'_, AppState>,
+    purchase_id: String,
+    state: String,
+) -> Result<Value, String> {
+    let canonical = canonical_purchase_state(&state)?;
+    app_state
+        .node
+        .request(
+            "cec_purchase_status",
+            json!({ "purchase_id": purchase_id, "state": canonical }),
+        )
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// The tracked purchase asks — the re-sync snapshot after a relaunch.
+#[tauri::command]
+async fn cec_purchases(state: State<'_, AppState>) -> Result<Value, String> {
+    state
+        .node
+        .request("cec_purchases", json!({}))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Open the secure-checkout URL in the customer's default browser. Locked to
+/// the one CEC purchase page: this command exists solely for the purchase
+/// hand-off, so nothing else — no other site, no other scheme — can ride it.
+#[tauri::command]
+async fn open_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    validate_checkout_url(&url)?;
+    app.opener()
+        .open_url(&url, None::<String>)
+        .map_err(|e| e.to_string())
+}
+
+/// The gate behind [`open_url`]: only the CEC purchase page (or a page under
+/// it) may be opened, https only. Everything the app appends is query-string.
+fn validate_checkout_url(url: &str) -> Result<(), String> {
+    const ALLOWED_PREFIX: &str = "https://support.cec.direct/buy/";
+    if url.starts_with(ALLOWED_PREFIX) {
+        Ok(())
+    } else {
+        Err("refusing to open a non-checkout URL".into())
+    }
+}
+
 /// Validate a UI scope string and return its canonical wire form. Uses the
 /// shared [`ApprovalScope`](allmystuff_cec_protocol::ApprovalScope) as the
 /// source of truth for the three allowed values.
@@ -364,6 +422,24 @@ fn canonical_scope(scope: &str) -> Result<&'static str, String> {
         ApprovalScope::ThreeHours => "three_hours",
         ApprovalScope::Forever => "forever",
     })
+}
+
+/// Validate a purchase-status word — the customer reports the four progress
+/// beats; the closing states (`confirmed` / `cancelled`) are technician verbs
+/// and are rejected here.
+///
+/// The words mirror `allmystuff_cec_protocol::PurchaseState` (whose own tests
+/// pin the wire form). Spelled out locally rather than imported so this crate
+/// still compiles against a pre-purchase node release — the flow then simply
+/// lights up at runtime once the bundled node is new enough to relay it.
+fn canonical_purchase_state(state: &str) -> Result<&'static str, String> {
+    match state {
+        "seen" => Ok("seen"),
+        "opened" => Ok("opened"),
+        "claimed" => Ok("claimed"),
+        "declined" => Ok("declined"),
+        other => Err(format!("unknown purchase state: {other}")),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -678,6 +754,7 @@ fn run_gui() -> ExitCode {
             reveal_main_window(app);
         }))
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--minimized"]),
@@ -696,6 +773,9 @@ fn run_gui() -> ExitCode {
             cec_forget_node,
             cec_grants,
             cec_set_label,
+            cec_purchase_status,
+            cec_purchases,
+            open_url,
             service_status,
             service_install,
             service_uninstall,
@@ -845,7 +925,10 @@ fn run_agent(_service: bool) -> ExitCode {
 
 /// `cec-support service <verb>` → the local service crate.
 fn run_service(args: &[String]) -> ExitCode {
-    let action = args.iter().map(String::as_str).find(|a| !a.starts_with('-'));
+    let action = args
+        .iter()
+        .map(String::as_str)
+        .find(|a| !a.starts_with('-'));
     let cmd = match action {
         Some("install") => cec_support_service::ServiceCmd::Install { log: None },
         Some("uninstall") | Some("remove") => cec_support_service::ServiceCmd::Uninstall,
@@ -858,9 +941,7 @@ fn run_service(args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
         None => {
-            eprintln!(
-                "Usage: cec-support service <install|uninstall|status|start|stop|restart>"
-            );
+            eprintln!("Usage: cec-support service <install|uninstall|status|start|stop|restart>");
             return ExitCode::FAILURE;
         }
     };
@@ -1031,6 +1112,34 @@ mod tests {
         assert_eq!(canonical_scope("three_hours").unwrap(), "three_hours");
         assert_eq!(canonical_scope("forever").unwrap(), "forever");
         assert!(canonical_scope("someday").is_err());
+    }
+
+    #[test]
+    fn canonical_purchase_state_accepts_customer_beats_only() {
+        assert_eq!(canonical_purchase_state("seen").unwrap(), "seen");
+        assert_eq!(canonical_purchase_state("opened").unwrap(), "opened");
+        assert_eq!(canonical_purchase_state("claimed").unwrap(), "claimed");
+        assert_eq!(canonical_purchase_state("declined").unwrap(), "declined");
+        // The closing states are the technician's verbs, never a customer
+        // status — and garbage is garbage.
+        assert!(canonical_purchase_state("confirmed").is_err());
+        assert!(canonical_purchase_state("cancelled").is_err());
+        assert!(canonical_purchase_state("paid").is_err());
+    }
+
+    #[test]
+    fn open_url_is_locked_to_the_checkout_page() {
+        assert!(validate_checkout_url(
+            "https://support.cec.direct/buy/diagnostic/?sn=123456789&ref=buy-1"
+        )
+        .is_ok());
+        assert!(validate_checkout_url("https://support.cec.direct/buy/diagnostic/").is_ok());
+        // No other page, host, or scheme rides the purchase hand-off.
+        assert!(validate_checkout_url("https://support.cec.direct/").is_err());
+        assert!(validate_checkout_url("http://support.cec.direct/buy/diagnostic/").is_err());
+        assert!(validate_checkout_url("https://evil.example/buy/diagnostic/").is_err());
+        assert!(validate_checkout_url("file:///etc/passwd").is_err());
+        assert!(validate_checkout_url("https://support.cec.direct.evil.example/buy/x").is_err());
     }
 
     #[test]

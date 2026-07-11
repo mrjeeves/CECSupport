@@ -17,10 +17,14 @@
 //   cec_grants {}                         -> Grant[]
 //   cec_forget_node { node }
 //   cec_set_label { label }               (friendly-name helper; see README)
+//   cec_purchase_status { purchase_id, state }   (state: seen|opened|claimed|declined)
+//   cec_purchases {}                      -> Purchase[]
 //
 //   event cec://request { tech, agent_name, want_control, session_id, verification_code }
 //   event cec://session { session_id, state }
 //   event cec://grants  { grants }
+//   event cec://purchase { purchase_id, session_id, peer, agent_name, item,
+//                          price, note, state, updated_at }
 //
 // The service commands (install / uninstall / status / …) go to the local
 // `cec-support-service` crate via separate Tauri commands, NOT the node.
@@ -31,6 +35,7 @@ import type {
   Grant,
   ApprovalScope,
   MachineSpecs,
+  Purchase,
   SessionEvent,
   ServiceStatus,
   ServiceResult,
@@ -201,6 +206,46 @@ export function cecSetLabel(label: string): Promise<null> {
   return tryInvoke("cec_set_label", { label });
 }
 
+/** Report where the customer is in a purchase ask (seen / opened / claimed /
+ *  declined). Best-effort by design: the customer's own UI always moves, and
+ *  the technician on the phone verifies the order in the store regardless —
+ *  a dropped status must never block the customer. */
+export function cecPurchaseStatus(
+  purchaseId: string,
+  state: "seen" | "opened" | "claimed" | "declined",
+): Promise<null> {
+  return tryInvoke("cec_purchase_status", { purchaseId, state });
+}
+
+/** The tracked purchase asks — the re-sync snapshot, so a relaunched app
+ *  mid-session recovers a live ask instead of losing the prompt. */
+export async function cecPurchases(): Promise<Purchase[]> {
+  const r = await tryInvoke<Purchase[]>("cec_purchases");
+  return Array.isArray(r) ? r : [];
+}
+
+/** Open a URL in the customer's default browser — how the secure checkout
+ *  opens (payment belongs in *their* browser, with their password manager and
+ *  the store's real address bar, never inside this app). Returns whether the
+ *  hand-off happened; in web mode it's a plain new tab so the preview behaves
+ *  like the real thing. */
+export async function openUrl(url: string): Promise<boolean> {
+  if (!isTauri()) {
+    // `noopener` makes window.open return null BY SPEC — the null is not a
+    // failure signal, so don't read it as one. Web mode is the demo; assume
+    // the tab opened.
+    window.open(url, "_blank", "noopener,noreferrer");
+    return true;
+  }
+  try {
+    await rawInvoke("open_url", { url });
+    return true;
+  } catch (e) {
+    console.warn("couldn't open the browser:", e);
+    return false;
+  }
+}
+
 // ---- CEC events (drive the modal, banner, and access list live) --------
 
 /** A technician is dialing in — drive the 3-choice Approve modal. Returns an
@@ -232,6 +277,17 @@ export async function onCecGrants(
   return listen<{ grants: Grant[] }>("cec://grants", (e) =>
     cb(e.payload.grants ?? []),
   );
+}
+
+/** A purchase ask arrived or moved (`cec://purchase`) — drive the purchase
+ *  prompt. The event stream is the truth: our own status reports echo back
+ *  through here too, so the modal renders exactly what the node recorded. */
+export async function onCecPurchase(
+  cb: (p: Purchase) => void,
+): Promise<() => void> {
+  if (!isTauri()) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<Purchase>("cec://purchase", (e) => cb(e.payload));
 }
 
 // ---- background service (the local cec-support-service crate) -----------

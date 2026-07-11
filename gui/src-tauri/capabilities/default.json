@@ -14,7 +14,6 @@
     "core:window:allow-outer-size",
     "core:window:allow-outer-position",
     "core:window:allow-scale-factor",
-    "core:window:allow-current-monitor",
-    "shell:allow-open"
+    "core:window:allow-current-monitor"
   ]
 }

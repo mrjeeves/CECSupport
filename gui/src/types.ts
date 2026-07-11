@@ -117,6 +117,52 @@ export function grantScope(g: Grant): ApprovalScope {
   return typeof g.scope === "string" ? g.scope : g.scope.kind;
 }
 
+/** Where a purchase ask stands. `requested` → the beats this app reports
+ *  (`seen` / `opened` / `claimed` / `declined`) → the technician's close
+ *  (`confirmed` when the order checks out in the store, `cancelled` on a
+ *  withdrawal). The two closing states are terminal. */
+export type PurchaseState =
+  | "requested"
+  | "seen"
+  | "opened"
+  | "claimed"
+  | "declined"
+  | "confirmed"
+  | "cancelled";
+
+/** A purchase ask — the $50 diagnostic session. Carried by the
+ *  `cec://purchase` event and the `cec_purchases` snapshot. A technician can
+ *  raise one at any point in a help call: before connecting (quoting the work
+ *  up front), mid-session, or after disconnecting.
+ *
+ *  Display strings only: payment happens in the customer's own browser on the
+ *  store's hosted checkout (this app opens its own built-in purchase URL — the
+ *  wire never chooses where the browser goes), and the technician confirms
+ *  against the order that lands in the store. No card details ever touch this
+ *  app or the mesh. */
+export interface Purchase {
+  purchase_id: string;
+  /** Empty for an ask made outside a session (before the technician
+   *  connected, or after they disconnected). */
+  session_id: string;
+  /** The technician's device id (the asker). */
+  peer: string;
+  /** The asker's Agent Name — from the standing approval when one exists (the
+   *  name the customer actually let in), else the name the ask carried: the
+   *  same trust as the connect prompt, checked against the person on the
+   *  phone. */
+  agent_name: string;
+  /** What's being purchased, e.g. "CEC Diagnostic Session". */
+  item: string;
+  /** Display price, e.g. "$50" — the checkout page is authoritative. */
+  price: string;
+  /** Optional free-text from the technician. */
+  note: string;
+  state: PurchaseState;
+  /** Unix seconds of the last state change. */
+  updated_at: number;
+}
+
 /** The OS background-service status, from the `cec-support-service` crate. */
 export interface ServiceStatus {
   platform: string;

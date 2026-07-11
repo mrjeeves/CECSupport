@@ -29,7 +29,10 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "externalBin": ["binaries/myownmesh", "binaries/allmystuff-serve"],
+    "externalBin": [
+      "binaries/myownmesh",
+      "binaries/allmystuff-serve"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -41,9 +44,5 @@
       "signingIdentity": "-"
     }
   },
-  "plugins": {
-    "shell": {
-      "open": true
-    }
-  }
+  "plugins": {}
 }

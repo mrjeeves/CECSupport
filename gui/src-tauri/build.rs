@@ -340,7 +340,11 @@ fn sibling_binary(sc: &Sidecar) -> Option<PathBuf> {
     let name = format!("{}{}", sc.base, exe_suffix());
     let triple = target_triple();
     let profile = env::var("PROFILE").unwrap_or_else(|_| "debug".into());
-    let other = if profile == "release" { "debug" } else { "release" };
+    let other = if profile == "release" {
+        "debug"
+    } else {
+        "release"
+    };
     let candidates = [
         target.join(&triple).join(&profile).join(&name),
         target.join(&profile).join(&name),
@@ -478,15 +482,13 @@ fn release_platform_name(triple: &str) -> Result<&'static str, String> {
 /// Run a staging subprocess with a hard deadline, killing it on overrun.
 /// Everything build.rs shells out to must be bounded — an unbounded child
 /// hangs the whole build at the final crate with no output.
-fn run_bounded(
-    cmd: &mut Command,
-    what: &str,
-    secs: u64,
-) -> Result<std::process::Output, String> {
+fn run_bounded(cmd: &mut Command, what: &str, secs: u64) -> Result<std::process::Output, String> {
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| format!("{what} spawn failed: {e}"))?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("{what} spawn failed: {e}"))?;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
     loop {
         match child.try_wait() {
@@ -565,7 +567,10 @@ fn download_release_asset(sc: &Sidecar, tag: &str, staging: &Path) -> Result<Pat
 
     // Say so before going to the network: this step is why a build can sit on
     // the final crate for a while, and without the line it reads as a hang.
-    println!("cargo:warning=[{}] downloading {asset} from {} {tag}…", sc.base, sc.repo);
+    println!(
+        "cargo:warning=[{}] downloading {asset} from {} {tag}…",
+        sc.base, sc.repo
+    );
     // Bounded fetch: a stalled connection must fail the step, not wedge the
     // whole build indefinitely (--retry would otherwise multiply the wait).
     // On timeout/failure a dev build falls back to the stub path and keeps
@@ -618,7 +623,11 @@ fn download_release_asset(sc: &Sidecar, tag: &str, staging: &Path) -> Result<Pat
         }
     } else {
         let out = run_bounded(
-            Command::new("tar").arg("-xzf").arg(&archive).arg("-C").arg(staging),
+            Command::new("tar")
+                .arg("-xzf")
+                .arg(&archive)
+                .arg("-C")
+                .arg(staging),
             "tar",
             60,
         )?;
