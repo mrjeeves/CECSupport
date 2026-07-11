@@ -61,10 +61,12 @@
       <AccessList />
     {:else}
       <StartScreen />
-      <!-- A live session shows on the front door too — a customer who asked
-           for help never opened the number screen, but "X is viewing your
-           screen" must never be off-screen while it's true. -->
+      <!-- Live status shows on the front door too — a customer who asked for
+           help never opens the number screen, but "X is viewing your screen"
+           and "who can connect to your computer" must never be hidden behind
+           a navigation step while they're true. -->
       <ConnectedBanner />
+      <AccessList />
     {/if}
   </main>
 
