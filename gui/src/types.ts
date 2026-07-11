@@ -31,6 +31,10 @@ export interface CecStatus {
 export interface MachineSpecs {
   hostname: string;
   os: string;
+  /** DMI system/board label — "Dell Inc. XPS 15" on a laptop, the
+   *  motherboard model on a custom build. Null/absent when the firmware
+   *  doesn't say (the card hides the row). */
+  board?: string | null;
   cpu: {
     brand: string;
     cores: number | null;
