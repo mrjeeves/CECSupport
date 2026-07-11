@@ -6,6 +6,7 @@
   import SpecSheet from "./SpecSheet.svelte";
   import StartScreen from "./StartScreen.svelte";
   import ApproveModal from "./ApproveModal.svelte";
+  import ContactCard from "./ContactCard.svelte";
   import ConnectedBanner from "./ConnectedBanner.svelte";
   import AccessList from "./AccessList.svelte";
   import SettingsPanel from "./SettingsPanel.svelte";
@@ -115,6 +116,7 @@
         Back
       </button>
       <NumberScreen />
+      {#if store.contactVisible}<ContactCard />{/if}
       <ConnectedBanner />
       <!-- The spec card sits between the number box and the access list, so a
            technician on the phone can just ask the customer to read it. -->
@@ -122,17 +124,32 @@
       <AccessList />
     {:else}
       <StartScreen />
-      <!-- Live status shows on the front door too — a customer who asked for
-           help never opens the number screen, but "X is viewing your screen"
-           and "who can connect to your computer" must never be hidden behind
-           a navigation step while they're true. The spec card sits between
-           the buttons and the access list, same as the number view. -->
+      <!-- CEC's contact card appears the moment the ask goes up and stays for
+           the rest of the run — help arriving withdraws the ask, not the
+           phone number. Live status shows on the front door too — a customer
+           who asked for help never opens the number screen, but "X is viewing
+           your screen" and "who can connect to your computer" must never be
+           hidden behind a navigation step while they're true. The spec card
+           sits between the buttons and the access list, same as the number
+           view. -->
+      {#if store.contactVisible}<ContactCard />{/if}
       <ConnectedBanner />
       <SpecSheet />
       <AccessList />
     {/if}
     </div>
   </main>
+
+  <!-- The identity bar: the pair CEC matches on, on screen the whole time —
+       whatever view is up, whatever state the ask is in. The technician's
+       card spells the same "Name (HOSTNAME)", so "what does the bottom of
+       the window say?" always resolves a call. -->
+  {#if store.grouped || store.computerName}
+    <footer class="idbar">
+      {#if store.computerName}<span class="id-name">{store.computerName}</span>{/if}
+      {#if store.grouped}<span class="id-num">CEC Support {store.grouped}</span>{/if}
+    </footer>
+  {/if}
 
   {#if request}
     <ApproveModal {request} />
@@ -204,6 +221,28 @@
   .content .back {
     align-self: flex-start;
     margin-bottom: -0.5rem;
+  }
+
+  .idbar {
+    flex: 0 0 auto;
+    display: flex;
+    justify-content: center;
+    align-items: baseline;
+    gap: 0.9rem;
+    flex-wrap: wrap;
+    padding: 0.45rem 1rem;
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    font-size: 0.75rem;
+    color: var(--ink-soft);
+  }
+  .id-name {
+    font-weight: 600;
+  }
+  .id-num {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.03em;
+    color: var(--ink-faint);
   }
 
   .toast {

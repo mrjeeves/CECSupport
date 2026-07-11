@@ -115,6 +115,25 @@ class CecStore {
     return n;
   }
 
+  /** "Name (HOSTNAME)" — the same pair the technician's card shows, so both
+   *  sides can match word for word. Empty until the node answers. */
+  get computerName(): string {
+    const label = this.status?.label?.trim() ?? "";
+    const host = this.specs?.hostname?.trim() ?? "";
+    if (label && host && label.toLowerCase() !== host.toLowerCase()) {
+      return `${label} (${host})`;
+    }
+    return label || host || "";
+  }
+
+  /** Once the customer has asked for help, CEC's contact card stays up for
+   *  the rest of the run — the conversation outlives the ask (help arriving
+   *  withdraws the ask, and the customer still wants the phone number). */
+  contactPinned = $state(false);
+  get contactVisible(): boolean {
+    return this.askingHelp || this.contactPinned;
+  }
+
   /** Set on destroy so the bring-up retry loop ends with the store. */
   private stopped = false;
 
@@ -200,8 +219,13 @@ class CecStore {
     this.pending = await cecPending();
     this.grants = await cecGrants();
     // The node is the truth for the ask (it withdraws it itself on approval,
-    // and a restart drops it) — mirror it whenever the status lands.
-    if (this.status) this.askingHelp = this.status.asking_help === true;
+    // and a restart drops it) — mirror it whenever the status lands. Pinning
+    // only ever latches on: an ask in flight across an app restart re-pins
+    // the contact card, and nothing unpins it.
+    if (this.status) {
+      this.askingHelp = this.status.asking_help === true;
+      if (this.askingHelp) this.contactPinned = true;
+    }
   }
 
   private async loadGrants(): Promise<void> {
@@ -336,12 +360,14 @@ class CecStore {
   async askHelp(): Promise<void> {
     if (this.demo) {
       this.askingHelp = true;
+      this.contactPinned = true;
       return;
     }
     this.busy = true;
     try {
       await cecAskHelp(true);
       this.askingHelp = true;
+      this.contactPinned = true;
     } catch (e) {
       this.notify(`Couldn't ask for help: ${errMsg(e)}`);
     } finally {
