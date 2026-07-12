@@ -210,9 +210,9 @@ async fn machine_specs(state: State<'_, AppState>) -> Result<Value, String> {
 /// never gains an open-anything primitive.
 #[tauri::command]
 async fn open_tiktok(app: tauri::AppHandle) -> Result<(), String> {
-    use tauri_plugin_shell::ShellExt as _;
-    app.shell()
-        .open("https://www.tiktok.com/@criticalerrorcomputing", None)
+    use tauri_plugin_opener::OpenerExt as _;
+    app.opener()
+        .open_url("https://www.tiktok.com/@criticalerrorcomputing", None::<String>)
         .map_err(|e| e.to_string())
 }
 
@@ -753,7 +753,6 @@ fn run_gui() -> ExitCode {
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             reveal_main_window(app);
         }))
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,

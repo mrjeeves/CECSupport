@@ -39,10 +39,9 @@ sha2 = "0.10"
 # `tray-icon` keeps CEC Support reachable from the notification area while it
 # waits in the background for a technician.
 tauri = { version = "2", features = ["tray-icon"] }
-tauri-plugin-shell = "2"
-# Opens the secure-checkout URL in the customer's default browser — the
-# diagnostic-purchase hand-off. (The shell plugin's `open` is deprecated in
-# favour of this.)
+# Every "open in the customer's browser" goes through this one plugin — the
+# secure-checkout hand-off and the TikTok link. (It replaces the shell
+# plugin's deprecated `open`, so shell isn't a dependency at all.)
 tauri-plugin-opener = "2"
 # "Open CEC Support when this computer starts" — a per-user login item
 # (Windows Run key / macOS LaunchAgent / Linux autostart), no admin needed.
