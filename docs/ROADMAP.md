@@ -9,8 +9,9 @@ repositories, so it also records the **cross-repo build order**.
 
 These are green today (`cargo test` / `clippy -D warnings` / `fmt --check`):
 
-- **`allmystuff-cec-protocol`** (in AllMyStuff) — constants, `SupportId` +
-  `support_id_from_device`, `network_id_for_number` / `network_id_for_device`,
+- **`allmystuff-cec-protocol`** (in AllMyStuff) — constants (incl.
+  `HELP_NETWORK_ID` = the shared support area), `SupportId` +
+  `support_id_from_device` (the display/verification number),
   `ApprovalScope` (Once / ThreeHours / Forever), `SupportPresence`,
   `ControlMessage` / `ConnectControl` / `AppControl`, the media-frame codec.
   **16 unit tests.**
@@ -31,14 +32,18 @@ first). They are validated at the layer that *can* be checked — the frontend
 type-checker — and reviewed by inspection:
 
 - **AllMyStuff node "CEC mode" + technician GUI** — the secret "CEC Support"
-  settings tab (Agent Name + Customer number → dial), revealed only by a hidden
-  keyboard gesture. Dialed customers show as ordinary graph peers (no "fleet
-  group" — the CEC mesh is Silent, with no roster); the tab lists them from CEC
-  state via `cec_dialed`. The node-control command surface is `cec_start_hosting`,
-  `cec_dial`, `cec_pending`, `cec_approve`, `cec_deny`, `cec_revoke`, `cec_dialed`,
-  the app-wide `forget_node` (on every node's gear), and the `cec://*` events. The
-  Svelte frontend is type-checked (`pnpm check`); the node backend needs the
-  Linux media stack **and** the MyOwnMesh `Silent` API below.
+  settings tab (Agent Name + the raised-hand queue → answer; a Customer number
+  entry as the fallback), revealed only by a hidden keyboard gesture. Every CEC
+  node lives on the one shared support area (`cecsupport-clients`); a technician
+  answers a raised hand by dialing that customer's device directly, and dialed
+  customers show as ordinary graph peers. The tab lists them from CEC state via
+  `cec_dialed`. The node-control command surface is `cec_online`, `cec_dial_node`
+  (answer a hand / reconnect), `cec_dial` (number fallback), `cec_help_watch` /
+  `cec_help_list`, `cec_pending`, `cec_approve`, `cec_deny`, `cec_revoke`,
+  `cec_dialed`, the app-wide `forget_node` (on every node's gear), and the
+  `cec://*` events. The Svelte frontend is type-checked (`pnpm check`); the node
+  backend needs the Linux media stack **and** the MyOwnMesh hub/`Silent` API
+  below.
 - **CEC Support client GUI (`gui/`) + `cec-support` binary** — the Tauri + Svelte
   customer app (number screen, three-choice approve modal, connected banner,
   access list, service toggle). It installs like a **normal Windows app**: the
@@ -84,11 +89,15 @@ every step.
 None of the following can be exercised in this environment; they are the
 acceptance tests for the first real build:
 
-- End-to-end: customer launches → reads number → technician dials by number →
-  customer sees "‹Agent› is trying to connect" → Approve Once/3h/Forever →
-  screen appears → control works → Revoke stops it immediately.
-- The Silent mesh actually forms **no** connection until `connect_peer`, and the
-  per-number room is unreachable without the number.
+- End-to-end (headline): customer launches → **Ask for help** → technician sees
+  the raised hand and answers → customer sees "‹Agent› is trying to connect" →
+  Approve Once/3h/Forever → screen appears → control works → Revoke stops it
+  immediately.
+- End-to-end (fallback): technician types the customer's number → node resolves
+  it to that device on the shared area → same approve/connect flow.
+- On the shared area, a customer connects only to the CEC infra hubs and forms
+  **no** connection to another customer, and no session forms until the
+  technician's deliberate `connect_peer`.
 - Windows: `sc.exe` service install/uninstall, unattended reconnect after
   reboot, and that a 3-hour grant expires and re-prompts.
 - Screen capture + input injection latency/quality on Windows (Media Foundation
@@ -99,10 +108,11 @@ acceptance tests for the first real build:
 
 ## Nice-to-haves (later)
 
-- Optional: a future MyOwnMesh could let a Silent node suppress even the
-  transport handshake for un-dialed peers entirely (today a dialed peer's offer
-  is answered; discovery is presence-only). Not needed for the per-number-room
-  model, where rooms are tiny.
+- **A proper support queue.** The raised-hand list is the queue today; the
+  number is the fallback for when that list gets too crowded to pick someone
+  out. A real queue — ordering, claim/assignment across technicians, wait-time
+  surfacing — is the near-term follow-up that lets the hand-raise path scale
+  past the point where the number workaround is needed.
 - A random (non-derived) number option for customers who want a fresh code per
   session rather than one stable to their device key.
 - Session audit log on the customer side ("who connected, when, for how long").

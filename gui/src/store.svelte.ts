@@ -25,9 +25,8 @@ import {
   cecSetLabel,
   machineSpecs,
   machineTemps,
-  cecStartHosting,
+  cecOnline,
   cecStatus,
-  cecStopHosting,
   isTauri,
   onCecGrants,
   onCecHelp,
@@ -112,8 +111,11 @@ class CecStore {
     return Object.values(this.sessions).filter((s) => s.state !== "ended");
   }
 
-  get hosting(): boolean {
-    return this.status?.hosting ?? false;
+  /** Whether this device is live on the support area — the app is up and the
+   *  node answered with our number. (There is no separate "hosting" toggle
+   *  now: residence on the area is standing from bring-up.) */
+  get online(): boolean {
+    return !!this.status?.number;
   }
 
   /** The customer's Support number, grouped for reading aloud (e.g. 123 456 789). */
@@ -186,9 +188,9 @@ class CecStore {
     if (this.demo) return;
     for (;;) {
       if (this.stopped) return;
-      // Idempotent join of our own Silent mesh; a null (node still starting)
-      // is retried on the next round.
-      await cecStartHosting();
+      // Idempotent residence on the shared support area; a null (node still
+      // starting) is retried on the next round.
+      await cecOnline();
       await this.refresh();
       if (this.status?.number) {
         // Node's up — pull the spec card's scan once. Not part of refresh():
@@ -353,15 +355,9 @@ class CecStore {
     this.notify("Removed. They can't reconnect without asking you again.");
   }
 
-  async setHosting(on: boolean): Promise<void> {
-    if (on) await cecStartHosting();
-    else await cecStopHosting();
-    this.status = await cecStatus();
-  }
-
-  /** "Ask for help": beacon this machine onto the global help room until a
-   *  technician connects or the customer cancels. The node brings hosting up
-   *  as part of the ask, so a tap on a fresh launch still just works. */
+  /** "Ask for help": raise this machine's hand on the support area until a
+   *  technician connects or the customer cancels. The node ensures area
+   *  residence as part of the ask, so a tap on a fresh launch still just works. */
   async askHelp(): Promise<void> {
     // A fresh ask starts with an unknown reach — the card shows "raising
     // your hand…" until the first beacon reports who it reached.
@@ -469,9 +465,8 @@ class CecStore {
   private loadDemo(): void {
     this.status = {
       number: "123456789",
-      network_id: "cec-123456789",
+      network_id: "cecsupport-clients",
       role: "client",
-      hosting: true,
       label: "Reception PC",
     };
     this.grants = [

@@ -27,16 +27,16 @@
     </div>
 
     <p class="hint">
-      Read this number to your CEC technician so they can connect to help you.
+      Press <b>Ask for help</b> and your technician will see you — or read this
+      number to them if they ask for it.
     </p>
 
-    <div class="status" class:waiting={store.hosting}>
-      {#if store.hosting}
+    <div class="status" class:waiting={store.online}>
+      {#if store.online}
         <span class="dot" aria-hidden="true"></span>
-        <span>Waiting for your technician to connect…</span>
+        <span>Ready — your technician can connect when you ask for help.</span>
       {:else}
-        <span>Sharing is off — no one can connect right now.</span>
-        <button class="btn small" onclick={() => store.setHosting(true)}>Turn on</button>
+        <span>Starting up…</span>
       {/if}
     </div>
   {:else}

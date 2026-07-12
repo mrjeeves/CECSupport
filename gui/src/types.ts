@@ -8,18 +8,18 @@
  *  internally-tagged `ApprovalScope`). */
 export type ApprovalScope = "once" | "three_hours" | "forever";
 
-/** `cec_status` → the customer's own support identity + hosting state. */
+/** `cec_status` → the customer's own support identity. */
 export interface CecStatus {
-  /** The short Support number the customer reads to their technician,
-   *  e.g. "123456789". */
+  /** The short Support number the customer reads to their technician when the
+   *  hand-raise queue is crowded, e.g. "123456789". A display/verification
+   *  label derived from the device key — never a mesh room. */
   number: string;
-  /** The number-derived Silent-mesh `network_id` (e.g. "cec-123456789"). */
+  /** The shared support area `network_id` ("cecsupport-clients") — the one
+   *  mesh every CEC node lives on. */
   network_id: string;
   /** This node's role — always "client" for the customer app. */
   role: string;
-  /** Whether we've joined our own Silent mesh and are waiting for a dial. */
-  hosting: boolean;
-  /** Whether this node is currently asking for help on the global help room
+  /** Whether this node is currently asking for help on the support area
    *  (the "Ask for help" button's live state). Absent from an older node. */
   asking_help?: boolean;
   /** This computer's friendly name, if the customer set one. */

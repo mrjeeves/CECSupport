@@ -14,33 +14,40 @@ is [MyOwnMesh](https://github.com/mrjeeves/MyOwnMesh). See
 
 ## What the customer sees
 
-1. **Their support number.** On launch the app shows a short number (9 digits,
-   e.g. `123 456 789`), big and clear, with a copy button and "read this to your
-   technician". The number is derived from the device's key
-   (`allmystuff_cec_protocol::support_id_from_device`), so no directory is
-   needed — the technician derives the same number-to-room mapping locally.
-2. **It waits.** The app joins a MyOwnMesh network of type **Silent** whose
-   `network_id` is derived from the number
-   (`network_id_for_number` → `cec-123456789`). A Silent mesh auto-dials nobody
-   and never gossips a roster, so the customer is only *discoverable* to someone
-   who already knows the number. It connects to no one on its own.
-3. **Approve or deny.** When a technician dials in, a modal appears:
+1. **Ask for help.** The headline button. One tap raises the customer's hand on
+   the shared support area — a `SupportPresence` beacon a technician sees in
+   their queue and answers by connecting to this device directly.
+2. **Their support number.** Shown too (9 digits, e.g. `123 456 789`), with a
+   copy button and "read this to your technician". It's derived from the
+   device's key (`allmystuff_cec_protocol::support_id_from_device`) and serves
+   as a display/verification label and a **fallback**: for a customer who'd
+   rather read a number out, or for when the raised-hand queue is too crowded
+   to pick them out, a technician can type the number and the node resolves it
+   to this device on the area. It is **not** a mesh room.
+3. **One shared support area.** On launch the app takes up residence on the one
+   well-known MyOwnMesh network every CEC node shares
+   (`HELP_NETWORK_ID` = `cecsupport-clients`), hub-shaped via `CEC_HELP_HUBS`.
+   The customer connects only to CEC-operated infra hubs — never to other
+   customers — and sees nobody; a technician's deliberate dial (device id,
+   from the beacon) opens the one session. It connects to a technician only
+   when asked, and only after the customer approves.
+4. **Approve or deny.** When a technician dials in, a modal appears:
    "**‹Agent Name› is trying to connect to your computer**", with the 6-digit
    verification code to check against what the technician reads out, and three
    choices — **Approve Once**, **Auto-Approve for 3 hours**, **Auto-Approve
    Forever** — plus **Deny**. (These map to `ApprovalScope::Once` /
    `ThreeHours` / `Forever` in `allmystuff-cec-consent`.)
-4. **While connected**, a small banner shows "‹Agent› is connected — viewing /
+5. **While connected**, a small banner shows "‹Agent› is connected — viewing /
    controlling your screen" with a **Disconnect**, and a list of everyone with
    standing access (with a live countdown for the 3-hour ones) each with a
    **Forget** (revoke) button that bites immediately.
-5. **Settings**: an **Install as a background service** toggle (so CEC Support
+6. **Settings**: an **Install as a background service** toggle (so CEC Support
    reconnects after a reboot mid-repair), an Uninstall/Stop control, an "open at
    startup" toggle, and a friendly name for this computer.
 
 It is **customer-only**. It never browses or dials anyone (that's the
 technician's AllMyStuff app) — no graph, no fleets, no file browser, no
-terminal. Just: my number, approve/deny, who's connected, revoke,
+terminal. Just: ask for help, approve/deny, who's connected, revoke,
 install-service.
 
 ## How it's built (reuse, don't clobber)
@@ -52,7 +59,7 @@ AllMyStuff (git dependencies):
 
 - `allmystuff-node` — the node engine + control socket.
 - `allmystuff-cec-protocol` — the CEC wire contract, `SupportId`,
-  `network_id_for_number`, `ApprovalScope`.
+  `HELP_NETWORK_ID` (the shared support area), `ApprovalScope`.
 - `allmystuff-cec-consent` — the three-choice consent store.
 
 Plus its **own** OS-service installer, `crates/cec-support-service` (in this
@@ -89,9 +96,9 @@ implements them on the AllMyStuff node):
 
 | Command | Args | Result |
 |---|---|---|
-| `cec_status` | `{}` | `{ number, network_id, role, hosting }` |
-| `cec_start_hosting` | `{}` | `{ number }` |
-| `cec_stop_hosting` | `{}` | — |
+| `cec_status` | `{}` | `{ number, network_id, role }` |
+| `cec_online` | `{}` | `{ number }` (join the shared support area at bring-up) |
+| `cec_ask_help` | `{ on }` | — (raise / lower the hand on the area) |
 | `cec_pending` | `{}` | `[{ tech, agent_name, want_control, session_id, verification_code }]` |
 | `cec_approve` | `{ tech, scope, session_id, want_control }` | — (`scope` ∈ `once`\|`three_hours`\|`forever`) |
 | `cec_deny` | `{ tech, session_id }` | — |

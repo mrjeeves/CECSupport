@@ -8,9 +8,8 @@
 // The command + event names here are the *fixed contract* the sibling agent
 // implements on the AllMyStuff node's control socket:
 //
-//   cec_status {}                         -> { number, network_id, role, hosting }
-//   cec_start_hosting {}                  -> { number }
-//   cec_stop_hosting {}
+//   cec_status {}                         -> { number, network_id, role }
+//   cec_online {}                         -> { number }
 //   cec_pending {}                        -> ConnectRequest[]
 //   cec_approve { tech, scope, session_id, want_control }
 //   cec_deny { tech, session_id }
@@ -93,23 +92,19 @@ export async function appVersion(): Promise<string | null> {
 
 // ---- CEC node control (the customer's own node) ------------------------
 
-/** This customer's support identity + hosting state. Null in web mode. */
+/** This customer's support identity. Null in web mode. */
 export function cecStatus(): Promise<CecStatus | null> {
   return tryInvoke<CecStatus>("cec_status");
 }
 
-/** Join our own number-derived Silent mesh and wait for a technician to dial.
- *  Returns `{ number }`. Called once at startup; safe to call again. */
-export function cecStartHosting(): Promise<{ number: string } | null> {
-  return tryInvoke<{ number: string }>("cec_start_hosting");
+/** Take up residence on the shared support area so a technician can see and
+ *  dial this device. Returns `{ number }` (the display label). Called once at
+ *  startup; idempotent, safe to call again. */
+export function cecOnline(): Promise<{ number: string } | null> {
+  return tryInvoke<{ number: string }>("cec_online");
 }
 
-/** Leave the Silent mesh — "stop sharing" — so no one can dial in. */
-export function cecStopHosting(): Promise<null> {
-  return tryInvoke("cec_stop_hosting");
-}
-
-/** Raise (or withdraw) the ask on the global help room. Errors surface — the
+/** Raise (or withdraw) the hand on the support area. Errors surface — the
  *  customer must know their tap didn't take, not wait on a dead beacon. */
 export function cecAskHelp(on: boolean): Promise<void> {
   return mustInvoke("cec_ask_help", { on });

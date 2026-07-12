@@ -171,8 +171,8 @@ fn save_gui_settings(s: &GuiSettings) {
 // CEC node-control commands (the fixed contract the sibling node implements)
 // ---------------------------------------------------------------------------
 
-/// `{ number, network_id, role, hosting, label }` — the customer's own support
-/// identity + hosting state.
+/// `{ number, network_id, role, label }` — the customer's own support
+/// identity. `number` is a display label; `network_id` is the shared area.
 #[tauri::command]
 async fn cec_status(state: State<'_, AppState>) -> Result<Value, String> {
     state
@@ -182,26 +182,16 @@ async fn cec_status(state: State<'_, AppState>) -> Result<Value, String> {
         .map_err(|e| e.to_string())
 }
 
-/// Join our own number-derived Silent mesh and wait for a technician to dial.
-/// Returns `{ number }`.
+/// Take up residence on the shared support area so a technician can see and
+/// dial this device. Called at bring-up; membership is standing. Returns
+/// `{ number }` (the display label to read out).
 #[tauri::command]
-async fn cec_start_hosting(state: State<'_, AppState>) -> Result<Value, String> {
+async fn cec_online(state: State<'_, AppState>) -> Result<Value, String> {
     state
         .node
-        .request("cec_start_hosting", json!({}))
+        .request("cec_online", json!({}))
         .await
         .map_err(|e| e.to_string())
-}
-
-/// Leave the Silent mesh — "stop sharing".
-#[tauri::command]
-async fn cec_stop_hosting(state: State<'_, AppState>) -> Result<(), String> {
-    state
-        .node
-        .request("cec_stop_hosting", json!({}))
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(())
 }
 
 /// This machine's headline hardware (CPU / RAM / GPUs / disks) off a fresh
@@ -580,9 +570,9 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 /// node restarts — and if the node is *gone* (the app that spawned it exited,
 /// taking the kill-on-close serve with it), brings the shared stack back up
 /// itself and re-hosts, so this app keeps working solo or side by side.
-/// Bring the shared stack back up and re-advertise hosting — the pump's
-/// respawn body. A fresh serve isn't hosting, and `cec_start_hosting` is
-/// idempotent, so the re-host is always safe.
+/// Bring the shared stack back up and re-join the support area — the pump's
+/// respawn body. A fresh serve isn't on the area, and `cec_online` is
+/// idempotent, so re-joining is always safe.
 async fn respawn_and_rehost(app: &tauri::AppHandle, node: &NodeClient) {
     match ensure_node_running_pinned(ALLMYSTUFF_PIN).await {
         Ok(Some(child)) => {
@@ -592,8 +582,8 @@ async fn respawn_and_rehost(app: &tauri::AppHandle, node: &NodeClient) {
         Err(e) => tracing::warn!("couldn't bring the node back up: {e:#}"),
     }
     wait_for_node().await;
-    if let Err(e) = node.request("cec_start_hosting", json!({})).await {
-        tracing::warn!("cec_start_hosting after node respawn failed: {e:#}");
+    if let Err(e) = node.request("cec_online", json!({})).await {
+        tracing::warn!("cec_online after node respawn failed: {e:#}");
     }
 }
 
@@ -694,8 +684,7 @@ fn run_gui() -> ExitCode {
         ))
         .invoke_handler(tauri::generate_handler![
             cec_status,
-            cec_start_hosting,
-            cec_stop_hosting,
+            cec_online,
             cec_ask_help,
             machine_specs,
             machine_temps,
@@ -789,10 +778,10 @@ fn run_gui() -> ExitCode {
                     Err(e) => tracing::error!("couldn't bring up the CEC node: {e:#}"),
                 }
                 wait_for_node().await;
-                // Join our Silent mesh straight away, so a launched app is
-                // already discoverable to a technician who has the number.
-                if let Err(e) = node.request("cec_start_hosting", json!({})).await {
-                    tracing::warn!("cec_start_hosting failed: {e:#}");
+                // Take up residence on the support area straight away, so a
+                // launched app is already discoverable to a technician.
+                if let Err(e) = node.request("cec_online", json!({})).await {
+                    tracing::warn!("cec_online failed: {e:#}");
                 }
                 run_event_pump(handle, node).await;
             });
@@ -815,7 +804,7 @@ fn run_gui() -> ExitCode {
 // ---------------------------------------------------------------------------
 
 /// `cec-support run [--service]` — the headless client agent. Brings up (or
-/// reuses) the CEC node, joins the Silent support mesh, and waits. This is what
+/// reuses) the CEC node, joins the shared support area, and waits. This is what
 /// the OS service's `ExecStart`/`binPath` runs (`run --service`), so a repair
 /// can reconnect across reboots without the GUI open.
 fn run_agent(_service: bool) -> ExitCode {
@@ -843,8 +832,8 @@ fn run_agent(_service: bool) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-        if let Err(e) = node.request("cec_start_hosting", json!({})).await {
-            eprintln!("cec-support: couldn't start hosting: {e:#}");
+        if let Err(e) = node.request("cec_online", json!({})).await {
+            eprintln!("cec-support: couldn't go online on the support area: {e:#}");
         } else {
             println!("CEC Support is running and waiting for your technician.");
         }
