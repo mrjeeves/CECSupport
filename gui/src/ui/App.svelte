@@ -7,6 +7,7 @@
   import StartScreen from "./StartScreen.svelte";
   import ApproveModal from "./ApproveModal.svelte";
   import ContactCard from "./ContactCard.svelte";
+  import PurchaseModal from "./PurchaseModal.svelte";
   import ConnectedBanner from "./ConnectedBanner.svelte";
   import AccessList from "./AccessList.svelte";
   import SettingsPanel from "./SettingsPanel.svelte";
@@ -80,6 +81,7 @@
   // Narrow the current request to a plain variable so it can be passed to the
   // modal as a non-null prop (a getter can't be narrowed by `{#if}`).
   let request = $derived(store.request);
+  let purchase = $derived(store.purchase);
 </script>
 
 <div class="shell">
@@ -160,6 +162,10 @@
 
   {#if request}
     <ApproveModal {request} />
+  {:else if purchase}
+    <!-- One modal at a time; a connect approval always outranks a purchase
+         prompt (no session to bill without it). -->
+    <PurchaseModal {purchase} />
   {/if}
 
   {#if store.toast}

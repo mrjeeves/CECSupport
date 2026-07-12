@@ -13,8 +13,9 @@ These are green today (`cargo test` / `clippy -D warnings` / `fmt --check`):
   `HELP_NETWORK_ID` = the shared support area), `SupportId` +
   `support_id_from_device` (the display/verification number),
   `ApprovalScope` (Once / ThreeHours / Forever), `SupportPresence`,
-  `ControlMessage` / `ConnectControl` / `AppControl`, the media-frame codec.
-  **16 unit tests.**
+  `ControlMessage` / `ConnectControl` / `AppControl`, the media-frame codec,
+  and the mid-session purchase handshake (`PurchaseControl` /
+  `PurchaseState` + the `DIAGNOSTIC_BUY_URL` constant). **20 unit tests.**
 - **`allmystuff-cec-consent`** (in AllMyStuff) — the three-choice grant store:
   in-memory `Once`, persisted+expiring `ThreeHours`, persisted `Forever`;
   per-frame `is_allowed`; `revoke` ("Forget this technician"); expiry pruning;
@@ -40,10 +41,13 @@ type-checker — and reviewed by inspection:
   `cec_dialed`. The node-control command surface is `cec_online`, `cec_dial_node`
   (answer a hand / reconnect), `cec_dial` (number fallback), `cec_help_watch` /
   `cec_help_list`, `cec_pending`, `cec_approve`, `cec_deny`, `cec_revoke`,
-  `cec_dialed`, the app-wide `forget_node` (on every node's gear), and the
-  `cec://*` events. The Svelte frontend is type-checked (`pnpm check`); the node
-  backend needs the Linux media stack **and** the MyOwnMesh hub/`Silent` API
-  below.
+  `cec_dialed`, the app-wide `forget_node` (on every node's gear), the
+  diagnostic-purchase verbs (`cec_purchase_request` / `_status` / `_confirm` /
+  `_cancel` / `cec_purchases`), and the `cec://*` events. The Svelte frontend is
+  type-checked (`pnpm check`); the node backend needs the Linux media stack
+  **and** the MyOwnMesh hub/`Silent` API below. (The purchase relay lives in
+  the node, so the customer app's purchase prompt lights up once the running /
+  bundled node is a release that carries it.)
 - **CEC Support client GUI (`gui/`) + `cec-support` binary** — the Tauri + Svelte
   customer app (number screen, three-choice approve modal, connected banner,
   access list, service toggle). It installs like a **normal Windows app**: the
@@ -105,6 +109,13 @@ acceptance tests for the first real build:
 - Reuse-or-bundle: install on a machine with AllMyStuff present (reuse the
   daemon) and on one without (bundle), with no clobbering of an AllMyStuff
   service.
+- The diagnostic purchase, end to end against the real store: technician
+  requests → customer prompt → checkout opens in the default browser → the
+  order lands in Shopify with the Support Number attribute → technician
+  confirms → "You're all set". (The web-demo arc and the cart-permalink URL
+  construction are already exercised headlessly; what's owed is the live store
+  round-trip — fill in `STORE` + `VARIANT_ID` on
+  `support.cec.direct/buy/diagnostic/` first.)
 
 ## Nice-to-haves (later)
 

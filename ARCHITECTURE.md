@@ -140,6 +140,71 @@ combined with *install-as-service*, CEC can reconnect after a reboot without
 anyone at the keyboard — bounded by the 3-hour window unless the customer chose
 Forever, and revocable from the customer side at any time.
 
+## The diagnostic purchase — money without a middleman server
+
+A technician can require the **$50 diagnostic session** at any point in a help
+call: **before answering** (quoting the work from the help queue),
+**mid-session**, or **after disconnecting** (the Diag control on a stored
+machine). It is optional and **technician-triggered only**; the customer's app
+never initiates a purchase. The design keeps every architectural promise:
+
+```
+Technician (AllMyStuff CEC tab)            Customer (CEC Support app)
+───────────────────────────────            ──────────────────────────
+"Request $50 diagnostic"
+ (help queue · live session · stored
+  machine — connected or not: the node
+  joins their number room like a dial
+  and re-sends until answered)
+  PurchaseControl::Request ───────────────▶ prompt: "‹Agent› is asking you to
+                                             complete a purchase — $50"
+  ◀─────────────── Status: seen             [Open secure checkout]
+                                              └─▶ default browser:
+                                                  support.cec.direct/buy/diagnostic/
+                                                    ?sn=‹number›&ref=…&agent=…
+                                                  → store's hosted checkout
+  ◀─────────────── Status: opened           (pays in their own browser)
+  ◀─────────────── Status: claimed          "I've completed my purchase"
+verify the order in the store admin
+(it carries the Support Number)
+  PurchaseControl::Confirm ────────────────▶ "You're all set" ✓
+```
+
+- **No payment data on the mesh, ever.** The wire
+  (`allmystuff-cec-protocol::PurchaseControl`) carries ids and display strings
+  only. Payment happens on the store's hosted checkout in the customer's own
+  browser — real address bar, their password manager, an emailed receipt.
+- **The checkout URL is never taken from the wire.** The app opens its own
+  built-in `DIAGNOSTIC_BUY_URL` and appends only attribution (support number,
+  reference, agent name) — so nobody who can reach the customer's room can
+  steer their browser anywhere else. The Tauri `open_url` command refuses
+  anything but that page.
+- **The ask carries the connect prompt's trust, deliberately.** A `Request`
+  needs no prior grant — a technician quotes the diagnostic *before* the
+  customer has ever let them in — so its gate is the same as "‹Agent› is
+  trying to connect": reaching the room took the number (told out of band, on
+  the phone), the prompt names the asker, the customer verifies that name
+  against the person they're talking to and can always decline. When a grant
+  *does* exist, the prompt prefers the grant's name — the one the customer
+  actually approved — over the wire's claim. And whatever anyone does, the
+  buttons only ever lead to CEC's own checkout.
+- **Human confirmation instead of webhooks.** The order lands in the store
+  tagged with the customer's support number; the technician (on the phone,
+  already in the store admin) verifies it and sends `Confirm`. No server, no
+  webhook receiver, no polling — the same person-checks-person shape as the
+  agent-name verification. `Claimed` is a claim; the store order is the truth.
+- **Ephemeral by design.** Purchase asks live in memory (one live ask per
+  peer — a re-ask supersedes; settled by Confirm/Cancel; a session's ask is
+  auto-cancelled when that session ends). The durable record of payment is the
+  store's order — the mesh keeps no financial state.
+- **Skew-safe.** An older customer app decodes the whole purchase envelope to
+  `Unknown` and ignores it; no `seen` coming back tells the technician to
+  handle payment by phone instead.
+
+The store configuration (domain + product variant) lives behind
+`support.cec.direct/buy/diagnostic/`, so prices, products, or even the store
+itself can change without shipping a new installer.
+
 ## Reuse, don't clobber
 
 Like the MyOwnMesh installer, the CEC Support client **reuses an existing

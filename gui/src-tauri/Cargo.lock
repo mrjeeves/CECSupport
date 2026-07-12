@@ -19,8 +19,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-bridge"
-version = "0.2.34"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.34#4d1f63238914b12dae13ad648985e4d96a6e61b0"
+version = "0.2.35"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.35#eabdcb6e7ed6b376cb20c391e267f3806cb2d0eb"
 dependencies = [
  "allmystuff-graph",
  "allmystuff-inventory",
@@ -29,8 +29,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-cec-consent"
-version = "0.2.34"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.34#4d1f63238914b12dae13ad648985e4d96a6e61b0"
+version = "0.2.35"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.35#eabdcb6e7ed6b376cb20c391e267f3806cb2d0eb"
 dependencies = [
  "allmystuff-cec-protocol",
  "serde",
@@ -40,8 +40,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-cec-protocol"
-version = "0.2.34"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.34#4d1f63238914b12dae13ad648985e4d96a6e61b0"
+version = "0.2.35"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.35#eabdcb6e7ed6b376cb20c391e267f3806cb2d0eb"
 dependencies = [
  "serde",
  "serde_json",
@@ -50,8 +50,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-graph"
-version = "0.2.34"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.34#4d1f63238914b12dae13ad648985e4d96a6e61b0"
+version = "0.2.35"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.35#eabdcb6e7ed6b376cb20c391e267f3806cb2d0eb"
 dependencies = [
  "serde",
  "serde_json",
@@ -60,8 +60,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-inventory"
-version = "0.2.34"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.34#4d1f63238914b12dae13ad648985e4d96a6e61b0"
+version = "0.2.35"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.35#eabdcb6e7ed6b376cb20c391e267f3806cb2d0eb"
 dependencies = [
  "serde",
  "serde_json",
@@ -70,8 +70,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-node"
-version = "0.2.34"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.34#4d1f63238914b12dae13ad648985e4d96a6e61b0"
+version = "0.2.35"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.35#eabdcb6e7ed6b376cb20c391e267f3806cb2d0eb"
 dependencies = [
  "allmystuff-bridge",
  "allmystuff-cec-consent",
@@ -117,12 +117,12 @@ dependencies = [
 [[package]]
 name = "allmystuff-pixels"
 version = "0.1.0"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.34#4d1f63238914b12dae13ad648985e4d96a6e61b0"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.35#eabdcb6e7ed6b376cb20c391e267f3806cb2d0eb"
 
 [[package]]
 name = "allmystuff-protocol"
-version = "0.2.34"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.34#4d1f63238914b12dae13ad648985e4d96a6e61b0"
+version = "0.2.35"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.35#eabdcb6e7ed6b376cb20c391e267f3806cb2d0eb"
 dependencies = [
  "allmystuff-graph",
  "serde",
@@ -131,8 +131,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-session"
-version = "0.2.34"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.34#4d1f63238914b12dae13ad648985e4d96a6e61b0"
+version = "0.2.35"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.35#eabdcb6e7ed6b376cb20c391e267f3806cb2d0eb"
 dependencies = [
  "allmystuff-graph",
  "allmystuff-protocol",
@@ -143,8 +143,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-updater"
-version = "0.2.34"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.34#4d1f63238914b12dae13ad648985e4d96a6e61b0"
+version = "0.2.35"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.35#eabdcb6e7ed6b376cb20c391e267f3806cb2d0eb"
 dependencies = [
  "dirs 5.0.1",
  "flate2",
@@ -711,7 +711,7 @@ dependencies = [
 
 [[package]]
 name = "cec-support"
-version = "0.1.14"
+version = "0.1.16"
 dependencies = [
  "allmystuff-cec-consent",
  "allmystuff-cec-protocol",
@@ -726,6 +726,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-autostart",
+ "tauri-plugin-opener",
  "tauri-plugin-shell",
  "tauri-plugin-single-instance",
  "tokio",
@@ -735,7 +736,7 @@ dependencies = [
 
 [[package]]
 name = "cec-support-service"
-version = "0.1.14"
+version = "0.1.16"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
@@ -5473,6 +5474,28 @@ dependencies = [
  "tauri",
  "tauri-plugin",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "tauri-plugin-opener"
+version = "2.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17e1bea14edce6b793a04e2417e3fd924b9bc4faae83cdee7d714156cceeed29"
+dependencies = [
+ "dunce",
+ "glob",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "open",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.18",
+ "url",
+ "windows 0.61.3",
+ "zbus",
 ]
 
 [[package]]

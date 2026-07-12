@@ -21,6 +21,8 @@ import {
   cecForgetNode,
   cecGrants,
   cecPending,
+  cecPurchaseStatus,
+  cecPurchases,
   cecRevoke,
   cecSetLabel,
   machineSpecs,
@@ -30,8 +32,10 @@ import {
   isTauri,
   onCecGrants,
   onCecHelp,
+  onCecPurchase,
   onCecRequest,
   onCecSession,
+  openUrl,
   serviceInstall,
   serviceStatus,
   serviceStop,
@@ -44,6 +48,7 @@ import type {
   Grant,
   LiveSession,
   MachineSpecs,
+  Purchase,
   ServiceStatus,
   SessionEvent,
 } from "./types";
@@ -52,6 +57,27 @@ function errMsg(e: unknown): string {
   if (e instanceof Error) return e.message;
   if (typeof e === "string") return e;
   return String(e);
+}
+
+/** The one place this app ever sends a customer to pay: the CEC purchase page
+ *  on support.cec.direct, which hands off to the store's hosted checkout.
+ *  Built **here**, never taken from the wire — no technician (or anyone else
+ *  on the mesh) can point the customer's browser anywhere but this page. The
+ *  store domain / product config live behind it, so they can change without
+ *  shipping a new app. Mirrors `allmystuff-cec-protocol::DIAGNOSTIC_BUY_URL`. */
+const BUY_URL = "https://support.cec.direct/buy/diagnostic/";
+
+/** The checkout hand-off URL for a purchase ask. The query carries only
+ *  attribution — the support number, a reference, the technician's name — so
+ *  the order that lands in the store names this machine and the technician
+ *  can verify it on the phone ("I can see your order — you're all set"). */
+export function checkoutUrl(p: Purchase, supportNumber: string): string {
+  const q = new URLSearchParams();
+  if (supportNumber) q.set("sn", supportNumber);
+  if (p.purchase_id) q.set("ref", p.purchase_id.slice(0, 64));
+  if (p.agent_name) q.set("agent", p.agent_name.slice(0, 64));
+  const qs = q.toString();
+  return qs ? `${BUY_URL}?${qs}` : BUY_URL;
 }
 
 class CecStore {
@@ -93,6 +119,11 @@ class CecStore {
    *  fills in, with null (an older node without the command) it hides — a
    *  spinner must never outlive the possibility of an answer. */
   specsPending = $state(true);
+  /** The purchase ask on screen (the $50 diagnostic session), or null. Only a
+   *  technician can raise one — this app never initiates a purchase. Fed by
+   *  the `cec://purchase` event; a decline or withdrawal clears it, a confirm
+   *  lingers briefly as the "you're all set" note. */
+  purchase = $state<Purchase | null>(null);
   toast = $state<string | null>(null);
   busy = $state(false);
 
@@ -100,6 +131,10 @@ class CecStore {
   private timer: ReturnType<typeof setInterval> | undefined;
   private toastTimer: ReturnType<typeof setTimeout> | undefined;
   private tempsTimer: ReturnType<typeof setInterval> | undefined;
+  private purchaseTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Demo-mode helper: pretends the technician confirms shortly after the
+   *  customer says "done", so the browser preview plays the whole arc. */
+  private demoConfirmTimer: ReturnType<typeof setTimeout> | undefined;
 
   /** The connect request to prompt about (first pending), or null. */
   get request(): ConnectRequest | null {
@@ -147,6 +182,7 @@ class CecStore {
     this.unlisteners.push(await onCecRequest((r) => this.onRequest(r)));
     this.unlisteners.push(await onCecSession((s) => this.onSession(s)));
     this.unlisteners.push(await onCecGrants((g) => (this.grants = g)));
+    this.unlisteners.push(await onCecPurchase((p) => this.onPurchase(p)));
     this.unlisteners.push(
       await onCecHelp((e) => {
         // The node withdraws the ask itself when a session is approved (help
@@ -216,6 +252,8 @@ class CecStore {
     if (this.timer) clearInterval(this.timer);
     if (this.toastTimer) clearTimeout(this.toastTimer);
     if (this.tempsTimer) clearInterval(this.tempsTimer);
+    if (this.purchaseTimer) clearTimeout(this.purchaseTimer);
+    if (this.demoConfirmTimer) clearTimeout(this.demoConfirmTimer);
   }
 
   /** Refresh just the spec card's temps. A null (older node, node briefly
@@ -233,6 +271,14 @@ class CecStore {
     // The node is the truth for the ask (it withdraws it itself on approval,
     // and a restart drops it) — mirror it whenever the status lands.
     if (this.status) this.askingHelp = this.status.asking_help === true;
+    // Recover a live purchase ask after a relaunch mid-session: the node keeps
+    // the flow, so the prompt comes straight back instead of being lost.
+    if (!this.purchase) {
+      const live = (await cecPurchases()).filter(
+        (p) => !["confirmed", "cancelled", "declined"].includes(p.state),
+      );
+      if (live.length > 0) this.onPurchase(live[live.length - 1]);
+    }
   }
 
   private async loadGrants(): Promise<void> {
@@ -284,6 +330,36 @@ class CecStore {
     // any lingering prompt for it.
     if (s.state === "active" || s.state === "connecting") {
       this.pending = this.pending.filter((p) => p.session_id !== s.session_id);
+    }
+  }
+
+  /** One `cec://purchase` beat — the event stream is the truth for the
+   *  prompt. Requests and progress keep it up; a confirm turns it into the
+   *  "you're all set" note (auto-dismissing); a decline or withdrawal takes
+   *  it down. */
+  private onPurchase(p: Purchase): void {
+    if (this.demoConfirmTimer) clearTimeout(this.demoConfirmTimer);
+    if (p.state === "cancelled" || p.state === "declined") {
+      // Declined: the customer just said no themselves — close quietly.
+      // Cancelled: the technician withdrew it — say so, so a vanishing
+      // prompt never reads as a glitch.
+      if (this.purchase && this.purchase.purchase_id === p.purchase_id) {
+        if (p.state === "cancelled") {
+          this.notify("Your technician withdrew the purchase request.");
+        }
+        this.purchase = null;
+      }
+      return;
+    }
+    this.purchase = p;
+    if (p.state === "confirmed") {
+      // Leave the good news up long enough to read, then get out of the way.
+      if (this.purchaseTimer) clearTimeout(this.purchaseTimer);
+      this.purchaseTimer = setTimeout(() => (this.purchase = null), 8000);
+    } else if (p.state === "requested") {
+      // Tell the technician the prompt is actually on screen (this is also
+      // how they learn this app is new enough to show one at all).
+      void cecPurchaseStatus(p.purchase_id, "seen");
     }
   }
 
@@ -353,6 +429,61 @@ class CecStore {
     }
     await this.loadGrants();
     this.notify("Removed. They can't reconnect without asking you again.");
+  }
+
+  // ---- the purchase ask (the $50 diagnostic session) ---------------------
+
+  /** "Open secure checkout": hand the purchase off to the customer's own
+   *  browser — the CEC purchase page, then the store's hosted checkout. Card
+   *  details belong in their browser with the store's real address bar, never
+   *  in this app. Safe to tap again ("Reopen checkout") if the tab got lost. */
+  async openCheckout(): Promise<void> {
+    const p = this.purchase;
+    if (!p) return;
+    const ok = await openUrl(checkoutUrl(p, this.status?.number ?? ""));
+    if (!ok) {
+      this.notify(
+        "Couldn't open your browser — your technician can take it from here by phone.",
+      );
+      return;
+    }
+    void cecPurchaseStatus(p.purchase_id, "opened");
+    if (this.demo && p.state !== "opened") {
+      this.purchase = { ...p, state: "opened" };
+    }
+  }
+
+  /** "I've completed my purchase": tell the technician to check the store for
+   *  the order. A claim, not proof — they confirm what they can actually see,
+   *  and their confirm turns this prompt into "you're all set". */
+  claimPurchase(): void {
+    const p = this.purchase;
+    if (!p) return;
+    void cecPurchaseStatus(p.purchase_id, "claimed");
+    this.purchase = { ...p, state: "claimed" };
+    if (this.demo) {
+      // Preview the whole arc: the pretend technician spots the pretend order.
+      this.demoConfirmTimer = setTimeout(() => {
+        if (this.purchase?.purchase_id === p.purchase_id) {
+          this.onPurchase({ ...p, state: "confirmed" });
+        }
+      }, 2600);
+    }
+  }
+
+  /** "No thanks": decline the ask. The prompt closes right away — the
+   *  technician sees the decline and takes it from there on the phone. */
+  declinePurchase(): void {
+    const p = this.purchase;
+    if (!p) return;
+    void cecPurchaseStatus(p.purchase_id, "declined");
+    this.purchase = null;
+  }
+
+  /** Close the "you're all set" note by hand (it auto-dismisses too). */
+  dismissPurchase(): void {
+    if (this.purchaseTimer) clearTimeout(this.purchaseTimer);
+    this.purchase = null;
   }
 
   /** "Ask for help": raise this machine's hand on the support area until a
@@ -533,6 +664,23 @@ class CecStore {
       want_control: true,
       session_id: `demo-${Date.now()}`,
       verification_code: "7K2Q9M",
+    });
+  }
+
+  /** Simulate the technician requesting the diagnostic purchase — the same
+   *  dev affordance for the purchase prompt. Only wired up in demo mode. */
+  simulatePurchase(): void {
+    if (!this.demo) return;
+    this.onPurchase({
+      purchase_id: `demo-buy-${Date.now()}`,
+      session_id: "demo-session",
+      peer: "techpubkey-demo-incoming",
+      agent_name: "Alex at CEC",
+      item: "CEC Diagnostic Session",
+      price: "$50",
+      note: "",
+      state: "requested",
+      updated_at: Math.floor(Date.now() / 1000),
     });
   }
 }

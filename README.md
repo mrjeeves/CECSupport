@@ -41,7 +41,18 @@ is [MyOwnMesh](https://github.com/mrjeeves/MyOwnMesh). See
    controlling your screen" with a **Disconnect**, and a list of everyone with
    standing access (with a live countdown for the 3-hour ones) each with a
    **Forget** (revoke) button that bites immediately.
-6. **Settings**: an **Install as a background service** toggle (so CEC Support
+6. **If the technician asks for the $50 diagnostic session**, a purchase prompt
+   appears — *optional, and only ever raised by the technician*, at any point
+   in a help call: before they connect (quoting the work up front), while
+   connected, or after disconnecting.
+   One tap opens **our secure checkout in the customer's own browser**
+   (`support.cec.direct/buy/diagnostic/` → the store's hosted checkout); the
+   app never sees card details and the URL is built into the app, never taken
+   from the wire. The customer taps "I've completed my purchase", the
+   technician verifies the order actually landed in the store (it carries the
+   customer's support number), confirms, and the prompt turns into "You're all
+   set". Declining is always available until it's settled.
+7. **Settings**: an **Install as a background service** toggle (so CEC Support
    reconnects after a reboot mid-repair), an Uninstall/Stop control, an "open at
    startup" toggle, and a friendly name for this computer.
 
@@ -106,11 +117,16 @@ implements them on the AllMyStuff node):
 | `cec_grants` | `{}` | active grants |
 | `cec_forget_node` | `{ node }` | — |
 | `cec_set_label` | `{ label }` | — (friendly-name helper, beyond the core dial/approve contract) |
+| `cec_purchase_status` | `{ purchase_id, state }` | — (`state` ∈ `seen`\|`opened`\|`claimed`\|`declined`) |
+| `cec_purchases` | `{}` | tracked purchase asks (re-sync after a relaunch) |
 
 Events re-emitted onto the Tauri bus for the UI:
 `cec://request { tech, agent_name, want_control, session_id, verification_code }`
-(drives the modal), `cec://session { session_id, state }` (the banner), and
-`cec://grants { grants }` (the access list).
+(drives the modal), `cec://session { session_id, state }` (the banner),
+`cec://grants { grants }` (the access list), and `cec://purchase { purchase_id,
+session_id, peer, agent_name, item, price, note, state, updated_at }` (the
+technician-triggered diagnostic-purchase prompt; the technician-side verbs
+`cec_purchase_request` / `_confirm` / `_cancel` live in the AllMyStuff app).
 
 The background service is handled by `cec-support-service` directly (not the
 node), via the `service_*` Tauri commands.
