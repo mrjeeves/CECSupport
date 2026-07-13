@@ -34,7 +34,7 @@
           this window open. Nothing is shared until you approve them by name.
         </p>
       {:else}
-        <span class="hand-spin" aria-hidden="true"></span>
+        <span class="hand-raise" aria-hidden="true">✋</span>
         <h2>Raising your hand…</h2>
         <p class="sub">
           Connecting to CEC — this usually takes a few seconds. Keep this
@@ -190,22 +190,44 @@
       opacity: 0.55;
     }
   }
-  /* The hand-going-up phase: a working spinner, not a resting pulse. */
-  .hand-spin {
-    width: 1.2rem;
-    height: 1.2rem;
-    border-radius: 50%;
-    border: 3px solid var(--line);
-    border-top-color: var(--accent);
-    animation: hand-spin 0.9s linear infinite;
+  /* The hand-going-up phase: an actual hand that rises into view and gives a
+     small friendly wave — so the tap lands on a warm "we see you" beat rather
+     than a bare loader while the ask travels to CEC. */
+  .hand-raise {
+    font-size: 2.6rem;
+    line-height: 1;
+    display: inline-block;
+    transform-origin: 70% 90%; /* pivot near the wrist for a natural wave */
+    animation:
+      hand-rise 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both,
+      hand-wave 1.5s ease-in-out 0.55s infinite;
   }
-  @keyframes hand-spin {
+  @keyframes hand-rise {
+    from {
+      transform: translateY(0.5rem) scale(0.8);
+      opacity: 0;
+    }
     to {
-      transform: rotate(360deg);
+      transform: translateY(0) scale(1);
+      opacity: 1;
     }
   }
+  @keyframes hand-wave {
+    0%,
+    100% {
+      transform: rotate(0deg);
+    }
+    30% {
+      transform: rotate(-13deg);
+    }
+    70% {
+      transform: rotate(13deg);
+    }
+  }
+  /* Reduced motion: still show the hand (it's the reassurance), just settled
+     and still — no rise, no wave. */
   @media (prefers-reduced-motion: reduce) {
-    .hand-spin {
+    .hand-raise {
       animation: none;
     }
   }
