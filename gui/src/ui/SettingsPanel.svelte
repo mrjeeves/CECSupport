@@ -70,18 +70,56 @@
   <section class="card block">
     <h3>Startup</h3>
     <p class="desc">
-      CEC Support opens with this computer by default, so your technician can
-      reach you after a restart. Closing the window quits the app unless you
-      choose to keep it waiting in the background.
+      When CEC Support opens with this computer. The default keeps a repair
+      going across a restart — while your technician still has access, the app
+      comes back on its own after you log in.
     </p>
-    <label class="toggle">
-      <input
-        type="checkbox"
-        checked={store.autostart}
-        onchange={(e) => void store.setAutostart(e.currentTarget.checked)}
-      />
-      <span>Open CEC Support when this computer starts</span>
-    </label>
+
+    <div class="modes">
+      <label class="mode primary" class:on={store.autostartMode === "while_granted"}>
+        <input
+          type="radio"
+          name="autostart-mode"
+          value="while_granted"
+          checked={store.autostartMode === "while_granted"}
+          onchange={() => void store.setAutostartMode("while_granted")}
+        />
+        <span class="mode-body">
+          <span class="mode-title">Open with Windows while a technician has access</span>
+          <span class="mode-hint">
+            Recommended. Only starts on boot while a technician grant is active,
+            so a repair survives a restart — then stops once their access ends.
+          </span>
+        </span>
+      </label>
+
+      <label class="mode" class:on={store.autostartMode === "always"}>
+        <input
+          type="radio"
+          name="autostart-mode"
+          value="always"
+          checked={store.autostartMode === "always"}
+          onchange={() => void store.setAutostartMode("always")}
+        />
+        <span class="mode-body">
+          <span class="mode-title">Always open with Windows</span>
+        </span>
+      </label>
+
+      <label class="mode" class:on={store.autostartMode === "off"}>
+        <input
+          type="radio"
+          name="autostart-mode"
+          value="off"
+          checked={store.autostartMode === "off"}
+          onchange={() => void store.setAutostartMode("off")}
+        />
+        <span class="mode-body">
+          <span class="mode-title">Don't open with Windows</span>
+        </span>
+      </label>
+    </div>
+
     <label class="toggle">
       <input
         type="checkbox"
@@ -163,6 +201,52 @@
     width: 1.15rem;
     height: 1.15rem;
     accent-color: var(--accent);
+  }
+
+  .modes {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 0.9rem;
+  }
+  .mode {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    cursor: pointer;
+  }
+  .mode input {
+    margin-top: 0.15rem;
+    accent-color: var(--accent);
+  }
+  .mode.on {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  /* The default choice is the prominent one — bigger, leads the list. */
+  .mode.primary {
+    padding: 0.8rem 0.85rem;
+  }
+  .mode-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+  .mode-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+  }
+  .mode.primary .mode-title {
+    font-size: 1.02rem;
+    font-weight: 700;
+  }
+  .mode-hint {
+    font-size: 0.82rem;
+    color: var(--ink-soft);
+    line-height: 1.4;
   }
 
   .ver {

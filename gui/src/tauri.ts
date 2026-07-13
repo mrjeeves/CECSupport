@@ -269,6 +269,21 @@ export async function autostartSet(enabled: boolean): Promise<boolean> {
   return r ?? enabled;
 }
 
+/** When the app opens with the computer: only while a technician grant is
+ *  live (`while_granted`, the default), `always`, or `off`. */
+export type AutostartMode = "while_granted" | "always" | "off";
+
+/** The current autostart policy. */
+export async function autostartModeGet(): Promise<AutostartMode> {
+  const r = await tryInvoke<string>("autostart_mode_get");
+  return r === "always" || r === "off" ? r : "while_granted";
+}
+
+/** Set the autostart policy and apply it immediately. */
+export async function autostartModeSet(mode: AutostartMode): Promise<void> {
+  await tryInvoke("autostart_mode_set", { mode });
+}
+
 /** Whether closing the window keeps the app running in the tray (opt-in —
  *  off means the close button really quits). */
 export async function backgroundGet(): Promise<boolean> {

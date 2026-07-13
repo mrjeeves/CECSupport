@@ -42,15 +42,9 @@
     [...(specs?.disks ?? [])].sort((a, b) => Number(a.removable) - Number(b.removable)),
   );
 
-  /** Sensor labels as the OS names them are driver-speak
-   *  ("ACPI\ThermalZone\TZ00_0", "coretemp Package id 0"); shorten the noisy
-   *  prefixes but never rename — a technician can still match what the
-   *  customer reads to a vendor tool. */
-  function tempLabel(label: string): string {
-    const tail = label.split("\\").pop() ?? label;
-    return tail.replace(/^coretemp\s+/i, "").trim() || label;
-  }
-  const temps = $derived(specs?.temps ?? []);
+  // Temperature rendering is intentionally gone for now — see the note in
+  // the template where the temps block used to be. The data still rides
+  // `specs.temps`; only the display is parked.
 </script>
 
 {#if !specs && store.specsPending}
@@ -65,9 +59,6 @@
 {#if specs}
   <section class="card sheet" aria-label="Computer specifications">
     <h3 class="title">{title}</h3>
-    {#if store.grouped}
-      <p class="idnum">CEC Support {store.grouped}</p>
-    {/if}
     <div class="grid">
       <span class="k">CPU</span>
       <span class="v">{cpuLine}</span>
@@ -77,9 +68,12 @@
         <span class="k">{specs.gpus.length > 1 ? `GPU ${i + 1}` : "GPU"}</span>
         <span class="v">{g.name}{g.vram_bytes ? ` · ${gb(g.vram_bytes)}` : ""}</span>
       {/each}
-      {#if specs.board}
+      {#if specs.product || specs.board}
         <span class="k">Board</span>
-        <span class="v">{specs.board}</span>
+        <!-- The product / model name — the machine's own identity. Falls
+             back to the maker+model board label only when firmware gives
+             no clean product string. -->
+        <span class="v">{specs.product || specs.board}</span>
       {/if}
     </div>
     {#if disks.length > 0}
@@ -101,16 +95,11 @@
         {/each}
       </div>
     {/if}
-    {#if temps.length > 0}
-      <div class="temps" aria-label="Temperatures">
-        {#each temps as t (t.label)}
-          <span class="temp" title={t.label}>
-            <span class="temp-label">{tempLabel(t.label)}</span>
-            <span class="temp-val">{Math.round(t.celsius)}°C</span>
-          </span>
-        {/each}
-      </div>
-    {/if}
+    <!-- Temperatures are hidden until the reading is more accurate and on a
+         5-second poll — the OS sensors we get today are too coarse and the
+         30s cadence made the one "live" number look stuck. The scan still
+         collects them (see `temps` below, and machine_temps in the node),
+         so re-enabling is just restoring this block. -->
     <p class="os">{specs.os}</p>
   </section>
 {/if}
@@ -157,15 +146,6 @@
     margin: 0;
     font-size: 1rem;
     font-weight: 700;
-  }
-  /* The Support Number, right under the machine name — the two things we
-     match on, together at the top of the computer's own card. */
-  .idnum {
-    margin: -0.45rem 0 0;
-    font-size: 0.75rem;
-    color: var(--ink-faint);
-    font-variant-numeric: tabular-nums;
-    letter-spacing: 0.03em;
   }
   .grid {
     display: grid;
@@ -226,36 +206,6 @@
     height: 100%;
     background: var(--accent);
     border-radius: inherit;
-  }
-
-  .temps {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.35rem 0.5rem;
-    border-top: 1px solid var(--line);
-    padding-top: 0.6rem;
-  }
-  .temp {
-    display: inline-flex;
-    align-items: baseline;
-    gap: 0.35rem;
-    padding: 0.15rem 0.55rem;
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    background: var(--surface);
-  }
-  .temp-label {
-    font-size: 0.72rem;
-    color: var(--ink-soft);
-    max-width: 11rem;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .temp-val {
-    font-size: 0.78rem;
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
   }
 
   .os {

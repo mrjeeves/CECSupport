@@ -13,6 +13,9 @@ import {
   appVersion,
   autostartGet,
   autostartSet,
+  autostartModeGet,
+  autostartModeSet,
+  type AutostartMode,
   backgroundGet,
   backgroundSet,
   cecApprove,
@@ -24,7 +27,6 @@ import {
   cecRevoke,
   cecSetLabel,
   machineSpecs,
-  machineTemps,
   cecOnline,
   cecStatus,
   isTauri,
@@ -68,14 +70,21 @@ class CecStore {
   grants = $state<Grant[]>([]);
   service = $state<ServiceStatus | null>(null);
   autostart = $state(false);
+  /** When the app opens with the computer (see [`AutostartMode`]). Default is
+   *  "while_granted" — it opens on boot only while a technician grant is live,
+   *  so a repair survives a restart without leaving the app on the login
+   *  screen forever. */
+  autostartMode = $state<AutostartMode>("while_granted");
   /** Opt-in: closing the window keeps the app in the tray. Off by default —
    *  the close button really quits. */
   keepBackground = $state(false);
   /** Unix seconds, re-read each second so expiry countdowns tick. */
   now = $state(Math.floor(Date.now() / 1000));
-  /** Which screen is showing. `start` is the front door (Ask for help / Show
-   *  Support Number); `number` is the classic number screen behind it. */
-  view = $state<"start" | "number" | "settings">("start");
+  /** Which screen is showing. `start` is the front door (Ask for help, with
+   *  the support number shown inline as a copyable fallback); `settings` is
+   *  the gear. The standalone "number" screen was removed — the number never
+   *  warranted a whole view of its own. */
+  view = $state<"start" | "settings">("start");
   /** Whether this machine is currently asking for help on the global help
    *  room — drives the start screen's waiting card. Synced from `cec_status`
    *  and cleared live by the `cec://help` event when help arrives. */
@@ -99,7 +108,6 @@ class CecStore {
   private unlisteners: Array<() => void> = [];
   private timer: ReturnType<typeof setInterval> | undefined;
   private toastTimer: ReturnType<typeof setTimeout> | undefined;
-  private tempsTimer: ReturnType<typeof setInterval> | undefined;
 
   /** The connect request to prompt about (first pending), or null. */
   get request(): ConnectRequest | null {
@@ -168,6 +176,7 @@ class CecStore {
 
     this.service = await serviceStatus();
     this.autostart = await autostartGet();
+    this.autostartMode = await autostartModeGet();
     this.keepBackground = await backgroundGet();
 
     this.timer = setInterval(() => {
@@ -200,9 +209,11 @@ class CecStore {
         // scan-free machine_temps.
         this.specs = await machineSpecs();
         this.specsPending = false;
-        if (this.specs) {
-          this.tempsTimer = setInterval(() => void this.pollTemps(), 30_000);
-        }
+        // Temperature display is parked until it's more accurate and on a
+        // 5-second poll (the spec card hides the row for now), so there's
+        // nothing to refresh — don't run the old 30s temp poll in the
+        // meantime. The node's machine_temps command + the machineTemps
+        // bridge stay wired, so re-enabling is just restoring the poll here.
         return;
       }
       await new Promise((r) => setTimeout(r, 2000));
@@ -215,15 +226,6 @@ class CecStore {
     this.unlisteners = [];
     if (this.timer) clearInterval(this.timer);
     if (this.toastTimer) clearTimeout(this.toastTimer);
-    if (this.tempsTimer) clearInterval(this.tempsTimer);
-  }
-
-  /** Refresh just the spec card's temps. A null (older node, node briefly
-   *  down) keeps the last reading rather than blanking the row. */
-  private async pollTemps(): Promise<void> {
-    if (!this.specs) return;
-    const t = await machineTemps();
-    if (t?.temps) this.specs.temps = t.temps;
   }
 
   async refresh(): Promise<void> {
@@ -442,6 +444,11 @@ class CecStore {
 
   async setAutostart(on: boolean): Promise<void> {
     this.autostart = await autostartSet(on);
+  }
+
+  async setAutostartMode(mode: AutostartMode): Promise<void> {
+    this.autostartMode = mode;
+    await autostartModeSet(mode);
   }
 
   async setKeepBackground(on: boolean): Promise<void> {
