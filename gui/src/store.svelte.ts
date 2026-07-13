@@ -158,8 +158,11 @@ class CecStore {
     this.unlisteners.push(
       await onCecHelp((e) => {
         // The node withdraws the ask itself when a session is approved (help
-        // arrived) — the waiting card must follow without a manual refresh.
-        if (e.asking === false) this.askingHelp = false;
+        // arrived) — the waiting card must follow without a manual refresh. Not
+        // while a request is in flight, though: `busy` (the just-tapped ask)
+        // owns the flag then, so a stale bring-up beacon can't flick the
+        // optimistic card off.
+        if (e.asking === false && !this.busy) this.askingHelp = false;
         // Every beacon reports how many watchers it reached — the waiting
         // card's "raising your hand…" vs "CEC can see you" signal.
         if (typeof e.watchers === "number") this.helpWatchers = e.watchers;
@@ -233,8 +236,11 @@ class CecStore {
     this.pending = await cecPending();
     this.grants = await cecGrants();
     // The node is the truth for the ask (it withdraws it itself on approval,
-    // and a restart drops it) — mirror it whenever the status lands.
-    if (this.status) this.askingHelp = this.status.asking_help === true;
+    // and a restart drops it) — mirror it whenever the status lands, but never
+    // mid-request: an in-flight ask/cancel (busy) owns the flag, so a status
+    // poll landing before the node has registered a just-tapped ask can't stomp
+    // the optimistic "Raising your hand…" card back to the front door.
+    if (this.status && !this.busy) this.askingHelp = this.status.asking_help === true;
   }
 
   private async loadGrants(): Promise<void> {
@@ -373,11 +379,19 @@ class CecStore {
       }, 2500);
       return;
     }
+    // Flip to the "Raising your hand…" card the instant they tap — BEFORE the
+    // node round-trip. Ensuring area residence as part of the ask can take a few
+    // seconds on a cold launch, and awaiting it first left the front door sitting
+    // on a disabled button with no visible change, which reads as a freeze. The
+    // card's spinner + reassurance is the comforting "we've got you" moment, so
+    // show it immediately; if the ask fails we drop back to the front door with a
+    // message.
+    this.askingHelp = true;
     this.busy = true;
     try {
       await cecAskHelp(true);
-      this.askingHelp = true;
     } catch (e) {
+      this.askingHelp = false;
       this.notify(`Couldn't ask for help: ${errMsg(e)}`);
     } finally {
       this.busy = false;
