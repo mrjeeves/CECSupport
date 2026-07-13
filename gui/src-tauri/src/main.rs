@@ -129,6 +129,23 @@ fn open_log_file() -> Option<std::fs::File> {
 // GUI preferences (`<CEC home>/gui-settings.json`)
 // ---------------------------------------------------------------------------
 
+/// When CEC Support registers itself to open with the computer.
+#[derive(Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum AutostartMode {
+    /// **Default.** Open with Windows only while a technician holds a live
+    /// standing grant (3-hour / Forever). This is what lets a technician
+    /// restart the machine mid-repair: the customer logs back in, the app
+    /// relaunches on its own because the grant is still live, and the tech
+    /// carries on — then the login item removes itself once the grant lapses.
+    #[default]
+    WhileGranted,
+    /// Always open with Windows, grant or no grant.
+    Always,
+    /// Never open with Windows.
+    Off,
+}
+
 /// The GUI's own tiny preference file. Lives in the CEC app home (not the
 /// shared mesh home — these are this app's choices, not the machine's).
 #[derive(Default, serde::Serialize, serde::Deserialize)]
@@ -141,6 +158,11 @@ struct GuiSettings {
     /// Opt-in: closing the window hides to the tray instead of quitting.
     #[serde(default)]
     keep_background: bool,
+    /// The autostart policy. `None` = a settings file from before this choice
+    /// existed; migrated once at startup (see the setup block) to `Always` for
+    /// a user who already had run-on-boot on, else the `WhileGranted` default.
+    #[serde(default)]
+    autostart_mode: Option<AutostartMode>,
 }
 
 fn gui_settings_path() -> Option<PathBuf> {
@@ -511,6 +533,91 @@ fn autostart_set(app: tauri::AppHandle, enabled: bool) -> Result<bool, String> {
     Ok(mgr.is_enabled().unwrap_or(enabled))
 }
 
+/// The current autostart policy (`while_granted` / `always` / `off`).
+#[tauri::command]
+fn autostart_mode_get() -> String {
+    let mode = load_gui_settings().autostart_mode.unwrap_or_default();
+    autostart_mode_word(mode).to_string()
+}
+
+/// Set the autostart policy and apply it right away.
+#[tauri::command]
+async fn autostart_mode_set(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    mode: String,
+) -> Result<(), String> {
+    let mode = match mode.as_str() {
+        "while_granted" => AutostartMode::WhileGranted,
+        "always" => AutostartMode::Always,
+        "off" => AutostartMode::Off,
+        other => return Err(format!("unknown autostart mode {other:?}")),
+    };
+    let mut s = load_gui_settings();
+    s.autostart_mode = Some(mode);
+    s.autostart_decided = true;
+    save_gui_settings(&s);
+    reconcile_autostart(&app, &state.node).await;
+    Ok(())
+}
+
+fn autostart_mode_word(mode: AutostartMode) -> &'static str {
+    match mode {
+        AutostartMode::WhileGranted => "while_granted",
+        AutostartMode::Always => "always",
+        AutostartMode::Off => "off",
+    }
+}
+
+/// Enable or disable the OS login item; best-effort (a failure is logged, not
+/// fatal — at worst the app doesn't open on boot, which only costs a manual
+/// relaunch).
+fn set_login_item(app: &tauri::AppHandle, enable: bool) {
+    let mgr = app.autolaunch();
+    let now = mgr.is_enabled().unwrap_or(false);
+    if now == enable {
+        return;
+    }
+    let r = if enable { mgr.enable() } else { mgr.disable() };
+    if let Err(e) = r {
+        tracing::warn!("couldn't {} run-on-boot: {e}", if enable { "enable" } else { "disable" });
+    }
+}
+
+/// Whether the customer currently holds a **live standing** grant (3-hour or
+/// Forever). `cec_grants` already returns only live grants, so any non-`once`
+/// scope here means a technician can still reconnect — the condition that keeps
+/// grant-scoped autostart armed.
+async fn has_live_standing_grant(node: &NodeClient) -> bool {
+    let Ok(v) = node.request("cec_grants", json!({})).await else {
+        return false;
+    };
+    v.as_array()
+        .map(|arr| {
+            arr.iter().any(|g| {
+                matches!(
+                    g.get("scope").and_then(|s| s.as_str()),
+                    Some("three_hours") | Some("forever")
+                )
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// Bring the OS login item in line with the chosen policy: `Always` on, `Off`
+/// off, `WhileGranted` on exactly while a live standing grant exists. Called at
+/// startup, whenever the mode changes, and on a periodic sweep (grants expire
+/// by the clock, with no event to hook).
+async fn reconcile_autostart(app: &tauri::AppHandle, node: &NodeClient) {
+    let mode = load_gui_settings().autostart_mode.unwrap_or_default();
+    let enable = match mode {
+        AutostartMode::Always => true,
+        AutostartMode::Off => false,
+        AutostartMode::WhileGranted => has_live_standing_grant(node).await,
+    };
+    set_login_item(app, enable);
+}
+
 /// Whether "keep running in the background" is on — closing the window then
 /// hides to the tray instead of quitting. Off by default: close means close.
 #[tauri::command]
@@ -719,6 +826,8 @@ fn run_gui() -> ExitCode {
             service_stop,
             service_restart,
             autostart_get,
+            autostart_mode_get,
+            autostart_mode_set,
             autostart_set,
             background_get,
             background_set,
@@ -742,20 +851,23 @@ fn run_gui() -> ExitCode {
             if let Err(e) = build_tray(app.handle()) {
                 tracing::warn!("couldn't create the tray icon: {e}");
             }
-            // Run-on-boot is the default — a support tool that isn't there
-            // after a reboot doesn't support anyone. Applied exactly once
-            // (and only marked done when the registration took, so a failed
-            // attempt retries next launch); after that the user's own toggle
-            // is the last word, including "off".
+            // Migrate the autostart policy for a settings file from before the
+            // choice existed: a user who already had run-on-boot ON keeps
+            // "Always"; everyone else (fresh install, or a past opt-out) gets
+            // the new grant-scoped default. From here the periodic
+            // `reconcile_autostart` below owns the login item — grant-scoped
+            // mode registers it only while a technician can still reconnect.
             let mut settings = load_gui_settings();
-            if !settings.autostart_decided {
-                match app.autolaunch().enable() {
-                    Ok(()) => {
-                        settings.autostart_decided = true;
-                        save_gui_settings(&settings);
-                    }
-                    Err(e) => tracing::warn!("couldn't register run-on-boot: {e}"),
-                }
+            if settings.autostart_mode.is_none() {
+                let was_on =
+                    settings.autostart_decided && app.autolaunch().is_enabled().unwrap_or(false);
+                settings.autostart_mode = Some(if was_on {
+                    AutostartMode::Always
+                } else {
+                    AutostartMode::WhileGranted
+                });
+                settings.autostart_decided = true;
+                save_gui_settings(&settings);
             }
             // The window is created hidden (tauri.conf `visible: false`) so a
             // start-minimized login-item launch never flashes; reveal it now
@@ -798,6 +910,21 @@ fn run_gui() -> ExitCode {
                 // launched app is already discoverable to a technician.
                 if let Err(e) = node.request("cec_online", json!({})).await {
                     tracing::warn!("cec_online failed: {e:#}");
+                }
+                // Keep the OS login item in step with the autostart policy. A
+                // periodic sweep (not just an event) because a 3-hour grant
+                // lapses by the clock with nothing to hook — so grant-scoped
+                // autostart both arms on approval and disarms on expiry within
+                // a minute. Cheap: one local socket query per tick.
+                {
+                    let rec_app = handle.clone();
+                    let rec_node = node.clone();
+                    tauri::async_runtime::spawn(async move {
+                        loop {
+                            reconcile_autostart(&rec_app, &rec_node).await;
+                            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                        }
+                    });
                 }
                 run_event_pump(handle, node).await;
             });

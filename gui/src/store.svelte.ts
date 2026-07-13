@@ -13,6 +13,9 @@ import {
   appVersion,
   autostartGet,
   autostartSet,
+  autostartModeGet,
+  autostartModeSet,
+  type AutostartMode,
   backgroundGet,
   backgroundSet,
   cecApprove,
@@ -67,6 +70,11 @@ class CecStore {
   grants = $state<Grant[]>([]);
   service = $state<ServiceStatus | null>(null);
   autostart = $state(false);
+  /** When the app opens with the computer (see [`AutostartMode`]). Default is
+   *  "while_granted" — it opens on boot only while a technician grant is live,
+   *  so a repair survives a restart without leaving the app on the login
+   *  screen forever. */
+  autostartMode = $state<AutostartMode>("while_granted");
   /** Opt-in: closing the window keeps the app in the tray. Off by default —
    *  the close button really quits. */
   keepBackground = $state(false);
@@ -168,6 +176,7 @@ class CecStore {
 
     this.service = await serviceStatus();
     this.autostart = await autostartGet();
+    this.autostartMode = await autostartModeGet();
     this.keepBackground = await backgroundGet();
 
     this.timer = setInterval(() => {
@@ -435,6 +444,11 @@ class CecStore {
 
   async setAutostart(on: boolean): Promise<void> {
     this.autostart = await autostartSet(on);
+  }
+
+  async setAutostartMode(mode: AutostartMode): Promise<void> {
+    this.autostartMode = mode;
+    await autostartModeSet(mode);
   }
 
   async setKeepBackground(on: boolean): Promise<void> {
