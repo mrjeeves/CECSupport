@@ -238,6 +238,18 @@ async fn open_tiktok(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Open allmystuff.works in the system browser — the waiting screen's upsell
+/// ("CEC Support runs on the AllMyStuff system; get the full app for your own
+/// machines"). Same hardcoded-URL discipline as [`open_tiktok`]: the webview
+/// gets one named door, never an open-anything primitive.
+#[tauri::command]
+async fn open_allmystuff_works(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_shell::ShellExt as _;
+    app.shell()
+        .open("https://allmystuff.works", None)
+        .map_err(|e| e.to_string())
+}
+
 /// Temps alone — the sensor read without the full scan, cheap enough for the
 /// spec card to poll so its one moving number actually moves.
 #[tauri::command]
@@ -812,6 +824,7 @@ fn run_gui() -> ExitCode {
             machine_specs,
             machine_temps,
             open_tiktok,
+            open_allmystuff_works,
             cec_pending,
             cec_approve,
             cec_deny,

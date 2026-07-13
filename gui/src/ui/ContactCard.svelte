@@ -4,7 +4,7 @@
   // number is useful before, during, and after an ask. The identity pair we
   // match on (Support Number + computer name) heads the spec card beneath,
   // so this card is purely "how to reach us".
-  import { openTiktok } from "../tauri";
+  import { openTiktok, openAllmystuffWorks } from "../tauri";
 </script>
 
 <section class="card contact" aria-label="How to reach CEC">
@@ -22,6 +22,17 @@
     Haven't talked to us yet? Call, or catch the live — we'll match you by
     the name and Support Number on your computer's card.
   </p>
+
+  <div class="promo">
+    <p class="promo-text">
+      CEC Support runs on the <strong>AllMyStuff</strong> system to connect and
+      show your screen. Want that kind of access to your own machines,
+      anywhere?
+    </p>
+    <button class="promo-link" onclick={() => openAllmystuffWorks()}>
+      Get AllMyStuff.works — and enjoy things just working →
+    </button>
+  </div>
 </section>
 
 <style>
@@ -69,5 +80,37 @@
     font-size: 0.75rem;
     color: var(--ink-faint);
     line-height: 1.45;
+  }
+
+  .promo {
+    margin-top: 0.3rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid var(--line, rgba(128, 128, 128, 0.25));
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .promo-text {
+    margin: 0;
+    font-size: 0.78rem;
+    color: var(--ink-soft, var(--ink-faint));
+    line-height: 1.45;
+  }
+  .promo-text strong {
+    color: var(--ink, inherit);
+    font-weight: 700;
+  }
+  .promo-link {
+    align-self: flex-start;
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--accent);
+    text-decoration: underline;
+    cursor: pointer;
+    text-align: left;
   }
 </style>

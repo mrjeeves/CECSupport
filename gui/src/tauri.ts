@@ -135,6 +135,17 @@ export function openTiktok(): void {
   void tryInvoke("open_tiktok");
 }
 
+/** Open allmystuff.works in the system browser — the waiting screen's upsell
+ *  link (CEC Support runs on the AllMyStuff system; the full app is for your
+ *  own machines). Backend-opened in the app, a plain tab in web mode. */
+export function openAllmystuffWorks(): void {
+  if (!isTauri()) {
+    window.open("https://allmystuff.works", "_blank");
+    return;
+  }
+  void tryInvoke("open_allmystuff_works");
+}
+
 /** The help/asking state changed (`cec://help`). `asking: false` means the
  *  node auto-withdrew the ask (help arrived) and the waiting card must
  *  follow. `watchers` rides every beacon the node sends: how many live
