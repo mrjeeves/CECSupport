@@ -319,10 +319,26 @@ async fn cec_forget_node(state: State<'_, AppState>, node: String) -> Result<(),
     Ok(())
 }
 
-/// The customer's standing approvals. The node's grants are validated against
-/// the shared consent-store [`Grant`](allmystuff_cec_consent::Grant) shape
-/// before being handed to the GUI, so a wire drift is logged rather than
-/// mis-rendered.
+/// The customer's standing approvals. The node's `cec_grants` is a GUI-facing
+/// **projection** (flat `scope` string + `control` bool), not the internal
+/// consent-store `Grant` (tagged scope + `capabilities`), so it's validated
+/// against that projection shape here — a drift is logged rather than
+/// mis-rendered. (The old check parsed against the store's `Grant` and so
+/// warned on every call even when nothing was wrong — the two shapes can never
+/// match.)
+#[derive(serde::Deserialize)]
+#[allow(dead_code)]
+struct GrantView {
+    technician: String,
+    #[serde(default)]
+    agent_name: String,
+    scope: String,
+    granted_at: u64,
+    #[serde(default)]
+    expires_at: Option<u64>,
+    control: bool,
+}
+
 #[tauri::command]
 async fn cec_grants(state: State<'_, AppState>) -> Result<Value, String> {
     let v = state
@@ -330,8 +346,8 @@ async fn cec_grants(state: State<'_, AppState>) -> Result<Value, String> {
         .request("cec_grants", json!({}))
         .await
         .map_err(|e| e.to_string())?;
-    if serde_json::from_value::<Vec<allmystuff_cec_consent::Grant>>(v.clone()).is_err() {
-        tracing::warn!("cec_grants: node returned grants that don't match the shared Grant shape");
+    if serde_json::from_value::<Vec<GrantView>>(v.clone()).is_err() {
+        tracing::warn!("cec_grants: node returned grants that don't match the expected GUI shape");
     }
     Ok(v)
 }
