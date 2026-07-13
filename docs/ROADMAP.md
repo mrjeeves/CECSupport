@@ -1,9 +1,10 @@
 # CEC Support — Roadmap & build status
 
-This file is the honest ledger: what is **compiled and tested**, what is
-**written but not compilable in a headless Linux CI sandbox**, and what is
-**runtime-only** (needs a Windows machine + a live mesh). CEC Support spans four
-repositories, so it also records the **cross-repo build order**.
+This file is the honest ledger: what is **compiled and tested here**, what is
+**built and released but not compilable in this headless Linux CI sandbox**, and
+what is **runtime-only** (needs a Windows machine + a live mesh to exercise).
+CEC Support spans four repositories, so it also records the **cross-repo build
+order** that got them there.
 
 ## Validated now (compiles + unit-tested)
 
@@ -24,12 +25,13 @@ These are green today (`cargo test` / `clippy -D warnings` / `fmt --check`):
   Windows-SCM service installer, with pure, tested unit/plist/`sc` renderers.
   **5 unit tests.**
 
-## Written, not compilable in this sandbox (by design)
+## Shipped, not compilable in this sandbox (by design)
 
 Real implementations that need a toolchain a headless Linux container doesn't
-have (heavy media dev libs, a webview, cross-repo git deps that must be pushed
-first). They are validated at the layer that *can* be checked — the frontend
-type-checker — and reviewed by inspection:
+have (heavy media dev libs, a webview). The cross-repo git deps they pull are
+published now and resolve; what this sandbox still lacks is the media/webview
+toolchain. They are validated at the layer that *can* be checked here — the
+frontend type-checker — and reviewed by inspection:
 
 - **AllMyStuff node "CEC mode" + technician GUI** — the secret "CEC Support"
   settings tab (Agent Name + the raised-hand queue → answer; a Customer number
@@ -45,13 +47,13 @@ type-checker — and reviewed by inspection:
   backend needs the Linux media stack **and** the MyOwnMesh hub/`Silent` API
   below.
 - **CEC Support client GUI (`gui/`) + `cec-support` binary** — the Tauri + Svelte
-  customer app (number screen, three-choice approve modal, connected banner,
-  access list, service toggle). It installs like a **normal Windows app**: the
-  Tauri bundle is an NSIS `setup.exe` + `.msi` that ships the `allmystuff-serve`
-  node and the `myownmesh` daemon **inside it** (`externalBin`), so the customer
-  double-clicks one file — no terminal, no one-liners. Frontend type-checked; the
-  Tauri backend depends on the AllMyStuff node engine (git dep, `tag = "v0.2.21"`)
-  + media stack.
+  customer app (inline support number, three-choice approve modal, connected
+  banner, access list, grant-scoped autostart settings). It installs like a
+  **normal Windows app**: the Tauri bundle is an NSIS `setup.exe` + `.msi` that
+  ships the `allmystuff-serve` node and the `myownmesh` daemon **inside it**
+  (`externalBin`), so the customer double-clicks one file — no terminal, no
+  one-liners. Frontend type-checked; the Tauri backend depends on the AllMyStuff
+  node engine (git dep on a published AllMyStuff `tag`) + media stack.
 
 ## The one substrate change
 
@@ -63,21 +65,22 @@ type-checker — and reviewed by inspection:
 
 ## Cross-repo build order
 
-Because the heavy pieces depend on each other across repos, they must land in
-this order for an end-to-end build:
+Because the heavy pieces depend on each other across repos, they had to land in
+this order for an end-to-end build — and now have, each layer merged, tagged,
+and released:
 
-1. **MyOwnMesh** — `NetworkKind::Silent` + `connect_peer` merged and tagged
-   **`v0.2.32`** ✓.
-2. **AllMyStuff** — `.myownmesh-rev` moved to `v0.2.32`, workspace bumped to
-   **`0.2.21`**; merge and tag `v0.2.21`. The node "CEC mode" builds against the
-   `Silent`/`connect_peer` API over the daemon control socket.
-3. **CECSupport** — `gui/src-tauri` git deps pin `tag = "v0.2.21"`;
-   `.allmystuff-rev` = `v0.2.21`, `.myownmesh-rev` = `v0.2.32`. `just release`
-   tags the repo, and `.github/workflows/release.yml` builds the Windows Tauri
-   bundle — the GUI's `build.rs` fetches those two pinned sidecars from their
-   releases and bundles them into the `setup.exe` / `.msi`, which the workflow
-   publishes to the GitHub release. (Cut this after AllMyStuff `v0.2.21` is
-   published, so the `allmystuff-serve` sidecar resolves.)
+1. **MyOwnMesh** — `NetworkKind::Silent` + `connect_peer` merged and tagged ✓.
+2. **AllMyStuff** — `.myownmesh-rev` moved to that MyOwnMesh tag, workspace
+   bumped, merged and tagged, and the tag published as a GitHub release. The
+   node "CEC mode" builds against the `Silent`/`connect_peer` API over the daemon
+   control socket.
+3. **CECSupport** — `gui/src-tauri` git deps pin that AllMyStuff `tag`, and
+   `.allmystuff-rev` / `.myownmesh-rev` hold the matching sidecar pins. `just
+   release` tags the repo, and `.github/workflows/release.yml` builds the Windows
+   Tauri bundle — the GUI's `build.rs` fetches those two pinned sidecars from
+   their releases and bundles them into the `setup.exe` / `.msi`, which the
+   workflow publishes to the GitHub release. (The AllMyStuff release is published
+   first, so the `allmystuff-serve` sidecar resolves.)
 4. **support.cec.direct** — published; its **Download for Windows** button points
    straight at the CEC Support `setup.exe` release. No install one-liners.
 
@@ -86,8 +89,8 @@ every step.
 
 ## Runtime verification still owed (needs Windows + a live mesh)
 
-None of the following can be exercised in this environment; they are the
-acceptance tests for the first real build:
+None of the following can be exercised in this headless environment; they are
+the runtime acceptance tests, run on a Windows box against a live mesh:
 
 - End-to-end (headline): customer launches → **Ask for help** → technician sees
   the raised hand and answers → customer sees "‹Agent› is trying to connect" →
@@ -98,8 +101,9 @@ acceptance tests for the first real build:
 - On the shared area, a customer connects only to the CEC infra hubs and forms
   **no** connection to another customer, and no session forms until the
   technician's deliberate `connect_peer`.
-- Windows: `sc.exe` service install/uninstall, unattended reconnect after
-  reboot, and that a 3-hour grant expires and re-prompts.
+- Windows: grant-scoped autostart (start with Windows while a grant is live) and
+  the `sc.exe` service installer both keeping the machine reachable across a
+  reboot mid-repair, and that a 3-hour grant expires and re-prompts.
 - Screen capture + input injection latency/quality on Windows (Media Foundation
   H.264 path) via the reused AllMyStuff node.
 - Reuse-or-bundle: install on a machine with AllMyStuff present (reuse the

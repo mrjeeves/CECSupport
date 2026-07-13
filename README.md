@@ -16,7 +16,9 @@ is [MyOwnMesh](https://github.com/mrjeeves/MyOwnMesh). See
 
 1. **Ask for help.** The headline button. One tap raises the customer's hand on
    the shared support area — a `SupportPresence` beacon a technician sees in
-   their queue and answers by connecting to this device directly.
+   their queue and answers by connecting to this device directly. While it
+   waits, the screen also carries a short note — linking `allmystuff.works` —
+   that CEC Support runs on the AllMyStuff system.
 2. **Their support number.** Shown too (9 digits, e.g. `123 456 789`), with a
    copy button and "read this to your technician". It's derived from the
    device's key (`allmystuff_cec_protocol::support_id_from_device`) and serves
@@ -41,14 +43,16 @@ is [MyOwnMesh](https://github.com/mrjeeves/MyOwnMesh). See
    controlling your screen" with a **Disconnect**, and a list of everyone with
    standing access (with a live countdown for the 3-hour ones) each with a
    **Forget** (revoke) button that bites immediately.
-6. **Settings**: an **Install as a background service** toggle (so CEC Support
-   reconnects after a reboot mid-repair), an Uninstall/Stop control, an "open at
-   startup" toggle, and a friendly name for this computer.
+6. **Settings**: a grant-scoped **autostart** policy for surviving a reboot
+   mid-repair — `while_granted` (the default: start with Windows only while an
+   active technician grant is open), `always`, or `off`; the separate
+   `cec-support-service` OS-service installer with its Uninstall/Stop control;
+   and a friendly name for this computer.
 
 It is **customer-only**. It never browses or dials anyone (that's the
 technician's AllMyStuff app) — no graph, no fleets, no file browser, no
 terminal. Just: ask for help, approve/deny, who's connected, revoke,
-install-service.
+autostart.
 
 ## How it's built (reuse, don't clobber)
 
@@ -69,8 +73,9 @@ touches an AllMyStuff install on the same machine.
 The client rides the **same per-machine stack** an AllMyStuff install runs —
 one `myownmesh` daemon, one `allmystuff-serve`, shared control sockets, one
 machine identity. It reuses a running node or brings the stack up itself, so it
-works solo or side by side with AllMyStuff; per-session privacy comes from each
-support number's own room, not from siloing the apps.
+works solo or side by side with AllMyStuff; per-session privacy comes from the
+shared area being Silent and hub-mediated plus the customer's per-frame consent,
+not from siloing the apps.
 
 ## Install — a normal Windows app
 
@@ -85,9 +90,9 @@ everything the client needs.
 **Reuse, don't clobber** happens at *runtime*, not install time: when the client
 comes up it reuses an already-installed AllMyStuff node/daemon if one is present
 and new enough, and falls back to its own bundled copies otherwise. The release
-build stages the pinned versions into the bundle — `.myownmesh-rev` (`v0.2.32`)
-and `.allmystuff-rev` (`v0.2.21`) are those pins, which also match the
-`tag = "v0.2.21"` git deps in `gui/src-tauri/Cargo.toml`.
+build stages the pinned versions into the bundle — the versions pinned in
+`.myownmesh-rev` / `.allmystuff-rev`, which match the `tag = "…"` git deps in
+`gui/src-tauri/Cargo.toml`.
 
 ## The node-control contract the client drives
 
@@ -125,9 +130,9 @@ CECSupport/
 ├── gui/                            Tauri + Svelte 5 client (its own workspace)
 │   ├── package.json, vite.config.ts, tsconfig.json, svelte.config.js
 │   ├── src/                        App.svelte, tauri.ts bridge, store, components
-│   └── src-tauri/                  Cargo.toml (v0.2.21 git deps), main.rs, tauri.conf.json
+│   └── src-tauri/                  Cargo.toml (pinned git deps), main.rs, tauri.conf.json
 ├── scripts/bump-version.sh         version bump used by `just release`
-├── .allmystuff-rev / .myownmesh-rev   sidecar version pins (v0.2.21 / v0.2.32)
+├── .allmystuff-rev / .myownmesh-rev   sidecar version pins (the AllMyStuff / MyOwnMesh release tags to bundle)
 ├── .github/workflows/             ci.yml (service crate + gui check) · release.yml (tag → Windows installer)
 ├── ARCHITECTURE.md · docs/         design + roadmap
 ```
@@ -163,9 +168,9 @@ cargo test         # from the repo root — the cec-support-service crate
 ```
 
 **The full desktop app** (`gui/src-tauri`) needs the AllMyStuff node engine +
-CEC crates, which are git dependencies on a sibling branch that isn't published
-yet, plus the Tauri/media toolchain — so it does **not** build in this repo's
-sandbox. Once those are on a published ref:
+CEC crates (git dependencies, now resolvable on published AllMyStuff tags) plus
+the Tauri/media toolchain — so it does **not** build in this repo's headless
+Linux sandbox, which lacks that toolchain. On a machine that has it:
 
 ```sh
 cd gui && pnpm tauri dev      # or: pnpm tauri build
@@ -187,7 +192,7 @@ cec-support --version
 |---|---|---|
 | `gui/` frontend (`pnpm check`/`build`) | ✅ yes | pure Svelte/TS |
 | `crates/cec-support-service` (`cargo test`) | ✅ yes | no webview/media deps |
-| `gui/src-tauri` (`cargo build`) | ❌ no | AllMyStuff git deps not yet published + heavy media/webview toolchain |
+| `gui/src-tauri` (`cargo build`) | ❌ no | needs the heavy media/webview (Tauri) toolchain this headless Linux sandbox lacks |
 
 ## License
 

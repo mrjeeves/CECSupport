@@ -11,10 +11,9 @@ scary warning** — no SmartScreen "Windows protected your PC" and no UAC
 > Windows itself checks at download/install time. A shipping build wants both;
 > they don't overlap.
 
-CEC Support ships as an `.exe` / `.msi` (plus a PowerShell one-liner,
-`irm https://support.cec.direct/install.ps1 | iex`) and installs under
-`%LOCALAPPDATA%\Programs\CEC Support`, optionally registering a Windows service.
-Every one of those binaries should be signed.
+CEC Support ships as a double-click **`setup.exe`** (NSIS) plus an `.msi`, and
+installs under `%LOCALAPPDATA%\Programs\CEC Support`, optionally registering a
+Windows service. Every one of those binaries should be signed.
 
 ## TL;DR
 
@@ -22,9 +21,8 @@ Every one of those binaries should be signed.
    recommend **Azure Trusted Signing** (~$10/month).
 2. In CI, **sign every `.exe` and the `.msi`** with SHA-256 **and an RFC-3161
    timestamp**, before uploading release assets.
-3. Optionally Authenticode-sign `install.ps1` (see the caveat below).
-4. Verify with `signtool verify /pa /v`.
-5. SmartScreen reputation is **instant with EV**, and **accrues over time/volume
+3. Verify with `signtool verify /pa /v`.
+4. SmartScreen reputation is **instant with EV**, and **accrues over time/volume
    with OV** — so keep the same certificate across releases.
 
 ---
@@ -40,10 +38,9 @@ Every one of those binaries should be signed.
   verified publisher name when the elevated binary is unsigned. A valid
   Authenticode signature turns it blue with your company name.
 
-A `curl | iex` / `irm | iex` install is judged by the signatures on the
-**binaries it downloads and runs**, and (if the user saves it) on the `.ps1`
-itself. So the payoff comes almost entirely from signing the shipped
-executables and the MSI.
+Both the `setup.exe` and the `.msi` pick up the Mark-of-the-Web when
+downloaded, so both are judged on their signature. The payoff comes entirely
+from signing the shipped executables and the MSI.
 
 ## 2. Certificate options — OV vs EV, and the hardware rule
 
@@ -123,24 +120,7 @@ where `trusted-signing-metadata.json` names your endpoint / account / profile:
 }
 ```
 
-## 5. Signing the PowerShell installer (`install.ps1`)
-
-```powershell
-Set-AuthenticodeSignature `
-  -FilePath .\scripts\install.ps1 `
-  -Certificate (Get-ChildItem Cert:\CurrentUser\My\<YOUR_THUMBPRINT>) `
-  -TimestampServer http://timestamp.digicert.com
-```
-
-**Caveat, stated plainly:** `irm … | iex` executes the script **text in memory**,
-and PowerShell's Execution Policy applies to script **files on disk**, not to a
-piped string — so the one-liner does **not** enforce the `.ps1` signature. The
-real protection for one-liner installs is that the script downloads
-**signed binaries**. Signing `install.ps1` mainly helps the users who **save and
-run** the file, and is cheap to do, so do it — just don't treat it as the
-safeguard.
-
-## 6. CI integration (GitHub Actions)
+## 5. CI integration (GitHub Actions)
 
 Slot a signing step into the release workflow **after build, before uploading
 assets**, on a `windows-latest` runner. With Azure Trusted Signing:
@@ -178,7 +158,7 @@ Store the Azure credentials as repository **secrets**; nothing secret goes in
 the repo. (DigiCert KeyLocker / SSL.com eSigner have equivalent Actions — swap
 the signing step, keep the "sign before upload" placement.)
 
-## 7. Verify the signature
+## 6. Verify the signature
 
 ```powershell
 signtool verify /pa /v "cec-support.exe"      # /pa = default (non-driver) policy
@@ -188,13 +168,15 @@ Get-AuthenticodeSignature "cec-support.exe" | Format-List
 Or right-click the file → **Properties → Digital Signatures**. A good signature
 shows your organization name and a countersignature (the timestamp).
 
-## 8. SmartScreen reputation
+## 7. SmartScreen reputation
 
 - Reputation is tied to the **signing identity** (and, until enough clean
   download volume accrues, roughly per-file). **EV shortcuts this to zero-day.**
-- **Keep the same certificate / subject across releases** — rotating it resets
-  OV reputation to zero. Only rotate on expiry or compromise, and overlap two
-  releases when you do.
+- **Keep the same certificate / subject across releases — and across both apps.**
+  CEC Support and AllMyStuff are both shipping signed, so sign them under **one**
+  signing identity: they then share a single SmartScreen reputation instead of
+  each starting cold. Rotating the cert resets OV reputation to zero, so only
+  rotate on expiry or compromise, and overlap two releases when you do.
 - A fresh **OV** cert starts cold; expect a few early downloads to still warn
   until Microsoft has seen enough clean installs. Submitting the app to
   Microsoft can help seed it.
