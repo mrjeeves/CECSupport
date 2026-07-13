@@ -1,10 +1,22 @@
 <script lang="ts">
-  // The front door: two ways to get helped. "Ask for help" beacons this
-  // machine onto the global help room — every CEC technician sees it in
-  // their queue and one of them answers (the customer still approves them
-  // before anything is shown). "Show Support Number" is the classic phone
-  // flow: read the number out to the technician you're already talking to.
+  // The front door: raise your hand and a technician connects. The support
+  // number is the quiet fallback — for a technician who asks for it, or to
+  // confirm you're you — so it just sits here, on the card, labelled and
+  // one tap to copy. (There's no separate "number screen" any more: the
+  // number was never worth a whole view of its own.)
   import { store } from "../store.svelte";
+  import { copyToClipboard } from "../tauri";
+
+  let copied = $state(false);
+
+  async function copyNumber(): Promise<void> {
+    const n = store.status?.number ?? "";
+    if (!n) return;
+    if (await copyToClipboard(n)) {
+      copied = true;
+      setTimeout(() => (copied = false), 1600);
+    }
+  }
 </script>
 
 <section class="start card">
@@ -44,13 +56,24 @@
         You approve them before they can see anything.
       </p>
       <!-- The number is the quiet fallback, not a second front door: it only
-           matters when a technician asks for it, or to confirm you're you. -->
-      <div class="alt">
-        <button class="btn ghost small" onclick={() => (store.view = "number")}>
-          Show Support Number
-        </button>
-        <p class="sub tiny">If we ask for your number — or you'd like to confirm it.</p>
-      </div>
+           matters when a technician asks for it, or to confirm you're you.
+           So it's shown right here — labelled, and one tap to copy — instead
+           of hidden behind a "show number" button and its own screen. -->
+      {#if store.grouped}
+        <div class="alt">
+          <button
+            class="numbtn"
+            onclick={copyNumber}
+            title="Copy your support number"
+            aria-label={`Support number ${store.grouped}. Tap to copy.`}
+          >
+            <span class="numlabel">Your support number</span>
+            <span class="num">{store.grouped}</span>
+            <span class="copyhint">{copied ? "✓ Copied" : "Tap to copy"}</span>
+          </button>
+          <p class="sub tiny">If we ask for your number — or you'd like to confirm it.</p>
+        </div>
+      {/if}
     </div>
   {/if}
 </section>
@@ -99,8 +122,42 @@
     align-items: center;
     gap: 0.35rem;
   }
-  .alt .btn {
-    align-self: center;
+  /* The number, presented as the card's quiet identifier: a tap-to-copy
+     block, not a call-to-action button. Labelled above, big tabular digits,
+     a copy hint below. */
+  .numbtn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.15rem;
+    width: 100%;
+    padding: 0.55rem 0.9rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r-pill, 0.7rem);
+    cursor: pointer;
+    color: inherit;
+  }
+  .numbtn:hover {
+    border-color: var(--accent);
+  }
+  .numlabel {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--ink-faint);
+  }
+  .num {
+    font-size: 1.35rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.06em;
+    color: var(--ink);
+  }
+  .copyhint {
+    font-size: 0.7rem;
+    color: var(--ink-soft);
   }
   .sub.tiny {
     margin: 0;

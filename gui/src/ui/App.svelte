@@ -2,7 +2,6 @@
   import { onMount, onDestroy } from "svelte";
   import { store } from "../store.svelte";
   import { isTauri } from "../tauri";
-  import NumberScreen from "./NumberScreen.svelte";
   import SpecSheet from "./SpecSheet.svelte";
   import StartScreen from "./StartScreen.svelte";
   import ApproveModal from "./ApproveModal.svelte";
@@ -112,30 +111,6 @@
     <div class="flow" bind:this={flowEl}>
     {#if store.view === "settings"}
       <SettingsPanel />
-    {:else if store.view === "number"}
-      <!-- Two columns when the window affords it: the flow on the left, the
-           computer's card + CEC's contact points as a rail on the right —
-           small monitors are short before they're narrow, so the stats live
-           beside the conversation, not under it. Collapses to one column on
-           narrow windows, where the height-grow logic takes over. -->
-      <div class="cols">
-        <div class="col">
-          <!-- The classic phone flow, one step behind the front door. -->
-          <button class="btn ghost small back" onclick={() => (store.view = "start")}>
-            <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" />
-            </svg>
-            Back
-          </button>
-          <NumberScreen />
-          <ConnectedBanner />
-          <AccessList />
-        </div>
-        <aside class="col">
-          <ContactCard />
-          <SpecSheet />
-        </aside>
-      </div>
     {:else}
       <!-- Same two-column shape as the number view. The rail has the room,
            so CEC's contact points simply live there — no appearing act. Live
@@ -246,12 +221,6 @@
       grid-template-columns: minmax(0, 30rem);
     }
   }
-  /* The number screen's way home — hugs the card column's left edge. */
-  .content .back {
-    align-self: flex-start;
-    margin-bottom: -0.5rem;
-  }
-
   .toast {
     position: fixed;
     left: 50%;

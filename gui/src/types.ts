@@ -35,6 +35,11 @@ export interface MachineSpecs {
    *  motherboard model on a custom build. Null/absent when the firmware
    *  doesn't say (the card hides the row). */
   board?: string | null;
+  /** Just the product / model name — the DMI product field without its
+   *  maker prefix ("XPS 15", not "Dell Inc. XPS 15"). This is what the
+   *  spec card shows: the model identifies the machine, the maker doesn't.
+   *  Null/absent on odd firmware — the card falls back to `board`. */
+  product?: string | null;
   cpu: {
     brand: string;
     cores: number | null;
