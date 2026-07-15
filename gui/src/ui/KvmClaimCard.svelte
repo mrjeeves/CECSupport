@@ -39,7 +39,7 @@
             <span class="dot" aria-hidden="true"></span>
             <div class="who">
               <div class="name">{k.label}</div>
-              <div class="sub">A CEC KVM is ready to set up.</div>
+              <div class="sub">A KVM is ready to set up.</div>
             </div>
           </div>
           <div class="actions">

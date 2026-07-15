@@ -35,6 +35,8 @@ import {
   cecOnline,
   cecStatus,
   isTauri,
+  meshNetworks,
+  meshPeers,
   onCecChat,
   onCecGrants,
   onCecHelp,
@@ -155,6 +157,13 @@ class CecStore {
    *  claim/attach), never on a steady poll — a claimable KVM is rare and the
    *  front door shouldn't hammer the node. */
   snapshot = $state<SessionSnapshot | null>(null);
+  /** The set of peers the node can currently *reach* (canonical ids whose live
+   *  status is active/shelved), across every network it's on. The presence
+   *  snapshot remembers a KVM's last advert even after it powers off, so this
+   *  is the liveness cross-check that lets the card drop an offline KVM. `null`
+   *  = reachability unknown (web mode, or the node couldn't be asked) → the
+   *  card fails open and doesn't filter on it. */
+  private reachable = $state<Set<string> | null>(null);
   /** Claimed-but-unattached KVMs the customer has answered "not this computer"
    *  for, keyed by canonical node id — so the "is it attached here?" prompt
    *  doesn't keep nagging. Session-local (clears on restart). */
@@ -751,8 +760,9 @@ class CecStore {
 
   // ---- KVM & claiming ("KVM and Claiming" card) ------------------------
   //
-  // A CEC KVM is a NanoKVM-class appliance the customer plugs into their
-  // machine: it advertises FEATURE_KVM and ships on a `cec-kvm-…` mesh. The
+  // A KVM is a NanoKVM-class appliance the customer plugs into their machine:
+  // it advertises FEATURE_KVM and offers itself for adoption. The customer app
+  // surfaces any claimable KVM the node sees, exactly as AllMyStuff does. The
   // card walks it through claim → "is it on this computer?" → attached, then
   // offers Reboot (the NanoKVM GPIO reset, tunnelled through the KVM's own web
   // UI — exactly how the AllMyStuff app's `kvmFeature` does it) and a
@@ -765,25 +775,30 @@ class CecStore {
     return this.snapshot?.me ?? "";
   }
 
-  /** The claimable/claimed CEC KVMs to surface. A peer qualifies when it
-   *  advertises FEATURE_KVM, is a *CEC* KVM (a `cec-kvm-…` joining mesh), and
-   *  is either offering itself for adoption or already ours — ordinary fleet
-   *  KVMs and non-KVM peers are ignored. Projected against our own id so the
-   *  card is a dumb view of the lifecycle. */
+  /** The claimable/claimed KVMs to surface. Rides the same predicate the
+   *  AllMyStuff app uses for claimables — a KVM appliance (`FEATURE_KVM`) that
+   *  is either offering itself for adoption (claimable and not already someone
+   *  else's) or already ours. No CEC-vs-normal distinction: any claimable KVM
+   *  the node can see shows here, exactly as it does in AllMyStuff. Projected
+   *  against our own id so the card is a dumb view of the lifecycle. */
   get cecKvms(): CecKvm[] {
     const me = this.localId;
     const out: CecKvm[] = [];
     for (const p of this.snapshot?.peers ?? []) {
       if (!(p.features ?? []).includes(FEATURE_KVM)) continue;
       if (this.sameNode(p.node, me)) continue; // never ourselves
-      if (!this.isCecKvm(p)) continue;
+      // Drop KVMs the node can no longer reach (offline). Presence remembers a
+      // KVM's last advert; `reachable` is the live cross-check. Unknown (null)
+      // = fail open, don't filter.
+      if (this.reachable && !this.reachable.has(canonicalTech(p.node))) continue;
       const mine = this.sameNode(p.owner ?? null, me);
-      // Offering adoption, or already ours — nothing else belongs here.
-      if (!p.claimable && !mine) continue;
+      const ownedByOther = !!p.owner && !mine;
+      // Offering itself for adoption (and not already someone else's), or ours.
+      if (!mine && !(p.claimable && !ownedByOther)) continue;
       const attachedHere = this.sameNode(p.kvm?.attached_to ?? null, me);
       out.push({
         node: p.node,
-        label: p.label || "CEC KVM",
+        label: p.label || "KVM",
         claimable: !!p.claimable,
         mine,
         attachedHere,
@@ -799,18 +814,6 @@ class CecStore {
   private sameNode(a: string | null | undefined, b: string | null | undefined): boolean {
     if (!a || !b) return false;
     return canonicalTech(a) === canonicalTech(b);
-  }
-
-  /** Whether a KVM peer is a *CEC* KVM — its own joining mesh (or any mesh it's
-   *  on) is a `cec-kvm-…` network. A KVM that advertises no mesh naming yet is
-   *  accepted too: in the CEC customer app, a claimable KVM we can see is ours
-   *  to adopt. */
-  private isCecKvm(p: MeshPeer): boolean {
-    const jm = p.kvm?.joining_mesh ?? "";
-    const meshes = p.kvm?.meshes ?? [];
-    if (jm.startsWith("cec-kvm-")) return true;
-    if (meshes.some((m) => m.startsWith("cec-kvm-"))) return true;
-    return !jm && meshes.length === 0;
   }
 
   /** The site serving a KVM's own web UI — the one whose id matches `kvm.web`,
@@ -832,6 +835,31 @@ class CecStore {
     if (this.demo) return;
     const snap = await sessionSnapshot();
     if (snap) this.snapshot = snap;
+    await this.refreshReachable();
+  }
+
+  /** Recompute which peers the node can currently reach (live status
+   *  active/shelved) across every network it's on — the liveness cross-check
+   *  that lets the card drop an offline KVM (see `reachable`). Fail-open: if the
+   *  node can't be asked for its networks, reachability is left unknown (null)
+   *  and nothing is filtered on it. */
+  private async refreshReachable(): Promise<void> {
+    const nets = await meshNetworks();
+    if (!nets) {
+      this.reachable = null;
+      return;
+    }
+    const live = new Set<string>();
+    for (const net of nets) {
+      const peers = await meshPeers(net.network_id);
+      if (!peers) continue;
+      for (const pr of peers) {
+        if (pr.status === "active" || pr.status === "shelved") {
+          live.add(canonicalTech(pr.device_id));
+        }
+      }
+    }
+    this.reachable = live;
   }
 
   /** Refresh a few times over the next few seconds. A claim/attach is confirmed
@@ -1115,24 +1143,25 @@ class CecStore {
         { label: "coretemp Package id 0", celsius: 52.1 },
       ],
     };
-    // A claimable CEC KVM so the KVM & Claiming card shows in the preview —
-    // claim → "attached to this computer?" → Reboot is fully clickable via the
-    // demo mutations in claimKvm / attachKvmHere.
+    // A claimable KVM (an ordinary NanoKVM — no `cec-kvm-` mesh) so the KVM &
+    // Claiming card shows in the preview and proves normal KVMs surface. Claim
+    // → "attached to this computer?" → Reboot / Unclaim is fully clickable via
+    // the demo mutations in claimKvm / attachKvmHere / unclaimKvm.
     this.snapshot = {
       ready: true,
       me: "clientpubkey-demo1",
       peers: [
         {
           node: "kvmpubkey-demo1",
-          label: "CEC-KVM",
+          label: "NanoKVM",
           owner: null,
           claimable: true,
           features: ["kvm", "sites"],
           sites: [{ id: "tcp:80", label: "HTTP", port: 80, scheme: "http" }],
           kvm: {
-            joining_mesh: "cec-kvm-ab3de-fg7hj",
+            joining_mesh: "kvm-9f2c1-a7b3",
             web: "tcp:80",
-            meshes: ["cec-kvm-ab3de-fg7hj"],
+            meshes: ["kvm-9f2c1-a7b3"],
           },
         },
       ],

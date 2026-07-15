@@ -231,6 +231,22 @@ export interface SessionSnapshot {
   peers?: MeshPeer[];
 }
 
+/** One network the node is on (`mesh_networks`) — trimmed to the id we query
+ *  live peers for. */
+export interface NetworkSummary {
+  network_id: string;
+}
+
+/** One peer on a network's *live* peer list (`mesh_peers`), trimmed to the
+ *  reachability signal. `status` is "active"/"shelved" when the node can
+ *  actually reach the peer, and a remembered-but-offline value
+ *  ("offline"/"sighted"/"handshaking") otherwise. Distinct from `MeshPeer`,
+ *  which is a presence advert the node keeps even after the peer goes away. */
+export interface MeshPeerInfo {
+  device_id: string;
+  status: string;
+}
+
 /** A claimable/claimed CEC KVM as the card renders it — the store projects
  *  this from a `MeshPeer` against our own node id, so the card stays a dumb
  *  view of the current lifecycle state. */
