@@ -14,7 +14,7 @@ AllMyStuff's remote-control console**, layered on the same substrate:
 ┌──────────────────────────────────────────────────────────────────────┐
 │  CEC Support client app  (this repo)                                   │
 │  Windows-first customer GUI: show my number · approve/deny · revoke ·  │
-│  install-as-service. Embeds the AllMyStuff node in "CEC client mode".  │
+│  reconnect on boot. Embeds the AllMyStuff node in "CEC client mode".   │
 └───────────────▲──────────────────────────────────────────────────────┘
                 │ reuses (git dependency)
 ┌───────────────┴──────────────────────────────────────────────────────┐
@@ -22,9 +22,9 @@ AllMyStuff's remote-control console**, layered on the same substrate:
 │  • node engine: screen capture / input inject / sessions / graph       │
 │  • crates/allmystuff-cec-protocol   the CEC wire contract + Support ID  │
 │  • crates/allmystuff-cec-consent    Once / 3-hours / Forever grants     │
-│  • GUI: a secret "CEC Support" tab (Agent Name + Customer number →      │
-│    dial); dialed customers show as ordinary graph peers (no fleet       │
-│    group — the CEC mesh is Silent, with no roster)                      │
+│  • GUI: a secret "CEC Support" tab (Agent Name + raised-hand queue →   │
+│    answer, or type the number as a fallback); dialed customers show    │
+│    as ordinary graph peers (no fleet group — CEC is Silent, no roster) │
 └───────────────▲──────────────────────────────────────────────────────┘
                 │ embeds
 ┌───────────────┴──────────────────────────────────────────────────────┐
@@ -41,7 +41,7 @@ protocol, the consent rules, and the media planes. The customer's app is then a
 small, calm, single-purpose GUI on top. MyOwnMesh stays a general substrate —
 its only CEC-related addition is the reusable `Silent` network type.
 
-## The "Silent" mesh, named after the number
+## The "Silent" mesh — one shared support area
 
 An ordinary MyOwnMesh network is always-on: every co-present peer auto-dials
 every other and the roster gossips. That is wrong for a help desk — you don't
@@ -57,34 +57,43 @@ Support uses a new MyOwnMesh network type, **`Silent`**:
   signed roster, so `Silent` is inherently open; access control happens
   out-of-band (below), not via network governance.
 
-On top of that, the **`network_id` is derived from the customer's number**
-(`allmystuff_cec_protocol::network_id_for_number`, e.g. number `123456789` →
-room `cec-123456789`). The consequences are the whole trust model:
+On top of that, **every CEC node — customers and technicians alike — lives on
+one well-known shared area**: the constant
+`allmystuff_cec_protocol::HELP_NETWORK_ID` (`cecsupport-clients`), shaped into a
+hub topology by `CEC_HELP_HUBS`. There is no per-customer room; the hub shape is
+what makes one shared area safe:
 
-- Each customer effectively has **their own secret room**. A technician who
-  hasn't been told the number can't even compute the `network_id`, so they can't
-  signal, discover, or reach that customer at all.
-- There is **no shared lobby** and therefore **no N² connection fan-out**: a
-  customer's room only ever contains that customer plus whoever they handed the
-  number to.
-- The number is derived deterministically from the device's public key
-  (`support_id_from_device`), so the customer and technician independently
-  compute the same room from the same number — **no directory, no server**.
+- Customers connect **only to CEC-operated infra hubs**, never to each other. On
+  the area a customer dials nobody and sees nobody — the Silent rules above mean
+  no auto-connect, no gossip, no roster — so there is no N² connection fan-out.
+- A technician on the area reaches a customer by **deliberately dialing that one
+  device**: they answer a raised hand (a `SupportPresence` beacon) by
+  `connect_peer`-ing that customer's device, or — as a fallback when the
+  raised-hand queue is too crowded to pick someone out — type the number and let
+  the node resolve those digits to a device on the area.
+- The number (`support_id_from_device`, 9 digits like `123 456 789`) is a
+  **display / verification label and a dial fallback — not a network id, room
+  key, or rendezvous secret**. It is derived deterministically from the device's
+  public key, so the customer can read it out to confirm identity, but knowing it
+  puts no one in a private room — there is no per-number room to enter.
 
 ### Two layers of access control
 
-1. **Discovery gate — the number.** Knowing the number lets you *find and
-   signal* the customer (join their Silent room). It is communicated out of band
-   (the customer reads it to the technician on the phone). ~40 bits of entropy:
-   enough that you can't stumble into a customer's room, not a cryptographic
-   secret on its own.
-2. **Access gate — the approval.** Discovery is not access. Even inside the
-   room, nothing happens until the customer **approves** the technician (below).
-   Screen and control frames are authorised per-frame against the customer's
-   consent store, so a revoke stops the stream immediately.
+1. **Discovery gate — being a technician who dials you.** Reaching a customer at
+   all means being a technician on the shared support area and **deliberately
+   dialing that one device**. Customers are non-connectable to one another; the
+   area is hub-mediated and Silent — no auto-connect, no gossip, no roster — so
+   nothing reaches a customer until a technician picks their device (from a
+   raised hand, or the number as a fallback) and dials it.
+2. **Access gate — the approval.** Discovery is not access. Even once a
+   technician has dialed in, nothing happens until the customer **approves** them
+   (below). Screen and control frames are authorised per-frame against the
+   customer's consent store, so a revoke stops the stream immediately.
 
-This is exactly the AnyDesk shape ("here's my ID" → "allow this session"), but
-the ID doubles as the private rendezvous and there is no server in the middle.
+This is the AnyDesk shape ("here's my ID" → "allow this session"), with no
+central directory or session server in the middle — but the ID is only a label
+the customer reads out to be found and verified, not a private rendezvous:
+reach comes from a technician on the shared area dialing the device directly.
 
 ## The connect flow
 
@@ -92,11 +101,11 @@ the ID doubles as the private rendezvous and there is no server in the middle.
 Customer (CEC Support app)                 Technician (AllMyStuff + CEC tab)
 ──────────────────────────                 ────────────────────────────────
 launch → identity → number N
-join Silent mesh room = f(N)
-advertise presence, wait
-                                           told N on the phone; sets Agent Name
-                                           join Silent mesh room = f(N)
-                                           see the one customer peer (Sighted)
+join shared support area (cecsupport-clients)
+Ask for help → raise hand (SupportPresence), wait
+                                           already on the shared support area
+                                           sees the raised hand in the queue
+                                           answers it (or types N as a fallback)
                                            connect_peer(customer)         ─┐
    ◀───────────── inbound offer + connect-request (agent_name) ───────────┘
 prompt: "‹Agent Name› is trying to
@@ -136,9 +145,10 @@ are enforced by `allmystuff-cec-consent`:
   technician's graph also gets a general **"Forget this node"** gear action.
 
 Persistent grants (3-hours, Forever) are what make **unattended repair** work:
-combined with *install-as-service*, CEC can reconnect after a reboot without
-anyone at the keyboard — bounded by the 3-hour window unless the customer chose
-Forever, and revocable from the customer side at any time.
+combined with grant-scoped autostart (start with Windows while a grant is live),
+CEC can reconnect after a reboot without anyone at the keyboard — bounded by the
+3-hour window unless the customer chose Forever, and revocable from the customer
+side at any time.
 
 ## Reuse, don't clobber
 
@@ -158,8 +168,9 @@ Support does **not** fork `MYOWNMESH_HOME`, the signaling app-id, or the
 machine identity — one daemon, one node, one device id, whichever app brought
 it up. Either app runs solo (it spawns the stack itself) or side by side (it
 reuses the running one); neither requires the other's GUI. Per-session privacy
-comes from the number-derived `network_id` (`cec-<number>`), which seeds each
-support session's own room handle — not from siloing the apps.
+comes from the shared area being Silent and hub-mediated (customers reach only
+CEC infra hubs, never each other) plus the customer's per-frame consent — not
+from siloing the apps.
 
 `CEC_SUPPORT_HOME` holds only CEC's **own app files** (service state, logs);
 the mesh stack's home stays the shared `~/.myownmesh`.
@@ -174,7 +185,8 @@ Mesh state lives in the shared `~/.myownmesh` home (`MYOWNMESH_HOME`):
   atomically; a corrupt file is quarantined, never fatal.
 - Transient "currently reachable / in a session" state is re-asserted each run,
   never persisted — so a machine is never silently reachable across reboots
-  unless the customer installed the service.
+  unless the customer left grant-scoped autostart on (the default, active only
+  while a technician grant is live) or installed the background service.
 
 CEC's own app files (service state, logs) live under `CEC_SUPPORT_HOME`
 (default e.g. `%LOCALAPPDATA%\CEC Support` on Windows).
@@ -183,15 +195,15 @@ CEC's own app files (service state, logs) live under `CEC_SUPPORT_HOME`
 
 | Component | Repo | Status |
 |---|---|---|
-| `allmystuff-cec-protocol` — wire contract, Support ID, per-number room | AllMyStuff | ✅ implemented + tested |
+| `allmystuff-cec-protocol` — wire contract, Support ID, shared support area | AllMyStuff | ✅ implemented + tested |
 | `allmystuff-cec-consent` — Once/3h/Forever store | AllMyStuff | ✅ implemented + tested |
-| `NetworkKind::Silent` + `connect_peer` | MyOwnMesh | 🚧 the one substrate addition |
-| node "CEC mode" + technician secret tab (dialed customers are ordinary graph peers) | AllMyStuff | 🚧 |
-| app-wide "Forget this node" on every node's gear | AllMyStuff | 🚧 |
+| `NetworkKind::Silent` + `connect_peer` | MyOwnMesh | ✅ shipped (the one substrate addition) |
+| node "CEC mode" + technician secret tab (dialed customers are ordinary graph peers) | AllMyStuff | ✅ shipped |
+| app-wide "Forget this node" on every node's gear | AllMyStuff | ✅ shipped |
 | `cec-support-service` — the client's own service installer | CECSupport | ✅ implemented + tested |
-| client GUI (`gui/`) + `cec-support` binary + installers | CECSupport | 🚧 |
-| website | support.cec.direct | 🚧 |
+| client GUI (`gui/`) + `cec-support` binary + installers | CECSupport | ✅ shipped |
+| website | support.cec.direct | ✅ shipped |
 
 See [ROADMAP.md](docs/ROADMAP.md) for exactly what is compiled-and-tested versus
 what still needs the full media toolchain / a Windows box / a running mesh to
-finalise, and the cross-repo build order.
+verify at runtime, and the cross-repo build order.

@@ -96,6 +96,22 @@ export interface LiveSession {
   want_control: boolean;
 }
 
+/** One line of the live support chat, as the node persists and streams it.
+ *  Carried by `cec_chat_history` (a transcript snapshot) and the `cec://chat`
+ *  event. Mirrors the wire `ChatMessage` in `allmystuff-cec-protocol`. */
+export interface CecChatMsg {
+  /** The node-assigned line id (deduplicates the sender's own echo). */
+  id: string;
+  /** Which side wrote the line, as the node attributes it from the
+   *  authenticated sender — never the wire's self-declared role. On the
+   *  customer's own node "client" is us, "technician" is the tech. */
+  from: "client" | "technician";
+  text: string;
+  /** UNIX **seconds** the line was stamped (not milliseconds) — render with
+   *  `new Date(ts * 1000)`. */
+  ts: number;
+}
+
 /** One standing approval — the consent store's `Grant`. `cec_grants` returns
  *  these and `cec://grants` streams the current set. */
 export interface Grant {
