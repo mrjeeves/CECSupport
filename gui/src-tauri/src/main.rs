@@ -428,6 +428,66 @@ async fn cec_chat_history(state: State<'_, AppState>, peer: String) -> Result<Va
         .map_err(|e| e.to_string())
 }
 
+// ---------------------------------------------------------------------------
+// KVM & claiming — thin pass-throughs to the node's generic (non-`cec_`)
+// control surface. These commands already exist on the node the AllMyStuff
+// app drives; the customer app reaches the same ones over the same socket so
+// a customer can adopt and manage a CEC KVM plugged into their machine. No new
+// node code — the node is the source of truth, we only forward.
+// ---------------------------------------------------------------------------
+
+/// The node's live mesh snapshot — `{ ready, me, peers: [ { node, label,
+/// owner, claimable, features, sites, kvm { attached_to, web, joining_mesh,
+/// meshes } } ] }`. `me` is this computer's own mesh id (the attach-to-this-
+/// computer target); the peers carry the claim/KVM adverts the KVM & Claiming
+/// card discovers claimable CEC KVMs from. Generic, not CEC-specific, but the
+/// card is its only consumer here.
+#[tauri::command]
+async fn session_snapshot(state: State<'_, AppState>) -> Result<Value, String> {
+    state
+        .node
+        .request("session_snapshot", json!({}))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Adopt a claimable device (a CEC KVM) — records this node as its owner. The
+/// device confirms by re-advertising its new owner in presence, which the next
+/// snapshot reflects. `node` is the KVM's mesh id.
+#[tauri::command]
+async fn claim_node(state: State<'_, AppState>, node: String) -> Result<Value, String> {
+    state
+        .node
+        .request("claim_node", json!({ "node": node }))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Point a claimed KVM at the machine it controls. `target` is this computer's
+/// own node id (from `session_snapshot.me`) — i.e. "this KVM is attached to
+/// this computer". The KVM confirms by re-advertising `kvm.attached_to`.
+#[tauri::command]
+async fn kvm_attach(state: State<'_, AppState>, node: String, target: String) -> Result<Value, String> {
+    state
+        .node
+        .request("kvm_attach", json!({ "node": node, "target": target }))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Map a peer's exposed site (here, a KVM's own web UI) to a local port,
+/// returning `{ localPort }`. The reboot flow maps the KVM's console then
+/// POSTs its NanoKVM GPIO endpoint at `http://localhost:<localPort>` over the
+/// tunnel (auth is bypassed on the mesh path).
+#[tauri::command]
+async fn site_map(state: State<'_, AppState>, node: String, port: u16) -> Result<Value, String> {
+    state
+        .node
+        .request("site_map", json!({ "node": node, "port": port }))
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Validate a UI scope string and return its canonical wire form. Uses the
 /// shared [`ApprovalScope`](allmystuff_cec_protocol::ApprovalScope) as the
 /// source of truth for the three allowed values.
@@ -864,6 +924,10 @@ fn run_gui() -> ExitCode {
             cec_set_label,
             cec_chat_send,
             cec_chat_history,
+            session_snapshot,
+            claim_node,
+            kvm_attach,
+            site_map,
             service_status,
             service_install,
             service_uninstall,

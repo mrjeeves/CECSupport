@@ -160,3 +160,94 @@ export interface ServiceResult {
   ok: boolean;
   output: string;
 }
+
+// ---------------------------------------------------------------------------
+// KVM & claiming — the customer's "KVM and Claiming" card. These mirror the
+// node's generic mesh surface (the same `session_snapshot` / `claim_node` /
+// `kvm_attach` / `site_map` the AllMyStuff app drives), trimmed to just the
+// fields the card needs. "CEC KVM" isn't a distinct wire type — it's a KVM
+// appliance (advertises `FEATURE_KVM`) whose own joining mesh is a
+// `cec-kvm-…` network; the store discriminates on that.
+// ---------------------------------------------------------------------------
+
+/** The presence feature tag a KVM appliance advertises (mirrors the node's
+ *  Rust `FEATURE_KVM`) — a NanoKVM-class device that captures a machine's HDMI
+ *  and injects USB-HID, carrying its own web UI. */
+export const FEATURE_KVM = "kvm";
+
+/** One site a peer exposes for reverse-proxying (mirrors the node's
+ *  `SiteAdvert`). Used here only to find a KVM's own web UI — the address the
+ *  Reboot POST is tunnelled to. */
+export interface SiteAdvert {
+  /** Stable id (`tcp:80`). */
+  id: string;
+  label: string;
+  port: number;
+  /** URL scheme ("http", "https", …) — a web scheme is what makes the site
+   *  the KVM's console. Absent on a bare TCP service. */
+  scheme?: string;
+}
+
+/** A KVM appliance's presence binding (the node's `NodeProfile.kvm`,
+ *  snake_case on the wire). Present only on a peer advertising `FEATURE_KVM`. */
+export interface KvmAdvert {
+  /** The node id of the machine this KVM physically controls. Absent = not
+   *  bound to anything yet (freshly claimed, or detached). */
+  attached_to?: string;
+  /** The `SiteAdvert.id` serving the KVM's own web UI (absent = the UI falls
+   *  back to the first web-scheme site). */
+  web?: string;
+  /** The per-device `cec-kvm-…` mesh the KVM ships on and returns to when
+   *  reset/unclaimed — the CEC-KVM discriminator. */
+  joining_mesh?: string;
+  /** Every mesh the KVM is currently joined to. */
+  meshes?: string[];
+}
+
+/** One peer from `session_snapshot`, trimmed to what the KVM & Claiming card
+ *  needs. */
+export interface MeshPeer {
+  /** The peer's mesh node id (used for claim / attach / site_map). */
+  node: string;
+  label?: string;
+  hostname?: string;
+  /** Who owns it (its own presence advert), or null when unowned. */
+  owner?: string | null;
+  /** Whether it's currently offering itself for adoption. */
+  claimable?: boolean;
+  /** App feature tags it advertises ("kvm", "sites", …). */
+  features?: string[];
+  /** Sites it exposes — where a KVM's web UI is found. */
+  sites?: SiteAdvert[];
+  /** KVM binding, present only on a KVM appliance. */
+  kvm?: KvmAdvert;
+}
+
+/** The node's live mesh snapshot (`session_snapshot`). `me` is this node's own
+ *  mesh id — the attach-to-this-computer target. */
+export interface SessionSnapshot {
+  ready: boolean;
+  me?: string;
+  peers?: MeshPeer[];
+}
+
+/** A claimable/claimed CEC KVM as the card renders it — the store projects
+ *  this from a `MeshPeer` against our own node id, so the card stays a dumb
+ *  view of the current lifecycle state. */
+export interface CecKvm {
+  /** The KVM's mesh node id. */
+  node: string;
+  /** Friendly label to show. */
+  label: string;
+  /** Still offering itself for adoption (show the Claim option). */
+  claimable: boolean;
+  /** We own it (owner == this node). */
+  mine: boolean;
+  /** It's bound to this computer (kvm.attached_to == this node). */
+  attachedHere: boolean;
+  /** Ours, not yet attached here, and the customer hasn't answered the
+   *  "is it on this computer?" prompt — so the card shows that prompt. */
+  promptAttach: boolean;
+  /** It advertises a web UI, so Reboot (GPIO over the tunnel) is reachable. */
+  hasWeb: boolean;
+}

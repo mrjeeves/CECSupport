@@ -8,6 +8,7 @@
   import ContactCard from "./ContactCard.svelte";
   import ConnectedBanner from "./ConnectedBanner.svelte";
   import AccessList from "./AccessList.svelte";
+  import KvmClaimCard from "./KvmClaimCard.svelte";
   import SettingsPanel from "./SettingsPanel.svelte";
   import cecLogo from "../assets/cec-logo.png";
 
@@ -87,8 +88,17 @@
       <img class="mark" src={cecLogo} alt="" aria-hidden="true" />
       <span class="name">CEC <span class="name-dim">Support</span></span>
     </div>
+    <!-- The customer's Support number, centered — the one they read to their
+         technician. Always the middle grid cell (even before the node answers)
+         so the brand stays left and Settings stays right. -->
+    <div class="support" aria-live="polite">
+      {#if store.status?.number}
+        <span class="support-label">Support&nbsp;#</span>
+        <span class="support-num">{store.status.number}</span>
+      {/if}
+    </div>
     <button
-      class="btn ghost small"
+      class="btn ghost small header-action"
       aria-label={store.view === "settings" ? "Back" : "Settings"}
       onclick={() => (store.view = store.view === "settings" ? "start" : "settings")}
     >
@@ -127,6 +137,7 @@
         <aside class="col">
           <ContactCard />
           <SpecSheet />
+          <KvmClaimCard />
         </aside>
       </div>
     {/if}
@@ -151,9 +162,12 @@
 
   .topbar {
     flex: 0 0 auto;
-    display: flex;
+    /* Three cells — brand left, Support number dead-centre, Settings right —
+       so the number stays centred regardless of the side widths. */
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
     align-items: center;
-    justify-content: space-between;
+    gap: 0.6rem;
     padding: 0.7rem 1.1rem;
     border-bottom: 1px solid var(--line);
     background: var(--surface);
@@ -164,6 +178,32 @@
     align-items: center;
     gap: 0.6rem;
     font-weight: 700;
+    justify-self: start;
+  }
+
+  /* Centre cell. */
+  .support {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.15rem;
+    justify-self: center;
+    min-width: 0;
+    white-space: nowrap;
+  }
+  .support-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--ink-soft);
+  }
+  .support-num {
+    font-family: var(--mono);
+    font-size: 1.05rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--ink);
+  }
+  .header-action {
+    justify-self: end;
   }
   .brand .mark {
     display: block;
