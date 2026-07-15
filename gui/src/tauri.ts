@@ -277,6 +277,13 @@ export function siteMap(
   return tryInvoke<{ localPort: number }>("site_map", { node, port });
 }
 
+/** Unclaim a KVM we own — releases ownership so it resets and offers itself for
+ *  adoption again. Claiming makes us its fleet owner, so this is `fleet_kick`
+ *  (no MFA code on a customer's fleet). Errors surface. */
+export function fleetKick(device: string): Promise<void> {
+  return mustInvoke("fleet_kick", { device });
+}
+
 // ---- CEC events (drive the modal, banner, and access list live) --------
 
 /** A technician is dialing in — drive the 3-choice Approve modal. Returns an

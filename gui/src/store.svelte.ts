@@ -29,6 +29,7 @@ import {
   cecRevoke,
   cecSetLabel,
   claimNode,
+  fleetKick,
   kvmAttach,
   machineSpecs,
   cecOnline,
@@ -158,6 +159,18 @@ class CecStore {
    *  for, keyed by canonical node id — so the "is it attached here?" prompt
    *  doesn't keep nagging. Session-local (clears on restart). */
   private attachAsked = $state<Record<string, boolean>>({});
+
+  /** A pending confirmation popup — the in-app modal (never `window.confirm`,
+   *  which a customer's webview may block or style inconsistently). Set by
+   *  `askConfirm`; the ConfirmDialog renders it and calls `runConfirm` /
+   *  `cancelConfirm`. Null when nothing is being confirmed. */
+  confirmDialog = $state<{
+    title: string;
+    body: string;
+    confirmLabel: string;
+    danger?: boolean;
+    onConfirm: () => void | Promise<void>;
+  } | null>(null);
 
   private unlisteners: Array<() => void> = [];
   private timer: ReturnType<typeof setInterval> | undefined;
@@ -923,6 +936,71 @@ class CecStore {
       this.notify("Reboot sent to the KVM.");
     } catch (e) {
       this.notify(`Couldn't reboot the KVM: ${errMsg(e)}`);
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  /** Open the in-app confirmation popup with a caller-supplied action. */
+  askConfirm(req: {
+    title: string;
+    body: string;
+    confirmLabel: string;
+    danger?: boolean;
+    onConfirm: () => void | Promise<void>;
+  }): void {
+    this.confirmDialog = req;
+  }
+
+  /** Run the pending confirm's action, then close the popup. */
+  async runConfirm(): Promise<void> {
+    const d = this.confirmDialog;
+    this.confirmDialog = null;
+    if (d) await d.onConfirm();
+  }
+
+  /** Dismiss the confirm popup without acting. */
+  cancelConfirm(): void {
+    this.confirmDialog = null;
+  }
+
+  /** Ask to unclaim a KVM behind the confirm popup — unclaiming resets the
+   *  appliance, so it's gated. */
+  promptUnclaim(node: string, label: string): void {
+    this.askConfirm({
+      title: "Unclaim this KVM?",
+      body: `${label} will reset — it forgets this computer and offers itself for setup again.`,
+      confirmLabel: "Unclaim",
+      danger: true,
+      onConfirm: () => this.unclaimKvm(node),
+    });
+  }
+
+  /** Unclaim a KVM we own — releases our ownership (fleet_kick; claiming made
+   *  us its fleet owner, and a customer's fleet has no MFA, so no code). The
+   *  KVM resets to its joining mesh and offers itself for adoption again. */
+  async unclaimKvm(node: string): Promise<void> {
+    if (this.busy) return;
+    // Forget any "attached here?" answer so a later re-claim asks again.
+    const next = { ...this.attachAsked };
+    delete next[canonicalTech(node)];
+    this.attachAsked = next;
+    if (this.demo) {
+      this.demoPatchKvm(node, (p) => {
+        p.owner = null;
+        p.claimable = true;
+        p.kvm = { ...(p.kvm ?? {}), attached_to: undefined };
+      });
+      this.notify("Unclaimed — it's offering itself for setup again.");
+      return;
+    }
+    this.busy = true;
+    try {
+      await fleetKick(node);
+      this.notify("Unclaiming the KVM…");
+      void this.refreshKvmsSoon();
+    } catch (e) {
+      this.notify(`Couldn't unclaim the KVM: ${errMsg(e)}`);
     } finally {
       this.busy = false;
     }

@@ -488,6 +488,19 @@ async fn site_map(state: State<'_, AppState>, node: String, port: u16) -> Result
         .map_err(|e| e.to_string())
 }
 
+/// Unclaim a KVM we own — releases our ownership so the appliance resets to its
+/// own joining mesh and offers itself for adoption again. Claiming a KVM makes
+/// the customer its fleet owner, so `fleet_kick` (the eviction + Release) is the
+/// path; a customer's fleet carries no MFA, so no `code` is sent.
+#[tauri::command]
+async fn fleet_kick(state: State<'_, AppState>, device: String) -> Result<Value, String> {
+    state
+        .node
+        .request("fleet_kick", json!({ "device": device }))
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Validate a UI scope string and return its canonical wire form. Uses the
 /// shared [`ApprovalScope`](allmystuff_cec_protocol::ApprovalScope) as the
 /// source of truth for the three allowed values.
@@ -928,6 +941,7 @@ fn run_gui() -> ExitCode {
             claim_node,
             kvm_attach,
             site_map,
+            fleet_kick,
             service_status,
             service_install,
             service_uninstall,

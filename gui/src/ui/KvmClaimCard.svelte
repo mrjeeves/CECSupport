@@ -74,17 +74,25 @@
             </div>
           </div>
           <div class="actions">
+            <button class="btn ghost soon" disabled title="Coming soon">
+              Wifi
+              <span class="chip">Soon</span>
+            </button>
             <button
               class="btn"
               disabled={store.busy || !k.hasWeb}
               title={k.hasWeb ? "Reboot the machine this KVM controls" : "This KVM hasn't published a console yet"}
               onclick={() => store.rebootKvm(k.node)}
             >
-              Reboot this KVM
+              Reboot
             </button>
-            <button class="btn ghost soon" disabled title="Coming soon">
-              Connect Wi-Fi
-              <span class="chip">Soon</span>
+            <button
+              class="btn danger"
+              disabled={store.busy}
+              title="Release this KVM — resets it and offers it for setup again"
+              onclick={() => store.promptUnclaim(k.node, k.label)}
+            >
+              Unclaim
             </button>
           </div>
         {:else}
@@ -99,6 +107,14 @@
           <div class="actions">
             <button class="btn" disabled={store.busy} onclick={() => store.attachKvmHere(k.node)}>
               It's on this computer
+            </button>
+            <button
+              class="btn danger"
+              disabled={store.busy}
+              title="Release this KVM — resets it and offers it for setup again"
+              onclick={() => store.promptUnclaim(k.node, k.label)}
+            >
+              Unclaim
             </button>
           </div>
         {/if}

@@ -9,6 +9,7 @@
   import ConnectedBanner from "./ConnectedBanner.svelte";
   import AccessList from "./AccessList.svelte";
   import KvmClaimCard from "./KvmClaimCard.svelte";
+  import ConfirmDialog from "./ConfirmDialog.svelte";
   import SettingsPanel from "./SettingsPanel.svelte";
   import cecLogo from "../assets/cec-logo.png";
 
@@ -147,6 +148,8 @@
   {#if request}
     <ApproveModal {request} />
   {/if}
+
+  <ConfirmDialog />
 
   {#if store.toast}
     <button class="toast" onclick={() => store.dismissToast()}>{store.toast}</button>
