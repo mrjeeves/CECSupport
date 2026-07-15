@@ -35,6 +35,8 @@ import type {
   Grant,
   ApprovalScope,
   MachineSpecs,
+  MeshPeerInfo,
+  NetworkSummary,
   SessionEvent,
   SessionSnapshot,
   ServiceStatus,
@@ -282,6 +284,20 @@ export function siteMap(
  *  (no MFA code on a customer's fleet). Errors surface. */
 export function fleetKick(device: string): Promise<void> {
   return mustInvoke("fleet_kick", { device });
+}
+
+/** The node's networks — enumerated to find where a KVM lives for the
+ *  reachability check. Null in web mode / on error. */
+export async function meshNetworks(): Promise<NetworkSummary[] | null> {
+  const r = await tryInvoke<{ networks?: NetworkSummary[] }>("mesh_networks");
+  return r ? (r.networks ?? []) : null;
+}
+
+/** The live peers on `network`, each with a reachability `status`. Null in web
+ *  mode / on error. */
+export async function meshPeers(network: string): Promise<MeshPeerInfo[] | null> {
+  const r = await tryInvoke<{ peers?: MeshPeerInfo[] }>("mesh_peers", { network });
+  return r ? (r.peers ?? []) : null;
 }
 
 // ---- CEC events (drive the modal, banner, and access list live) --------

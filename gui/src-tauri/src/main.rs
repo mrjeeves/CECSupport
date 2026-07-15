@@ -501,6 +501,32 @@ async fn fleet_kick(state: State<'_, AppState>, device: String) -> Result<Value,
         .map_err(|e| e.to_string())
 }
 
+/// The node's networks (`{ networks: [ { network_id, … } ] }`). The KVM card
+/// enumerates these to find where a KVM lives so it can check live
+/// reachability — the presence snapshot remembers a KVM's last advert even
+/// after it powers off, so a separate liveness read is what drops it.
+#[tauri::command]
+async fn mesh_networks(state: State<'_, AppState>) -> Result<Value, String> {
+    state
+        .node
+        .request("mesh_networks", json!({}))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// The live peer list on `network` (`{ peers: [ { device_id, status, … } ] }`).
+/// `status` is the reachability signal — `active`/`shelved` when the node can
+/// actually reach the peer, a remembered-but-offline value otherwise — which
+/// the KVM card uses to drop KVMs that have gone offline.
+#[tauri::command]
+async fn mesh_peers(state: State<'_, AppState>, network: String) -> Result<Value, String> {
+    state
+        .node
+        .request("mesh_peers", json!({ "network": network }))
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Validate a UI scope string and return its canonical wire form. Uses the
 /// shared [`ApprovalScope`](allmystuff_cec_protocol::ApprovalScope) as the
 /// source of truth for the three allowed values.
@@ -942,6 +968,8 @@ fn run_gui() -> ExitCode {
             kvm_attach,
             site_map,
             fleet_kick,
+            mesh_networks,
+            mesh_peers,
             service_status,
             service_install,
             service_uninstall,

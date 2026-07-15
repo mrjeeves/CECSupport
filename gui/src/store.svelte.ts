@@ -35,6 +35,8 @@ import {
   cecOnline,
   cecStatus,
   isTauri,
+  meshNetworks,
+  meshPeers,
   onCecChat,
   onCecGrants,
   onCecHelp,
@@ -155,6 +157,13 @@ class CecStore {
    *  claim/attach), never on a steady poll — a claimable KVM is rare and the
    *  front door shouldn't hammer the node. */
   snapshot = $state<SessionSnapshot | null>(null);
+  /** The set of peers the node can currently *reach* (canonical ids whose live
+   *  status is active/shelved), across every network it's on. The presence
+   *  snapshot remembers a KVM's last advert even after it powers off, so this
+   *  is the liveness cross-check that lets the card drop an offline KVM. `null`
+   *  = reachability unknown (web mode, or the node couldn't be asked) → the
+   *  card fails open and doesn't filter on it. */
+  private reachable = $state<Set<string> | null>(null);
   /** Claimed-but-unattached KVMs the customer has answered "not this computer"
    *  for, keyed by canonical node id — so the "is it attached here?" prompt
    *  doesn't keep nagging. Session-local (clears on restart). */
@@ -778,6 +787,10 @@ class CecStore {
     for (const p of this.snapshot?.peers ?? []) {
       if (!(p.features ?? []).includes(FEATURE_KVM)) continue;
       if (this.sameNode(p.node, me)) continue; // never ourselves
+      // Drop KVMs the node can no longer reach (offline). Presence remembers a
+      // KVM's last advert; `reachable` is the live cross-check. Unknown (null)
+      // = fail open, don't filter.
+      if (this.reachable && !this.reachable.has(canonicalTech(p.node))) continue;
       const mine = this.sameNode(p.owner ?? null, me);
       const ownedByOther = !!p.owner && !mine;
       // Offering itself for adoption (and not already someone else's), or ours.
@@ -822,6 +835,31 @@ class CecStore {
     if (this.demo) return;
     const snap = await sessionSnapshot();
     if (snap) this.snapshot = snap;
+    await this.refreshReachable();
+  }
+
+  /** Recompute which peers the node can currently reach (live status
+   *  active/shelved) across every network it's on — the liveness cross-check
+   *  that lets the card drop an offline KVM (see `reachable`). Fail-open: if the
+   *  node can't be asked for its networks, reachability is left unknown (null)
+   *  and nothing is filtered on it. */
+  private async refreshReachable(): Promise<void> {
+    const nets = await meshNetworks();
+    if (!nets) {
+      this.reachable = null;
+      return;
+    }
+    const live = new Set<string>();
+    for (const net of nets) {
+      const peers = await meshPeers(net.network_id);
+      if (!peers) continue;
+      for (const pr of peers) {
+        if (pr.status === "active" || pr.status === "shelved") {
+          live.add(canonicalTech(pr.device_id));
+        }
+      }
+    }
+    this.reachable = live;
   }
 
   /** Refresh a few times over the next few seconds. A claim/attach is confirmed
