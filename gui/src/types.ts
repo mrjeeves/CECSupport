@@ -84,6 +84,13 @@ export interface SessionEvent {
   session_id: string;
   /** e.g. "connecting" | "active" | "ended". */
   state: string;
+  /** The technician's canonical device id. The node includes it on an
+   *  **auto-approve** (a standing grant reconnects with no prompt), where there
+   *  was no preceding `cec://request` to learn it from — so the chat/session
+   *  can bind to the right technician. Absent on a plain state transition. */
+  tech?: string;
+  /** The technician's Agent Name, alongside `tech` on an auto-approve. */
+  agent_name?: string;
 }
 
 /** A live session the customer is currently in, as tracked by the store

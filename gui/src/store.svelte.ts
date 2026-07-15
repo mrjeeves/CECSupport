@@ -359,8 +359,14 @@ class CecStore {
       [s.session_id]: {
         session_id: s.session_id,
         state: s.state,
-        tech: prev?.tech ?? "",
-        agent_name: prev?.agent_name ?? "Your technician",
+        // Prefer the event's own `tech`/`agent_name` (the node includes them on
+        // an auto-approve, where there was no `cec://request` to learn them
+        // from) and only fall back to a prior request's values. Without this an
+        // auto-approved reconnect bound the chat to an empty tech id, so the
+        // panel showed an empty thread while the technician's lines filed under
+        // their real id — invisible.
+        tech: s.tech ?? prev?.tech ?? "",
+        agent_name: s.agent_name ?? prev?.agent_name ?? "Your technician",
         want_control: prev?.want_control ?? false,
       },
     };
@@ -390,6 +396,10 @@ class CecStore {
       return;
     }
     const peer = canonicalTech(live[0].tech);
+    // No usable technician id yet (a session event that arrived before its
+    // tech was known) — leave the card as-is rather than binding the chat to an
+    // empty key, which shows an empty thread the real lines never reach.
+    if (!peer) return;
     this.activeChatPeer = peer;
     this.markChatRead(peer);
     void this.loadChatHistory(peer);
