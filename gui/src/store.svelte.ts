@@ -243,6 +243,7 @@ class CecStore {
 
   private unlisteners: Array<() => void> = [];
   private timer: ReturnType<typeof setInterval> | undefined;
+  private chatSyncTimer: ReturnType<typeof setInterval> | undefined;
   private toastTimer: ReturnType<typeof setTimeout> | undefined;
 
   /** The connect request to prompt about (first pending), or null. */
@@ -362,12 +363,27 @@ class CecStore {
       this.now = Math.floor(Date.now() / 1000);
     }, 1000);
 
+    // Re-sync the connected technician's transcript on a slow poll. The live
+    // `cec://chat` stream is best-effort — a single dropped emit, a node
+    // event-stream reconnect gap, or an event that lands before the chat panel
+    // has bound to the peer, and that line is otherwise lost to the customer
+    // forever (it's only ever appended live, never re-fetched). The node keeps
+    // the full transcript, so this is the reliable backstop that guarantees the
+    // customer sees the technician's replies. Connected-only and idempotent
+    // (see syncActiveChat); a no-op in demo (cec_chat_history returns null).
+    this.chatSyncTimer = setInterval(() => this.syncActiveChat(), 4000);
+
     // Refresh KVM & Claiming discovery when the app returns to the foreground
     // — a customer who plugged in a KVM while the window was hidden sees it on
     // return, without a steady background poll (refreshKvms no-ops in demo).
+    // Re-sync the live chat then too, so a reply that arrived while the window
+    // was hidden is there on return without waiting for the next poll tick.
     if (typeof document !== "undefined") {
       const onVisible = () => {
-        if (document.visibilityState === "visible") void this.refreshKvms();
+        if (document.visibilityState === "visible") {
+          void this.refreshKvms();
+          this.syncActiveChat();
+        }
       };
       document.addEventListener("visibilitychange", onVisible);
       this.unlisteners.push(() =>
@@ -421,6 +437,7 @@ class CecStore {
     for (const un of this.unlisteners) un();
     this.unlisteners = [];
     if (this.timer) clearInterval(this.timer);
+    if (this.chatSyncTimer) clearInterval(this.chatSyncTimer);
     if (this.toastTimer) clearTimeout(this.toastTimer);
   }
 
@@ -688,11 +705,35 @@ class CecStore {
     const msgs = await cecChatHistory(key);
     if (!msgs) return;
     const seen = new Set(msgs.map((m) => m.id));
-    const extra = (this.chatThreads[key] ?? []).filter((m) => !seen.has(m.id));
-    this.chatThreads = {
-      ...this.chatThreads,
-      [key]: [...msgs, ...extra].sort((a, b) => a.ts - b.ts),
-    };
+    const extra = (this.chatThreads[key] ?? []).filter((m) => {
+      if (seen.has(m.id)) return false;
+      // A still-pending optimistic line the fetched transcript already carries
+      // (same side + text) must be dropped, or a re-sync doubles the sender's
+      // own bubble the moment the node-assigned copy lands in history.
+      if (m.id.startsWith("local-")) {
+        return !msgs.some((s) => s.from === m.from && s.text === m.text);
+      }
+      return true;
+    });
+    const merged = [...msgs, ...extra].sort((a, b) => a.ts - b.ts);
+    // Skip the write when nothing changed, so the periodic re-sync doesn't
+    // churn the thread array — a fresh reference would re-fire the chat panel's
+    // scroll-to-end effect every tick and fight a customer scrolled up to read.
+    const current = this.chatThreads[key] ?? [];
+    const unchanged =
+      merged.length === current.length &&
+      merged.every((m, i) => current[i]?.id === m.id);
+    if (unchanged) return;
+    this.chatThreads = { ...this.chatThreads, [key]: merged };
+  }
+
+  /** Re-pull the connected technician's transcript so any line the best-effort
+   *  live `cec://chat` event missed still appears. Connected-only, so it's idle
+   *  whenever no session is live; {@link loadChatHistory} is idempotent, so a
+   *  repeated pull with nothing new is a no-op. */
+  private syncActiveChat(): void {
+    const tech = this.connectedTech;
+    if (tech) void this.loadChatHistory(tech);
   }
 
   /** Send a line to a technician. Appends it optimistically (from "client", so
