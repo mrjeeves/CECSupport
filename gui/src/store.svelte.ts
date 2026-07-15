@@ -28,6 +28,9 @@ import {
   cecPending,
   cecRevoke,
   cecSetLabel,
+  claimNode,
+  fleetKick,
+  kvmAttach,
   machineSpecs,
   cecOnline,
   cecStatus,
@@ -41,17 +44,24 @@ import {
   serviceStatus,
   serviceStop,
   serviceUninstall,
+  sessionSnapshot,
+  siteMap,
 } from "./tauri";
+import { FEATURE_KVM } from "./types";
 import type {
   ApprovalScope,
   CecChatMsg,
+  CecKvm,
   CecStatus,
   ConnectRequest,
   Grant,
   LiveSession,
   MachineSpecs,
+  MeshPeer,
   ServiceStatus,
   SessionEvent,
+  SessionSnapshot,
+  SiteAdvert,
 } from "./types";
 
 /** The stable machine identity inside a mesh device id: the bare pubkey with
@@ -137,6 +147,30 @@ class CecStore {
    *  the live session while connected, cleared on disconnect; also set by hand
    *  when the customer taps a name in the access list. */
   activeChatPeer = $state<string | null>(null);
+
+  /** The node's live mesh snapshot for the KVM & Claiming card — peers
+   *  presence has found (with their claim/KVM adverts) plus our own node id
+   *  (`me`). Null until the node answers; the card hides while empty. Refreshed
+   *  on demand (bring-up, app refocus, the card's Refresh, and after a
+   *  claim/attach), never on a steady poll — a claimable KVM is rare and the
+   *  front door shouldn't hammer the node. */
+  snapshot = $state<SessionSnapshot | null>(null);
+  /** Claimed-but-unattached KVMs the customer has answered "not this computer"
+   *  for, keyed by canonical node id — so the "is it attached here?" prompt
+   *  doesn't keep nagging. Session-local (clears on restart). */
+  private attachAsked = $state<Record<string, boolean>>({});
+
+  /** A pending confirmation popup — the in-app modal (never `window.confirm`,
+   *  which a customer's webview may block or style inconsistently). Set by
+   *  `askConfirm`; the ConfirmDialog renders it and calls `runConfirm` /
+   *  `cancelConfirm`. Null when nothing is being confirmed. */
+  confirmDialog = $state<{
+    title: string;
+    body: string;
+    confirmLabel: string;
+    danger?: boolean;
+    onConfirm: () => void | Promise<void>;
+  } | null>(null);
 
   private unlisteners: Array<() => void> = [];
   private timer: ReturnType<typeof setInterval> | undefined;
@@ -259,6 +293,19 @@ class CecStore {
       this.now = Math.floor(Date.now() / 1000);
     }, 1000);
 
+    // Refresh KVM & Claiming discovery when the app returns to the foreground
+    // — a customer who plugged in a KVM while the window was hidden sees it on
+    // return, without a steady background poll (refreshKvms no-ops in demo).
+    if (typeof document !== "undefined") {
+      const onVisible = () => {
+        if (document.visibilityState === "visible") void this.refreshKvms();
+      };
+      document.addEventListener("visibilitychange", onVisible);
+      this.unlisteners.push(() =>
+        document.removeEventListener("visibilitychange", onVisible),
+      );
+    }
+
     if (this.demo) this.loadDemo();
   }
 
@@ -285,6 +332,10 @@ class CecStore {
         // scan-free machine_temps.
         this.specs = await machineSpecs();
         this.specsPending = false;
+        // The node's up — do a first KVM/claim discovery pass too, so a CEC
+        // KVM the customer has plugged in shows up without waiting for a
+        // refocus or the card's Refresh.
+        void this.refreshKvms();
         // Temperature display is parked until it's more accurate and on a
         // 5-second poll (the spec card hides the row for now), so there's
         // nothing to refresh — don't run the old 30s temp poll in the
@@ -698,6 +749,275 @@ class CecStore {
     this.keepBackground = await backgroundSet(on);
   }
 
+  // ---- KVM & claiming ("KVM and Claiming" card) ------------------------
+  //
+  // A CEC KVM is a NanoKVM-class appliance the customer plugs into their
+  // machine: it advertises FEATURE_KVM and ships on a `cec-kvm-…` mesh. The
+  // card walks it through claim → "is it on this computer?" → attached, then
+  // offers Reboot (the NanoKVM GPIO reset, tunnelled through the KVM's own web
+  // UI — exactly how the AllMyStuff app's `kvmFeature` does it) and a
+  // coming-soon Wi-Fi setup. Every backend step is an existing node command;
+  // the node is the source of truth and confirms each by re-advertising.
+
+  /** This computer's own mesh node id (the attach-to-this-computer target),
+   *  from the snapshot. Empty until the first snapshot lands. */
+  get localId(): string {
+    return this.snapshot?.me ?? "";
+  }
+
+  /** The claimable/claimed CEC KVMs to surface. A peer qualifies when it
+   *  advertises FEATURE_KVM, is a *CEC* KVM (a `cec-kvm-…` joining mesh), and
+   *  is either offering itself for adoption or already ours — ordinary fleet
+   *  KVMs and non-KVM peers are ignored. Projected against our own id so the
+   *  card is a dumb view of the lifecycle. */
+  get cecKvms(): CecKvm[] {
+    const me = this.localId;
+    const out: CecKvm[] = [];
+    for (const p of this.snapshot?.peers ?? []) {
+      if (!(p.features ?? []).includes(FEATURE_KVM)) continue;
+      if (this.sameNode(p.node, me)) continue; // never ourselves
+      if (!this.isCecKvm(p)) continue;
+      const mine = this.sameNode(p.owner ?? null, me);
+      // Offering adoption, or already ours — nothing else belongs here.
+      if (!p.claimable && !mine) continue;
+      const attachedHere = this.sameNode(p.kvm?.attached_to ?? null, me);
+      out.push({
+        node: p.node,
+        label: p.label || "CEC KVM",
+        claimable: !!p.claimable,
+        mine,
+        attachedHere,
+        promptAttach: mine && !attachedHere && !this.attachAsked[canonicalTech(p.node)],
+        hasWeb: !!this.kvmWebSite(p),
+      });
+    }
+    return out;
+  }
+
+  /** Whether two mesh ids name the same machine (same pubkey, any suffix) —
+   *  canonicalized identically to the chat thread keys. */
+  private sameNode(a: string | null | undefined, b: string | null | undefined): boolean {
+    if (!a || !b) return false;
+    return canonicalTech(a) === canonicalTech(b);
+  }
+
+  /** Whether a KVM peer is a *CEC* KVM — its own joining mesh (or any mesh it's
+   *  on) is a `cec-kvm-…` network. A KVM that advertises no mesh naming yet is
+   *  accepted too: in the CEC customer app, a claimable KVM we can see is ours
+   *  to adopt. */
+  private isCecKvm(p: MeshPeer): boolean {
+    const jm = p.kvm?.joining_mesh ?? "";
+    const meshes = p.kvm?.meshes ?? [];
+    if (jm.startsWith("cec-kvm-")) return true;
+    if (meshes.some((m) => m.startsWith("cec-kvm-"))) return true;
+    return !jm && meshes.length === 0;
+  }
+
+  /** The site serving a KVM's own web UI — the one whose id matches `kvm.web`,
+   *  else the first web-scheme site. Undefined when the KVM advertises none
+   *  (Reboot then has nowhere to POST). */
+  private kvmWebSite(p: MeshPeer): SiteAdvert | undefined {
+    const sites = p.sites ?? [];
+    const named = p.kvm?.web ? sites.find((s) => s.id === p.kvm!.web) : undefined;
+    return named ?? sites.find((s) => this.siteIsWeb(s));
+  }
+
+  private siteIsWeb(s: SiteAdvert): boolean {
+    return s.scheme === "http" || s.scheme === "https";
+  }
+
+  /** Pull a fresh mesh snapshot (the KVM card's whole data source). On-demand
+   *  only — see `snapshot`. */
+  async refreshKvms(): Promise<void> {
+    if (this.demo) return;
+    const snap = await sessionSnapshot();
+    if (snap) this.snapshot = snap;
+  }
+
+  /** Refresh a few times over the next few seconds. A claim/attach is confirmed
+   *  by the KVM *re-advertising* its new owner/binding, which lands
+   *  asynchronously — one immediate read would miss it. */
+  private async refreshKvmsSoon(): Promise<void> {
+    for (const ms of [700, 1500, 3000, 5000]) {
+      if (this.stopped) return;
+      await new Promise((r) => setTimeout(r, ms));
+      await this.refreshKvms();
+    }
+  }
+
+  /** Adopt a claimable CEC KVM. The KVM confirms by re-advertising us as its
+   *  owner; the card then offers the "attached to this computer?" prompt. */
+  async claimKvm(node: string): Promise<void> {
+    if (this.busy) return;
+    if (this.demo) {
+      this.demoPatchKvm(node, (p) => {
+        p.owner = this.snapshot?.me ?? "me";
+        p.claimable = false;
+      });
+      this.notify("Claimed the KVM.");
+      return;
+    }
+    this.busy = true;
+    try {
+      await claimNode(node);
+      this.notify("Claiming the KVM…");
+      void this.refreshKvmsSoon();
+    } catch (e) {
+      this.notify(`Couldn't claim the KVM: ${errMsg(e)}`);
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  /** Point a claimed KVM at this computer — the customer answered "yes, it's
+   *  attached here". The KVM confirms by re-advertising its binding. */
+  async attachKvmHere(node: string): Promise<void> {
+    if (this.busy) return;
+    if (this.demo) {
+      this.demoPatchKvm(node, (p) => {
+        p.kvm = { ...(p.kvm ?? {}), attached_to: this.snapshot?.me ?? "me" };
+      });
+      this.attachAsked = { ...this.attachAsked, [canonicalTech(node)]: true };
+      this.notify("Linked the KVM to this computer.");
+      return;
+    }
+    const me = this.localId;
+    if (!me) {
+      this.notify("Still finding this computer on the mesh — try again in a moment.");
+      return;
+    }
+    this.busy = true;
+    try {
+      await kvmAttach(node, me);
+      this.attachAsked = { ...this.attachAsked, [canonicalTech(node)]: true };
+      this.notify("Linked the KVM to this computer.");
+      void this.refreshKvmsSoon();
+    } catch (e) {
+      this.notify(`Couldn't link the KVM: ${errMsg(e)}`);
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  /** The customer answered "not this computer" — stop asking (until they claim
+   *  another or restart). */
+  dismissAttachPrompt(node: string): void {
+    this.attachAsked = { ...this.attachAsked, [canonicalTech(node)]: true };
+  }
+
+  /** Reboot the machine the KVM controls — map the KVM's web UI to a local
+   *  port, then POST the NanoKVM GPIO reset over the tunnel (auth is bypassed
+   *  on the mesh path, so no token). Mirrors the AllMyStuff app's `kvmFeature`. */
+  async rebootKvm(node: string): Promise<void> {
+    if (this.busy) return;
+    if (this.demo) {
+      this.notify("Reboot sent to the KVM.");
+      return;
+    }
+    const peer = (this.snapshot?.peers ?? []).find((p) => this.sameNode(p.node, node));
+    const site = peer ? this.kvmWebSite(peer) : undefined;
+    if (!peer || !site) {
+      this.notify("This KVM hasn't published a console yet — can't reboot it.");
+      return;
+    }
+    this.busy = true;
+    try {
+      const m = await siteMap(peer.node, site.port);
+      if (!m) {
+        this.notify("Couldn't reach the KVM's console.");
+        return;
+      }
+      const res = await fetch(`http://localhost:${m.localPort}/api/vm/gpio`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: "reset" }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      this.notify("Reboot sent to the KVM.");
+    } catch (e) {
+      this.notify(`Couldn't reboot the KVM: ${errMsg(e)}`);
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  /** Open the in-app confirmation popup with a caller-supplied action. */
+  askConfirm(req: {
+    title: string;
+    body: string;
+    confirmLabel: string;
+    danger?: boolean;
+    onConfirm: () => void | Promise<void>;
+  }): void {
+    this.confirmDialog = req;
+  }
+
+  /** Run the pending confirm's action, then close the popup. */
+  async runConfirm(): Promise<void> {
+    const d = this.confirmDialog;
+    this.confirmDialog = null;
+    if (d) await d.onConfirm();
+  }
+
+  /** Dismiss the confirm popup without acting. */
+  cancelConfirm(): void {
+    this.confirmDialog = null;
+  }
+
+  /** Ask to unclaim a KVM behind the confirm popup — unclaiming resets the
+   *  appliance, so it's gated. */
+  promptUnclaim(node: string, label: string): void {
+    this.askConfirm({
+      title: "Unclaim this KVM?",
+      body: `${label} will reset — it forgets this computer and offers itself for setup again.`,
+      confirmLabel: "Unclaim",
+      danger: true,
+      onConfirm: () => this.unclaimKvm(node),
+    });
+  }
+
+  /** Unclaim a KVM we own — releases our ownership (fleet_kick; claiming made
+   *  us its fleet owner, and a customer's fleet has no MFA, so no code). The
+   *  KVM resets to its joining mesh and offers itself for adoption again. */
+  async unclaimKvm(node: string): Promise<void> {
+    if (this.busy) return;
+    // Forget any "attached here?" answer so a later re-claim asks again.
+    const next = { ...this.attachAsked };
+    delete next[canonicalTech(node)];
+    this.attachAsked = next;
+    if (this.demo) {
+      this.demoPatchKvm(node, (p) => {
+        p.owner = null;
+        p.claimable = true;
+        p.kvm = { ...(p.kvm ?? {}), attached_to: undefined };
+      });
+      this.notify("Unclaimed — it's offering itself for setup again.");
+      return;
+    }
+    this.busy = true;
+    try {
+      await fleetKick(node);
+      this.notify("Unclaiming the KVM…");
+      void this.refreshKvmsSoon();
+    } catch (e) {
+      this.notify(`Couldn't unclaim the KVM: ${errMsg(e)}`);
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  /** Web-preview only: mutate the seeded demo KVM peer so the claim → attach
+   *  flow is clickable in the browser. */
+  private demoPatchKvm(node: string, patch: (p: MeshPeer) => void): void {
+    const peers = (this.snapshot?.peers ?? []).map((p) => {
+      if (!this.sameNode(p.node, node)) return p;
+      const copy: MeshPeer = { ...p, kvm: p.kvm ? { ...p.kvm } : undefined };
+      patch(copy);
+      return copy;
+    });
+    this.snapshot = { ...(this.snapshot ?? { ready: true }), peers };
+  }
+
   // ---- toasts ----------------------------------------------------------
 
   notify(message: string): void {
@@ -793,6 +1113,28 @@ class CecStore {
       temps: [
         { label: "ACPI\\ThermalZone\\TZ00_0", celsius: 47.5 },
         { label: "coretemp Package id 0", celsius: 52.1 },
+      ],
+    };
+    // A claimable CEC KVM so the KVM & Claiming card shows in the preview —
+    // claim → "attached to this computer?" → Reboot is fully clickable via the
+    // demo mutations in claimKvm / attachKvmHere.
+    this.snapshot = {
+      ready: true,
+      me: "clientpubkey-demo1",
+      peers: [
+        {
+          node: "kvmpubkey-demo1",
+          label: "CEC-KVM",
+          owner: null,
+          claimable: true,
+          features: ["kvm", "sites"],
+          sites: [{ id: "tcp:80", label: "HTTP", port: 80, scheme: "http" }],
+          kvm: {
+            joining_mesh: "cec-kvm-ab3de-fg7hj",
+            web: "tcp:80",
+            meshes: ["cec-kvm-ab3de-fg7hj"],
+          },
+        },
       ],
     };
   }

@@ -36,6 +36,7 @@ import type {
   ApprovalScope,
   MachineSpecs,
   SessionEvent,
+  SessionSnapshot,
   ServiceStatus,
   ServiceResult,
 } from "./types";
@@ -240,6 +241,47 @@ export async function cecChatHistory(
   });
   if (!r) return null;
   return Array.isArray(r.messages) ? r.messages : [];
+}
+
+// ---- KVM & claiming (the "KVM and Claiming" card) ----------------------
+//
+// These call the node's generic mesh commands (the same ones the AllMyStuff
+// app drives) straight through — no `cec_` node-side counterpart, the node is
+// already the source of truth. See src-tauri/main.rs for the pass-throughs.
+
+/** The node's live mesh snapshot — peers presence has found (with their claim
+ *  and KVM adverts) plus this node's own id (`me`). Feeds the KVM & Claiming
+ *  card's discovery of claimable CEC KVMs. Null in web mode / on error. */
+export function sessionSnapshot(): Promise<SessionSnapshot | null> {
+  return tryInvoke<SessionSnapshot>("session_snapshot");
+}
+
+/** Adopt a claimable device (a CEC KVM). Errors surface — a claim is an
+ *  explicit tap, and the customer should know it didn't take. */
+export function claimNode(node: string): Promise<void> {
+  return mustInvoke("claim_node", { node });
+}
+
+/** Point a claimed KVM at this computer — `target` is our own node id
+ *  (`session_snapshot.me`). Errors surface. */
+export function kvmAttach(node: string, target: string): Promise<void> {
+  return mustInvoke("kvm_attach", { node, target });
+}
+
+/** Map a KVM's web UI (`port`) to a local port; `{ localPort }` is where the
+ *  reboot POST goes. Null in web mode / on error. */
+export function siteMap(
+  node: string,
+  port: number,
+): Promise<{ localPort: number } | null> {
+  return tryInvoke<{ localPort: number }>("site_map", { node, port });
+}
+
+/** Unclaim a KVM we own — releases ownership so it resets and offers itself for
+ *  adoption again. Claiming makes us its fleet owner, so this is `fleet_kick`
+ *  (no MFA code on a customer's fleet). Errors surface. */
+export function fleetKick(device: string): Promise<void> {
+  return mustInvoke("fleet_kick", { device });
 }
 
 // ---- CEC events (drive the modal, banner, and access list live) --------
