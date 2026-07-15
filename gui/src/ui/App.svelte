@@ -94,7 +94,7 @@
     <div class="support" aria-live="polite">
       {#if store.status?.number}
         <span class="support-label">Support&nbsp;#</span>
-        <span class="support-num">{store.status.number}</span>
+        <span class="support-num">{store.grouped}</span>
       {/if}
     </div>
     <button
