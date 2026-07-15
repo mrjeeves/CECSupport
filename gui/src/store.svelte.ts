@@ -20,6 +20,8 @@ import {
   backgroundSet,
   cecApprove,
   cecAskHelp,
+  cecChatHistory,
+  cecChatSend,
   cecDeny,
   cecForgetNode,
   cecGrants,
@@ -30,6 +32,7 @@ import {
   cecOnline,
   cecStatus,
   isTauri,
+  onCecChat,
   onCecGrants,
   onCecHelp,
   onCecRequest,
@@ -41,6 +44,7 @@ import {
 } from "./tauri";
 import type {
   ApprovalScope,
+  CecChatMsg,
   CecStatus,
   ConnectRequest,
   Grant,
@@ -49,6 +53,23 @@ import type {
   ServiceStatus,
   SessionEvent,
 } from "./types";
+
+/** The stable machine identity inside a mesh device id: the bare pubkey with
+ *  MyOwnMesh's 5-char display suffix (`-AB12C`) stripped. Chat lines stream
+ *  under the node's canonical (stripped) peer key, so the thread map is keyed
+ *  by this too — otherwise a session that carried the display id would file its
+ *  history under one key and the live `cec://chat` echoes under another. Mirrors
+ *  the node's `pubkey_part`. */
+function canonicalTech(id: string): string {
+  const dash = id.lastIndexOf("-");
+  if (dash > 0) {
+    const suffix = id.slice(dash + 1);
+    if (suffix.length === 5 && /^[0-9a-zA-Z]+$/.test(suffix)) {
+      return id.slice(0, dash);
+    }
+  }
+  return id;
+}
 
 function errMsg(e: unknown): string {
   if (e instanceof Error) return e.message;
@@ -105,6 +126,18 @@ class CecStore {
   toast = $state<string | null>(null);
   busy = $state(false);
 
+  /** Chat transcripts keyed by the technician's canonical device id. Filled
+   *  from `cec_chat_history` when a chat opens and kept live by `cec://chat`. */
+  chatThreads = $state<Record<string, CecChatMsg[]>>({});
+  /** Unread inbound (technician) lines per tech, cleared when their chat is on
+   *  screen — drives a small badge on the access-list name. */
+  chatUnread = $state<Record<string, number>>({});
+  /** The technician whose chat currently fills the top-left card (canonical id),
+   *  or null for the normal Ask-for-help / waiting card. Auto-set to the tech on
+   *  the live session while connected, cleared on disconnect; also set by hand
+   *  when the customer taps a name in the access list. */
+  activeChatPeer = $state<string | null>(null);
+
   private unlisteners: Array<() => void> = [];
   private timer: ReturnType<typeof setInterval> | undefined;
   private toastTimer: ReturnType<typeof setTimeout> | undefined;
@@ -145,6 +178,43 @@ class CecStore {
     return label || host || "";
   }
 
+  /** The chat transcript with a technician (canonical id), oldest-first. */
+  chatThread(peer: string): CecChatMsg[] {
+    return this.chatThreads[canonicalTech(peer)] ?? [];
+  }
+
+  /** Unread inbound lines from a technician (canonical id) — the badge count. */
+  chatUnreadFor(peer: string): number {
+    return this.chatUnread[canonicalTech(peer)] ?? 0;
+  }
+
+  /** The technician on a live session right now (their canonical id), or null.
+   *  This is the "we're connected" signal that swaps the front door for chat —
+   *  the first live session's tech when there's more than one. */
+  get connectedTech(): string | null {
+    const s = this.liveSessions[0];
+    return s ? canonicalTech(s.tech) : null;
+  }
+
+  /** Whether a technician (canonical id) is on a live session — gates whether
+   *  the chat composer can actually send (chat is live-only). */
+  isConnectedTo(peer: string): boolean {
+    const want = canonicalTech(peer);
+    return this.liveSessions.some((s) => canonicalTech(s.tech) === want);
+  }
+
+  /** A friendly display name for a technician peer (canonical id): the live
+   *  session's Agent Name if connected, else the standing grant's, else a
+   *  generic label. */
+  chatPeerName(peer: string): string {
+    const want = canonicalTech(peer);
+    const live = this.liveSessions.find((s) => canonicalTech(s.tech) === want);
+    if (live?.agent_name) return live.agent_name;
+    const grant = this.grants.find((g) => canonicalTech(g.technician) === want);
+    if (grant?.agent_name) return grant.agent_name;
+    return "Your technician";
+  }
+
   /** Set on destroy so the bring-up retry loop ends with the store. */
   private stopped = false;
 
@@ -155,6 +225,9 @@ class CecStore {
     this.unlisteners.push(await onCecRequest((r) => this.onRequest(r)));
     this.unlisteners.push(await onCecSession((s) => this.onSession(s)));
     this.unlisteners.push(await onCecGrants((g) => (this.grants = g)));
+    this.unlisteners.push(
+      await onCecChat((e) => this.appendChat(e.peer, e.message)),
+    );
     this.unlisteners.push(
       await onCecHelp((e) => {
         // The node withdraws the ask itself when a session is approved (help
@@ -275,6 +348,9 @@ class CecStore {
       this.sessions = next;
       this.pending = this.pending.filter((p) => p.session_id !== s.session_id);
       void this.loadGrants();
+      // Disconnected — swap the chat card back for the front door (or the
+      // next live tech, if more than one was connected).
+      this.reconcileChatPanel();
       return;
     }
     const prev = this.sessions[s.session_id];
@@ -292,7 +368,31 @@ class CecStore {
     // any lingering prompt for it.
     if (s.state === "active" || s.state === "connecting") {
       this.pending = this.pending.filter((p) => p.session_id !== s.session_id);
+      // Connected — the front door becomes the chat with this technician.
+      this.reconcileChatPanel();
     }
+  }
+
+  /** Keep the top-left card's chat/front-door state in step with the live
+   *  sessions: no session → the Ask-for-help card returns; a live session with
+   *  nobody shown (or the shown tech dropped) → open the connected tech's chat.
+   *  A chat the customer opened by hand (a still-connected tech) is left alone. */
+  private reconcileChatPanel(): void {
+    const live = this.liveSessions;
+    if (live.length === 0) {
+      this.activeChatPeer = null;
+      return;
+    }
+    if (
+      this.activeChatPeer &&
+      live.some((s) => canonicalTech(s.tech) === this.activeChatPeer)
+    ) {
+      return;
+    }
+    const peer = canonicalTech(live[0].tech);
+    this.activeChatPeer = peer;
+    this.markChatRead(peer);
+    void this.loadChatHistory(peer);
   }
 
   // ---- actions ---------------------------------------------------------
@@ -421,6 +521,125 @@ class CecStore {
     this.notify("Saved this computer's name.");
   }
 
+  // ---- chat (live, while a technician is connected) --------------------
+
+  /** Show a technician's chat in the top-left card (their device id), priming
+   *  its history. Used by the access-list name tap; while connected the panel
+   *  also opens on its own (see {@link reconcileChatPanel}). */
+  openChat(peer: string): void {
+    const key = canonicalTech(peer);
+    this.activeChatPeer = key;
+    this.markChatRead(key);
+    void this.loadChatHistory(key);
+  }
+
+  /** Dismiss the chat card. While a session is still live this returns to that
+   *  technician's chat (you can't hide the only way to talk to whoever's on your
+   *  screen); otherwise the Ask-for-help front door returns. */
+  closeChat(): void {
+    this.activeChatPeer = null;
+    this.reconcileChatPanel();
+  }
+
+  /** Clear a technician's unread badge — their chat is on screen. */
+  markChatRead(peer: string): void {
+    const key = canonicalTech(peer);
+    if (!this.chatUnread[key]) return;
+    const next = { ...this.chatUnread };
+    delete next[key];
+    this.chatUnread = next;
+  }
+
+  /** Load the persisted transcript with a technician and fold it into the local
+   *  thread, oldest-first. Null-tolerant: a failed fetch keeps what we have, and
+   *  any live line that beat the reply is preserved (merged + de-duped by id). */
+  async loadChatHistory(peer: string): Promise<void> {
+    const key = canonicalTech(peer);
+    const msgs = await cecChatHistory(key);
+    if (!msgs) return;
+    const seen = new Set(msgs.map((m) => m.id));
+    const extra = (this.chatThreads[key] ?? []).filter((m) => !seen.has(m.id));
+    this.chatThreads = {
+      ...this.chatThreads,
+      [key]: [...msgs, ...extra].sort((a, b) => a.ts - b.ts),
+    };
+  }
+
+  /** Send a line to a technician. Appends it optimistically (from "client", so
+   *  the bubble shows the instant Enter is pressed), then calls the node and
+   *  reconciles the temporary row to the node-assigned id/ts. The node echoes
+   *  the line back over `cec://chat`; {@link appendChat} dedupes that echo. */
+  async sendChat(peer: string, text: string): Promise<void> {
+    const body = text.trim();
+    if (!body) return;
+    const key = canonicalTech(peer);
+    const tempId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    this.appendChat(key, {
+      id: tempId,
+      from: "client",
+      text: body,
+      // UNIX seconds, to match the node's `ts` (the thread sorts by it).
+      ts: Math.floor(Date.now() / 1000),
+    });
+    if (this.demo) {
+      // Act out a technician replying a beat later so the preview chat feels
+      // alive without a backend.
+      setTimeout(() => {
+        this.appendChat(key, {
+          id: `demo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          from: "technician",
+          text: "Thanks — I can see that. Give me one moment.",
+          ts: Math.floor(Date.now() / 1000),
+        });
+      }, 1400);
+      return;
+    }
+    const r = await cecChatSend(key, body);
+    // Live-only: a null means there's no session to carry it (or web mode) —
+    // keep the calm optimistic line rather than surfacing an error.
+    if (!r?.id) return;
+    const thread = this.chatThreads[key] ?? [];
+    if (
+      thread.some((m) => m.id === tempId) &&
+      !thread.some((m) => m.id === r.id)
+    ) {
+      this.chatThreads = {
+        ...this.chatThreads,
+        [key]: thread.map((m) =>
+          m.id === tempId ? { ...m, id: r.id, ts: r.ts } : m,
+        ),
+      };
+    }
+  }
+
+  /** Append one line to a technician's thread, deduped by id. Our own line
+   *  (client) is echoed back by the node — the still-pending optimistic copy is
+   *  collapsed in place rather than doubled. An inbound technician line bumps the
+   *  unread badge unless that chat is the one on screen. */
+  private appendChat(peer: string, msg: CecChatMsg): void {
+    const key = canonicalTech(peer);
+    let thread = this.chatThreads[key] ?? [];
+    if (thread.some((m) => m.id === msg.id)) return;
+    if (msg.from === "client") {
+      const pending = thread.findIndex(
+        (m) =>
+          m.id.startsWith("local-") && m.from === "client" && m.text === msg.text,
+      );
+      if (pending >= 0) {
+        thread = thread.map((m, i) => (i === pending ? msg : m));
+        this.chatThreads = { ...this.chatThreads, [key]: thread };
+        return;
+      }
+    }
+    this.chatThreads = { ...this.chatThreads, [key]: [...thread, msg] };
+    if (msg.from === "technician" && this.activeChatPeer !== key) {
+      this.chatUnread = {
+        ...this.chatUnread,
+        [key]: (this.chatUnread[key] ?? 0) + 1,
+      };
+    }
+  }
+
   // ---- background service ----------------------------------------------
 
   async installService(): Promise<void> {
@@ -508,6 +727,30 @@ class CecStore {
         expires_at: this.now + 3 * 3600 - 600,
       },
     ];
+    // A short transcript with one demo technician, so tapping their name in the
+    // access list opens a real-looking conversation in the preview.
+    this.chatThreads = {
+      "techpubkey-demo-forever": [
+        {
+          id: "demo-1",
+          from: "technician",
+          text: "Hi! I'm connected now — I'll take a look at that printer for you.",
+          ts: this.now - 300,
+        },
+        {
+          id: "demo-2",
+          from: "client",
+          text: "Thank you! It just stopped printing this morning.",
+          ts: this.now - 250,
+        },
+        {
+          id: "demo-3",
+          from: "technician",
+          text: "No problem. Give me a couple of minutes and I'll have it sorted.",
+          ts: this.now - 240,
+        },
+      ],
+    };
     this.service = {
       platform: "windows",
       supported: true,

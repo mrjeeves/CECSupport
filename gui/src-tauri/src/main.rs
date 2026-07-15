@@ -398,6 +398,36 @@ async fn cec_set_label(state: State<'_, AppState>, label: String) -> Result<(), 
     Ok(())
 }
 
+/// Send one live chat line to the connected technician (`peer` is their device
+/// id). Returns the node-assigned `{ id, ts }`. The same `cec_chat_send` the
+/// technician side calls — the node keys the transcript by peer and attributes
+/// `from` by which side dialed, so on this (customer) node our own lines come
+/// back as `"client"`.
+#[tauri::command]
+async fn cec_chat_send(
+    state: State<'_, AppState>,
+    peer: String,
+    text: String,
+) -> Result<Value, String> {
+    state
+        .node
+        .request("cec_chat_send", json!({ "peer": peer, "text": text }))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// The persisted chat transcript with `peer`, oldest-first, as
+/// `{ messages: [ { id, from, text, ts } ] }` — what the chat panel loads when
+/// it opens.
+#[tauri::command]
+async fn cec_chat_history(state: State<'_, AppState>, peer: String) -> Result<Value, String> {
+    state
+        .node
+        .request("cec_chat_history", json!({ "peer": peer }))
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Validate a UI scope string and return its canonical wire form. Uses the
 /// shared [`ApprovalScope`](allmystuff_cec_protocol::ApprovalScope) as the
 /// source of truth for the three allowed values.
@@ -832,6 +862,8 @@ fn run_gui() -> ExitCode {
             cec_forget_node,
             cec_grants,
             cec_set_label,
+            cec_chat_send,
+            cec_chat_history,
             service_status,
             service_install,
             service_uninstall,

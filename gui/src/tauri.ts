@@ -17,15 +17,19 @@
 //   cec_grants {}                         -> Grant[]
 //   cec_forget_node { node }
 //   cec_set_label { label }               (friendly-name helper; see README)
+//   cec_chat_send { peer, text }          -> { id, ts }
+//   cec_chat_history { peer }             -> { messages: CecChatMsg[] }
 //
 //   event cec://request { tech, agent_name, want_control, session_id, verification_code }
 //   event cec://session { session_id, state }
 //   event cec://grants  { grants }
+//   event cec://chat    { peer, message: CecChatMsg }
 //
 // The service commands (install / uninstall / status / …) go to the local
 // `cec-support-service` crate via separate Tauri commands, NOT the node.
 
 import type {
+  CecChatMsg,
   CecStatus,
   ConnectRequest,
   Grant,
@@ -212,6 +216,32 @@ export function cecSetLabel(label: string): Promise<null> {
   return tryInvoke("cec_set_label", { label });
 }
 
+// ---- CEC chat (live, while a technician is connected) ------------------
+
+/** Send one chat line to `peer` (the connected technician's device id) over the
+ *  live session. Returns the node-assigned `{ id, ts }` so the optimistic bubble
+ *  can be reconciled. Chat is live-only: the node errors if there's no session
+ *  to carry it, so this returns null (and the store keeps the calm optimistic
+ *  line) rather than surfacing a stack trace to a customer. */
+export function cecChatSend(
+  peer: string,
+  text: string,
+): Promise<{ id: string; ts: number } | null> {
+  return tryInvoke<{ id: string; ts: number }>("cec_chat_send", { peer, text });
+}
+
+/** The persisted transcript with `peer`, oldest-first. Null in web mode or on a
+ *  transient failure (the store keeps whatever it already had). */
+export async function cecChatHistory(
+  peer: string,
+): Promise<CecChatMsg[] | null> {
+  const r = await tryInvoke<{ messages: CecChatMsg[] }>("cec_chat_history", {
+    peer,
+  });
+  if (!r) return null;
+  return Array.isArray(r.messages) ? r.messages : [];
+}
+
 // ---- CEC events (drive the modal, banner, and access list live) --------
 
 /** A technician is dialing in — drive the 3-choice Approve modal. Returns an
@@ -242,6 +272,19 @@ export async function onCecGrants(
   const { listen } = await import("@tauri-apps/api/event");
   return listen<{ grants: Grant[] }>("cec://grants", (e) =>
     cb(e.payload.grants ?? []),
+  );
+}
+
+/** A chat line landed on some technician's transcript — a received line, or the
+ *  echo of one we just sent. `peer` is the technician's canonical device id (the
+ *  thread key); `message` is the line. Drives the chat panel live. */
+export async function onCecChat(
+  cb: (e: { peer: string; message: CecChatMsg }) => void,
+): Promise<() => void> {
+  if (!isTauri()) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<{ peer: string; message: CecChatMsg }>("cec://chat", (e) =>
+    cb(e.payload),
   );
 }
 

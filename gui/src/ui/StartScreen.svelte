@@ -6,6 +6,7 @@
   // number was never worth a whole view of its own.)
   import { store } from "../store.svelte";
   import { copyToClipboard } from "../tauri";
+  import ChatPanel from "./ChatPanel.svelte";
 
   let copied = $state(false);
 
@@ -19,6 +20,12 @@
   }
 </script>
 
+{#if store.activeChatPeer}
+  <!-- Connected (or reviewing an earlier conversation): the front door becomes
+       the chat with that technician. The store swaps this in on connect and back
+       out to the Ask-for-help card on disconnect. -->
+  <ChatPanel peer={store.activeChatPeer} />
+{:else}
 <section class="start card">
   {#if store.askingHelp}
     <div class="waiting" role="status" aria-live="polite">
@@ -77,6 +84,7 @@
     </div>
   {/if}
 </section>
+{/if}
 
 <style>
   .start {
