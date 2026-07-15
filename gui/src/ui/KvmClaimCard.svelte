@@ -7,10 +7,13 @@
   // One item per relevant KVM, each rendering exactly one lifecycle state:
   //   available   → Claim
   //   claimed     → "is it on this computer?"  (Yes / Not this computer)
-  //   attached    → KVM info + Reboot + Connect Wi-Fi (coming soon)
+  //   attached    → KVM info + Wi-Fi + Reboot + Unclaim
   //   claimed-but-not-here → offer to link it here
   // The store owns the transitions; this file is a dumb view of `store.cecKvms`.
+  // The Wi-Fi button opens KvmWifiModal (rendered below while `store.wifiFor`
+  // is set), which reads/sets the KVM's own Wi-Fi over the reboot tunnel.
   import { store } from "../store.svelte";
+  import KvmWifiModal from "./KvmWifiModal.svelte";
 
   const kvms = $derived(store.cecKvms);
 </script>
@@ -74,9 +77,13 @@
             </div>
           </div>
           <div class="actions">
-            <button class="btn ghost soon" disabled title="Coming soon">
-              Wifi
-              <span class="chip">Soon</span>
+            <button
+              class="btn"
+              disabled={store.busy || !k.hasWeb}
+              title={k.hasWeb ? "Set up this KVM's Wi-Fi" : "This KVM hasn't published a console yet"}
+              onclick={() => void store.openKvmWifi(k.node)}
+            >
+              Wi-Fi
             </button>
             <button
               class="btn"
@@ -121,6 +128,13 @@
       </div>
     {/each}
   </section>
+{/if}
+
+<!-- The Wi-Fi panel is a full-screen overlay, so it lives outside the card and
+     renders only while a KVM's Wi-Fi is open. Conditionally mounted so its
+     SSID/password fields start empty each time it opens. -->
+{#if store.wifiFor}
+  <KvmWifiModal node={store.wifiFor} />
 {/if}
 
 <style>
@@ -221,15 +235,5 @@
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
-  }
-  /* The coming-soon button reads as disabled but still shows its label + chip. */
-  .btn.soon {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-  }
-  .btn.soon .chip {
-    font-size: 0.62rem;
-    padding: 0.05rem 0.35rem;
   }
 </style>
