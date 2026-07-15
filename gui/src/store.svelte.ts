@@ -57,6 +57,10 @@ import type {
   CecStatus,
   ConnectRequest,
   Grant,
+  KvmApiRsp,
+  KvmWifiNetwork,
+  KvmWifiStatus,
+  KvmWifiStatusRaw,
   LiveSession,
   MachineSpecs,
   MeshPeer,
@@ -87,6 +91,38 @@ function errMsg(e: unknown): string {
   if (e instanceof Error) return e.message;
   if (typeof e === "string") return e;
   return String(e);
+}
+
+/** Fold a KVM's `GET /api/network/wifi` body — either model shape — into the
+ *  one {@link KvmWifiStatus} the UI reads. A plain NanoKVM carries the SSID
+ *  inline (`ssid`); a Pro nests it (`wifi.ssid`). */
+function normalizeWifi(data: KvmWifiStatusRaw): KvmWifiStatus {
+  const ssid = (data.ssid ?? data.wifi?.ssid ?? "").trim();
+  return {
+    supported: !!data.supported,
+    apMode: !!data.apMode,
+    connected: !!data.connected,
+    ssid: ssid || null,
+  };
+}
+
+/** Drop nameless/empty entries and order a scan strongest-signal first (the
+ *  order a customer wants when picking their network). */
+function sortNetworks(list: KvmWifiNetwork[]): KvmWifiNetwork[] {
+  return list
+    .filter((w) => w && typeof w.ssid === "string" && w.ssid.length > 0)
+    .slice()
+    .sort((a, b) => (b.signal ?? -999) - (a.signal ?? -999));
+}
+
+/** A canned scan for the browser preview so the network picker is explorable
+ *  without a device (demo mode only). */
+function demoScanList(): KvmWifiNetwork[] {
+  return [
+    { ssid: "CEC-Guest", bssid: "aa:bb:cc:00:11:22", signal: -47, security: "wpa2" },
+    { ssid: "Reception 5G", bssid: "aa:bb:cc:00:11:23", signal: -64, security: "wpa2" },
+    { ssid: "Lobby-Open", bssid: "aa:bb:cc:00:11:24", signal: -73, security: "open" },
+  ];
 }
 
 class CecStore {
@@ -168,6 +204,30 @@ class CecStore {
    *  for, keyed by canonical node id — so the "is it attached here?" prompt
    *  doesn't keep nagging. Session-local (clears on restart). */
   private attachAsked = $state<Record<string, boolean>>({});
+
+  // ---- KVM Wi-Fi panel -------------------------------------------------
+  /** The KVM whose Wi-Fi panel is open (its node id), or null when closed. The
+   *  KvmClaimCard renders the modal only while this is set. */
+  wifiFor = $state<string | null>(null);
+  /** The open KVM's current Wi-Fi state, or null until the first read lands. */
+  wifiStatus = $state<KvmWifiStatus | null>(null);
+  /** Nearby networks from the KVM's scan, or null when the device can't scan
+   *  (a plain NanoKVM 404s the scan route) — the picker then hides and it's
+   *  manual SSID entry only. An empty array means "can scan, found nothing". */
+  wifiScan = $state<KvmWifiNetwork[] | null>(null);
+  /** Reading the initial status when the panel opens. */
+  wifiLoading = $state(false);
+  /** A re-scan is in flight. */
+  wifiScanning = $state(false);
+  /** A connect / disconnect is in flight. */
+  wifiBusy = $state(false);
+  /** An inline message for the Wi-Fi panel (a failed or ambiguous connect),
+   *  or null. Separate from the global toast so it sits next to the form. */
+  wifiError = $state<string | null>(null);
+  /** The resolved console tunnel base (`http://localhost:<port>`) for the open
+   *  panel — mapped once when it opens and reused for every call, so status /
+   *  scan / connect don't each re-tunnel. Cleared on close. */
+  private wifiBase: string | null = null;
 
   /** A pending confirmation popup — the in-app modal (never `window.confirm`,
    *  which a customer's webview may block or style inconsistently). Set by
@@ -765,9 +825,11 @@ class CecStore {
   // surfaces any claimable KVM the node sees, exactly as AllMyStuff does. The
   // card walks it through claim → "is it on this computer?" → attached, then
   // offers Reboot (the NanoKVM GPIO reset, tunnelled through the KVM's own web
-  // UI — exactly how the AllMyStuff app's `kvmFeature` does it) and a
-  // coming-soon Wi-Fi setup. Every backend step is an existing node command;
-  // the node is the source of truth and confirms each by re-advertising.
+  // UI — exactly how the AllMyStuff app's `kvmFeature` does it) and Wi-Fi setup
+  // (reading and setting the KVM's own Wi-Fi over that same tunnel; see the KVM
+  // Wi-Fi section below). Every backend step is an existing node command or a
+  // tunnelled call to the KVM's web API; the node/appliance is the source of
+  // truth and confirms each by re-advertising or re-reporting its state.
 
   /** This computer's own mesh node id (the attach-to-this-computer target),
    *  from the snapshot. Empty until the first snapshot lands. */
@@ -967,6 +1029,260 @@ class CecStore {
     } finally {
       this.busy = false;
     }
+  }
+
+  // ---- KVM Wi-Fi -------------------------------------------------------
+  //
+  // Read and set a claimed KVM's own Wi-Fi over the SAME mesh "sites" tunnel
+  // the Reboot uses (`site_map` → a localhost port → the KVM's web API). The
+  // appliance already owns the Wi-Fi system and authenticates the tunnel by
+  // mesh roster, so no KVM login/token is needed on this path — exactly like
+  // the reboot POST. One flow covers both models: the connect request
+  // (`{ ssid, password }`) is identical, and the status read is normalized
+  // across the plain-NanoKVM (`ssid`) and Pro (`wifi { … }`) shapes; the Pro's
+  // scan is a pure enhancement that a plain NanoKVM simply 404s.
+
+  /** The label of the KVM whose Wi-Fi panel is open (for the modal title). */
+  get wifiKvmLabel(): string {
+    const k = this.cecKvms.find((x) => this.sameNode(x.node, this.wifiFor));
+    return k?.label ?? "KVM";
+  }
+
+  /** Resolve the KVM console tunnel base (`http://localhost:<port>`) for `node`
+   *  — the same map the Reboot performs. Null when the KVM advertises no web UI
+   *  or the map fails. */
+  private async kvmConsoleBase(node: string): Promise<string | null> {
+    const peer = (this.snapshot?.peers ?? []).find((p) => this.sameNode(p.node, node));
+    const site = peer ? this.kvmWebSite(peer) : undefined;
+    if (!peer || !site) return null;
+    const m = await siteMap(peer.node, site.port);
+    return m ? `http://localhost:${m.localPort}` : null;
+  }
+
+  /** Call one JSON endpoint on the KVM console over the tunnel and return its
+   *  `{ code, msg, data }` envelope. Returns null on a network error, a
+   *  timeout, a non-200, or a body that isn't that envelope (a plain NanoKVM
+   *  answering an unknown route with a 404 / HTML) — callers read null as
+   *  "unavailable" or, for a write, "sent but unconfirmed". */
+  private async kvmApi<T>(
+    base: string,
+    path: string,
+    init?: { method?: string; body?: unknown; timeoutMs?: number },
+  ): Promise<KvmApiRsp<T> | null> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), init?.timeoutMs ?? 12000);
+    try {
+      const hasBody = init?.body !== undefined;
+      const res = await fetch(`${base}${path}`, {
+        method: init?.method ?? "GET",
+        headers: hasBody ? { "content-type": "application/json" } : undefined,
+        body: hasBody ? JSON.stringify(init?.body) : undefined,
+        signal: controller.signal,
+      });
+      if (!res.ok) return null;
+      const json: unknown = await res.json();
+      if (
+        !json ||
+        typeof json !== "object" ||
+        typeof (json as { code?: unknown }).code !== "number"
+      ) {
+        return null;
+      }
+      return json as KvmApiRsp<T>;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /** Open the Wi-Fi panel for a claimed KVM and read its current state. */
+  async openKvmWifi(node: string): Promise<void> {
+    this.wifiFor = node;
+    this.wifiStatus = null;
+    this.wifiScan = null;
+    this.wifiError = null;
+    this.wifiBase = null;
+    await this.loadKvmWifi(node);
+  }
+
+  /** Close the Wi-Fi panel and drop its transient state. */
+  closeKvmWifi(): void {
+    this.wifiFor = null;
+    this.wifiStatus = null;
+    this.wifiScan = null;
+    this.wifiError = null;
+    this.wifiBase = null;
+    this.wifiLoading = false;
+    this.wifiScanning = false;
+    this.wifiBusy = false;
+  }
+
+  /** Read the KVM's Wi-Fi status, then (if the model supports it) a scan. */
+  async loadKvmWifi(node: string): Promise<void> {
+    if (this.demo) {
+      this.loadDemoWifi();
+      return;
+    }
+    this.wifiLoading = true;
+    this.wifiError = null;
+    try {
+      const base = this.wifiBase ?? (await this.kvmConsoleBase(node));
+      if (!base) {
+        this.wifiError = "Couldn't reach this KVM's console.";
+        return;
+      }
+      this.wifiBase = base;
+      const rsp = await this.kvmApi<KvmWifiStatusRaw>(base, "/api/network/wifi");
+      if (!rsp || rsp.code !== 0 || !rsp.data) {
+        // Drop the cached tunnel so a retry re-maps a fresh one — the mapping
+        // may have gone stale (the read is the first call on it each open).
+        this.wifiBase = null;
+        this.wifiError = "Couldn't read the KVM's Wi-Fi settings.";
+        return;
+      }
+      this.wifiStatus = normalizeWifi(rsp.data);
+      // Scan is Pro-only and purely additive: on a plain NanoKVM the route
+      // 404s (kvmApi → null) and the picker just never shows.
+      if (this.wifiStatus.supported) await this.scanKvmWifi(node);
+    } finally {
+      this.wifiLoading = false;
+    }
+  }
+
+  /** Re-scan for nearby networks. A no-op picker on a plain NanoKVM (no scan
+   *  route) and in AP mode (the device declines with code -1) — manual SSID
+   *  entry always remains. */
+  async scanKvmWifi(node: string): Promise<void> {
+    if (this.demo) {
+      this.wifiScan = demoScanList();
+      return;
+    }
+    const base = this.wifiBase ?? (await this.kvmConsoleBase(node));
+    if (!base) return;
+    this.wifiBase = base;
+    this.wifiScanning = true;
+    try {
+      const rsp = await this.kvmApi<{ wifiList?: KvmWifiNetwork[] }>(
+        base,
+        "/api/network/wifi/scan",
+        { timeoutMs: 20000 },
+      );
+      const list = rsp?.data?.wifiList;
+      if (rsp && rsp.code === 0 && Array.isArray(list)) {
+        this.wifiScan = sortNetworks(list);
+      }
+      // Any other outcome (null = no scan route; code !== 0 = AP mode / busy)
+      // leaves wifiScan as it was — the picker stays hidden and the form carries
+      // the flow.
+    } finally {
+      this.wifiScanning = false;
+    }
+  }
+
+  /** Point the KVM at a Wi-Fi network. `password` may be blank for an open
+   *  network. The device write is slow (it waits to confirm association), and
+   *  if Wi-Fi is the KVM's only uplink the tunnel can drop mid-write — so a
+   *  missing reply is reported as "sent, may take a moment", not a hard error. */
+  async connectKvmWifi(node: string, ssid: string, password: string): Promise<void> {
+    const name = ssid.trim();
+    if (!name || this.wifiBusy) return;
+    this.wifiError = null;
+    if (this.demo) {
+      this.wifiBusy = true;
+      setTimeout(() => {
+        this.wifiStatus = { supported: true, apMode: false, connected: true, ssid: name };
+        this.wifiBusy = false;
+        this.notify(`Connected the KVM to ${name}.`);
+      }, 900);
+      return;
+    }
+    const base = this.wifiBase ?? (await this.kvmConsoleBase(node));
+    if (!base) {
+      this.wifiError = "Couldn't reach this KVM's console.";
+      return;
+    }
+    this.wifiBase = base;
+    this.wifiBusy = true;
+    try {
+      const rsp = await this.kvmApi(base, "/api/network/wifi/connect", {
+        method: "POST",
+        body: { ssid: name, password },
+        timeoutMs: 40000,
+      });
+      if (rsp && rsp.code === 0) {
+        this.notify(`Connected the KVM to ${name}.`);
+        await this.loadKvmWifi(node);
+        void this.refreshKvms();
+      } else if (rsp) {
+        this.wifiError =
+          "Couldn't connect — check the network name and password, then try again.";
+      } else {
+        // No reply: the request went out but nothing came back. Most often the
+        // KVM has moved onto the new network and its mesh link is
+        // re-establishing — not a failure we can be sure of.
+        this.wifiError =
+          "Sent the Wi-Fi details. If the KVM moves onto this network it may drop off for a minute — then reopen Wi-Fi to check.";
+        void this.refreshKvms();
+      }
+    } finally {
+      this.wifiBusy = false;
+    }
+  }
+
+  /** Confirm before disconnecting — it can strand a Wi-Fi-only KVM. */
+  promptDisconnectKvmWifi(node: string, ssid: string | null): void {
+    this.askConfirm({
+      title: "Disconnect this KVM's Wi-Fi?",
+      body: `${ssid ? `"${ssid}"` : "The current network"} will be forgotten. If Wi-Fi is the KVM's only connection, it may go offline until it's reconnected.`,
+      confirmLabel: "Disconnect",
+      danger: true,
+      onConfirm: () => this.disconnectKvmWifi(node),
+    });
+  }
+
+  /** Drop the KVM's current Wi-Fi network. */
+  async disconnectKvmWifi(node: string): Promise<void> {
+    if (this.wifiBusy) return;
+    this.wifiError = null;
+    if (this.demo) {
+      this.wifiStatus = { supported: true, apMode: false, connected: false, ssid: null };
+      this.notify("Disconnected the KVM's Wi-Fi.");
+      return;
+    }
+    const base = this.wifiBase ?? (await this.kvmConsoleBase(node));
+    if (!base) {
+      this.wifiError = "Couldn't reach this KVM's console.";
+      return;
+    }
+    this.wifiBase = base;
+    this.wifiBusy = true;
+    try {
+      const rsp = await this.kvmApi(base, "/api/network/wifi/disconnect", {
+        method: "POST",
+        timeoutMs: 20000,
+      });
+      if (rsp && rsp.code === 0) {
+        this.notify("Disconnected the KVM's Wi-Fi.");
+        await this.loadKvmWifi(node);
+      } else if (rsp) {
+        this.wifiError = "Couldn't disconnect the Wi-Fi. Try again.";
+      } else {
+        this.wifiError =
+          "Sent the request. The KVM may drop off for a moment if Wi-Fi was its only connection.";
+        void this.refreshKvms();
+      }
+    } finally {
+      this.wifiBusy = false;
+    }
+  }
+
+  /** Web-preview only: a canned Wi-Fi state so the panel is explorable in the
+   *  browser without a device. */
+  private loadDemoWifi(): void {
+    this.wifiStatus = { supported: true, apMode: false, connected: false, ssid: null };
+    this.wifiScan = demoScanList();
+    this.wifiLoading = false;
   }
 
   /** Open the in-app confirmation popup with a caller-supplied action. */

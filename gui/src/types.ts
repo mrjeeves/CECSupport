@@ -264,6 +264,60 @@ export interface CecKvm {
   /** Ours, not yet attached here, and the customer hasn't answered the
    *  "is it on this computer?" prompt — so the card shows that prompt. */
   promptAttach: boolean;
-  /** It advertises a web UI, so Reboot (GPIO over the tunnel) is reachable. */
+  /** It advertises a web UI, so Reboot / Wi-Fi (both over the tunnel) are
+   *  reachable. */
   hasWeb: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// KVM Wi-Fi — reading and setting a claimed KVM's own Wi-Fi over the same mesh
+// "sites" tunnel the Reboot uses. The appliance already owns the Wi-Fi system;
+// these types just mirror what its web API returns. The `GET /api/network/wifi`
+// body differs by model — a plain NanoKVM sends a bare `ssid` string, a
+// NanoKVM-Pro a `wifi` object (and adds a Pro-only `/scan`) — but the connect
+// request (`{ ssid, password }`) is identical on both, so one flow drives them.
+// ---------------------------------------------------------------------------
+
+/** The KVM web API's response envelope. `code === 0` is success; any other
+ *  value is a failure — and the HTTP status is 200 either way, so the code is
+ *  what must be checked, never `res.ok` alone. */
+export interface KvmApiRsp<T = unknown> {
+  code: number;
+  msg?: string;
+  data?: T;
+}
+
+/** The raw `data` of a KVM's `GET /api/network/wifi`, spanning both model
+ *  shapes. Normalized into {@link KvmWifiStatus} before the UI sees it. */
+export interface KvmWifiStatusRaw {
+  supported?: boolean;
+  apMode?: boolean;
+  connected?: boolean;
+  /** NanoKVM (plain): the connected network's name, inline. */
+  ssid?: string;
+  /** NanoKVM-Pro: the connected network as an object (null when none). */
+  wifi?: { ssid?: string } | null;
+}
+
+/** A KVM's current Wi-Fi state, normalized across the two model shapes. */
+export interface KvmWifiStatus {
+  /** The appliance has a Wi-Fi radio at all (false → the panel says so). */
+  supported: boolean;
+  /** It's in setup/hotspot (AP) mode rather than joined to a network. */
+  apMode: boolean;
+  /** It's joined to a network right now. */
+  connected: boolean;
+  /** The joined network's name, or null when not connected / unknown. */
+  ssid: string | null;
+}
+
+/** One network from a KVM's scan (`GET /api/network/wifi/scan`, Pro only).
+ *  `signal` is dBm (closer to 0 = stronger); `security` is "open" for an
+ *  unsecured network. All but `ssid` are best-effort. */
+export interface KvmWifiNetwork {
+  ssid: string;
+  bssid?: string;
+  signal?: number;
+  security?: string;
+  frequency?: number;
 }
