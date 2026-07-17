@@ -213,6 +213,17 @@ export async function cecGrants(): Promise<Grant[]> {
   return Array.isArray(r) ? r : [];
 }
 
+/** What each technician's live routes actually carry right now — screen
+ *  (viewing) and control (driving input) — keyed by canonical tech id. This,
+ *  not session state, is what the "Viewing your screen" chip keys on: a
+ *  session outlives the console (chat rides it), so session state over-claims.
+ *  Empty in web mode / on error. */
+export type ViewingMap = Record<string, { screen: boolean; control: boolean }>;
+export async function cecViewing(): Promise<ViewingMap> {
+  const r = await tryInvoke<{ techs?: ViewingMap }>("cec_viewing");
+  return r?.techs ?? {};
+}
+
 /** Set this computer's friendly name (shown to the technician on the mesh).
  *  A convenience beyond the core dial/approve contract; see README. */
 export function cecSetLabel(label: string): Promise<null> {
@@ -330,6 +341,19 @@ export async function onCecGrants(
   const { listen } = await import("@tauri-apps/api/event");
   return listen<{ grants: Grant[] }>("cec://grants", (e) =>
     cb(e.payload.grants ?? []),
+  );
+}
+
+/** What technicians' live routes carry changed (console opened/closed, control
+ *  granted route came up/down) — repaint the Viewing/Controlling chip. The
+ *  node's consent sweep pushes the whole map on every transition. */
+export async function onCecViewing(
+  cb: (viewing: ViewingMap) => void,
+): Promise<() => void> {
+  if (!isTauri()) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<{ techs?: ViewingMap }>("cec://viewing", (e) =>
+    cb(e.payload.techs ?? {}),
   );
 }
 

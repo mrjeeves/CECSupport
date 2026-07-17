@@ -25,6 +25,7 @@ import {
   cecDeny,
   cecForgetNode,
   cecGrants,
+  cecViewing,
   cecPending,
   cecRevoke,
   cecSetLabel,
@@ -42,6 +43,7 @@ import {
   onCecHelp,
   onCecRequest,
   onCecSession,
+  onCecViewing,
   serviceInstall,
   serviceStatus,
   serviceStop,
@@ -146,6 +148,12 @@ class CecStore {
   pending = $state<ConnectRequest[]>([]);
   /** Live sessions keyed by session id. */
   sessions = $state<Record<string, LiveSession>>({});
+  /** What each technician's live routes actually carry right now (canonical
+   *  tech id → screen/control), pushed by the node on every change. This is
+   *  the truth the "Viewing/Controlling your screen" chip renders: a session
+   *  outlives the console (chat rides it), so session state alone would keep
+   *  the chip lit after the technician closed the console. */
+  viewing = $state<Record<string, { screen: boolean; control: boolean }>>({});
   /** Standing approvals ("who can reach me"). */
   grants = $state<Grant[]>([]);
   service = $state<ServiceStatus | null>(null);
@@ -347,6 +355,7 @@ class CecStore {
         agent_name: g.agent_name || "A CEC technician",
         grant: g,
         live: live.find((s) => canonicalTech(s.tech) === key) ?? null,
+        viewing: this.viewing[key] ?? null,
       };
     });
     for (const s of live) {
@@ -361,6 +370,7 @@ class CecStore {
         agent_name: s.agent_name || "A CEC technician",
         grant: null,
         live: s,
+        viewing: this.viewing[key] ?? null,
       });
     }
     return rows;
@@ -397,6 +407,7 @@ class CecStore {
     this.unlisteners.push(await onCecRequest((r) => this.onRequest(r)));
     this.unlisteners.push(await onCecSession((s) => this.onSession(s)));
     this.unlisteners.push(await onCecGrants((g) => (this.grants = g)));
+    this.unlisteners.push(await onCecViewing((v) => (this.viewing = v)));
     this.unlisteners.push(
       await onCecChat((e) => this.appendChat(e.peer, e.message)),
     );
@@ -520,6 +531,9 @@ class CecStore {
     this.status = await cecStatus();
     this.pending = await cecPending();
     this.grants = await cecGrants();
+    // Pull the live viewing map too, so an app that starts (or reconnects)
+    // mid-session paints the chip without waiting for the next transition.
+    this.viewing = await cecViewing();
     // The node is the truth for the ask (it withdraws it itself on approval,
     // and a restart drops it) — mirror it whenever the status lands, but never
     // mid-request: an in-flight ask/cancel (busy) owns the flag, so a status
