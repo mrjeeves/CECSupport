@@ -126,6 +126,16 @@ function demoScanList(): KvmWifiNetwork[] {
   ];
 }
 
+/** How long a KVM keeps reading "reachable" after the last time the daemon
+ *  reported it live (active/shelved) on some network. Bridges the gap while the
+ *  daemon dials a freshly discovered claimable on the local-claim network (a
+ *  second or two of `sighted`/`handshaking` before the link is `active`) and
+ *  any later transport rebuild, so a genuinely present KVM doesn't drop out of
+ *  the card between our on-demand refreshes. Mirrors the AllMyStuff app's
+ *  `PRESENCE_GRACE_MS`; an explicit `offline`/`error` clears it immediately, so
+ *  a powered-off KVM still drops within one refresh, not after the window. */
+const REACHABLE_GRACE_MS = 45_000;
+
 class CecStore {
   /** Whether we're running in the browser preview (no backend). */
   readonly demo = !isTauri();
@@ -194,13 +204,22 @@ class CecStore {
    *  claim/attach), never on a steady poll — a claimable KVM is rare and the
    *  front door shouldn't hammer the node. */
   snapshot = $state<SessionSnapshot | null>(null);
-  /** The set of peers the node can currently *reach* (canonical ids whose live
-   *  status is active/shelved), across every network it's on. The presence
+  /** The set of peers the node can currently *reach* (canonical ids that were
+   *  live — status active/shelved — on some network now or within the last
+   *  {@link REACHABLE_GRACE_MS}), across every network it's on. The presence
    *  snapshot remembers a KVM's last advert even after it powers off, so this
    *  is the liveness cross-check that lets the card drop an offline KVM. `null`
    *  = reachability unknown (web mode, or the node couldn't be asked) → the
    *  card fails open and doesn't filter on it. */
   private reachable = $state<Set<string> | null>(null);
+  /** When each peer (canonical id) was last seen live (active/shelved), in ms.
+   *  Backs the reachability grace: a claimable KVM is genuinely `active` on the
+   *  full-mesh local-claim network, but the daemon's dial-up and routine ICE
+   *  churn can dip it to a transient state between our on-demand refreshes — the
+   *  grace holds it "reachable" across that dip so it doesn't flicker out of the
+   *  card, exactly as the AllMyStuff app's presence grace does. A plain Map (not
+   *  reactive): it feeds `reachable`, which is the reactive signal. */
+  private lastReachableAt = new Map<string, number>();
   /** Claimed-but-unattached KVMs the customer has answered "not this computer"
    *  for, keyed by canonical node id — so the "is it attached here?" prompt
    *  doesn't keep nagging. Session-local (clears on restart). */
@@ -468,8 +487,15 @@ class CecStore {
         this.specsPending = false;
         // The node's up — do a first KVM/claim discovery pass too, so a CEC
         // KVM the customer has plugged in shows up without waiting for a
-        // refocus or the card's Refresh.
+        // refocus or the card's Refresh. Follow it with the same short burst a
+        // claim/attach uses: when THIS app just started the node, its daemon is
+        // still dialing a freshly discovered claimable on the local-claim mesh,
+        // so the very first reachability sample can land before the link is
+        // `active` — the burst re-checks over the next few seconds and catches
+        // it (and the grace then holds it), instead of leaving the claimable
+        // invisible until a manual refresh. This is the fleetless-customer fix.
         void this.refreshKvms();
+        void this.refreshKvmsSoon();
         // Temperature display is parked until it's more accurate and on a
         // 5-second poll (the spec card hides the row for now), so there's
         // nothing to refresh — don't run the old 30s temp poll in the
@@ -998,26 +1024,54 @@ class CecStore {
     await this.refreshReachable();
   }
 
-  /** Recompute which peers the node can currently reach (live status
-   *  active/shelved) across every network it's on — the liveness cross-check
-   *  that lets the card drop an offline KVM (see `reachable`). Fail-open: if the
-   *  node can't be asked for its networks, reachability is left unknown (null)
-   *  and nothing is filtered on it. */
+  /** Recompute which peers the node can reach across every network it's on —
+   *  the liveness cross-check that lets the card drop an offline KVM (see
+   *  `reachable`). A peer counts as reachable if it's live (active/shelved) on
+   *  some network right now, OR was within {@link REACHABLE_GRACE_MS}: that
+   *  grace is what lets a *just-plugged-in* claimable show, because the daemon
+   *  auto-dials it on the full-mesh local-claim network and it reads `active`
+   *  only after a second or two of `sighted`/`handshaking` — a single
+   *  point-in-time check at bring-up would race that dial-up and cull it (the
+   *  fleetless-customer bug). An explicit `offline`/`error` clears the grace at
+   *  once, so a powered-off KVM still drops within one refresh rather than
+   *  lingering. Fail-open: if the node can't be asked for its networks,
+   *  reachability is left unknown (null) and nothing is filtered on it. */
   private async refreshReachable(): Promise<void> {
     const nets = await meshNetworks();
     if (!nets) {
       this.reachable = null;
       return;
     }
-    const live = new Set<string>();
+    // Best status per machine ACROSS networks, so an `offline` row on one mesh
+    // can't erase the grace an `active` row on another just earned (the same
+    // machine-wide rule the AllMyStuff poll uses).
+    const activeCanons = new Set<string>();
+    const offlineCanons = new Set<string>();
     for (const net of nets) {
       const peers = await meshPeers(net.network_id);
       if (!peers) continue;
       for (const pr of peers) {
+        const canon = canonicalTech(pr.device_id);
         if (pr.status === "active" || pr.status === "shelved") {
-          live.add(canonicalTech(pr.device_id));
+          activeCanons.add(canon);
+        } else if (pr.status === "offline" || pr.status === "error") {
+          offlineCanons.add(canon);
         }
       }
+    }
+    const now = Date.now();
+    for (const canon of activeCanons) this.lastReachableAt.set(canon, now);
+    // A peer the daemon explicitly calls offline/error (and that isn't live on
+    // some other network) loses its grace immediately — no lingering.
+    for (const canon of offlineCanons) {
+      if (!activeCanons.has(canon)) this.lastReachableAt.delete(canon);
+    }
+    // Reachable = seen live within the grace. Prune expired stamps as we go so
+    // the map can't grow without bound across a long session.
+    const live = new Set<string>();
+    for (const [canon, at] of this.lastReachableAt) {
+      if (now - at < REACHABLE_GRACE_MS) live.add(canon);
+      else this.lastReachableAt.delete(canon);
     }
     this.reachable = live;
   }
