@@ -43,7 +43,7 @@
     <h3>Background service</h3>
     <p class="desc">
       Keeps CEC Support connected after a restart, so your technician can finish a repair that
-      needs the computer to reboot. You stay in control — every connection still needs your
+      needs the computer to reboot. You stay in control: every connection still needs your
       approval.
     </p>
 
@@ -71,7 +71,7 @@
     <h3>Startup</h3>
     <p class="desc">
       When CEC Support opens with this computer. The default keeps a repair
-      going across a restart — while your technician still has access, the app
+      going across a restart: while your technician still has access, the app
       comes back on its own after you log in.
     </p>
 
@@ -88,7 +88,7 @@
           <span class="mode-title">Open with Windows while a technician has access</span>
           <span class="mode-hint">
             Recommended. Only starts on boot while a technician grant is active,
-            so a repair survives a restart — then stops once their access ends.
+            so a repair survives a restart, then stops once their access ends.
           </span>
         </span>
       </label>

@@ -14,7 +14,7 @@
   const primary = {
     scope: "three_hours" as ApprovalScope,
     label: "Approve for 3 hours",
-    hint: "Best for a repair — stays connected through a restart, no need to re-approve",
+    hint: "Best for a repair. Stays connected through a restart, no need to re-approve",
   };
   const minor = {
     scope: "once" as ApprovalScope,
@@ -40,8 +40,8 @@
     </div>
 
     <p class="verify">
-      Only continue if you're expecting <strong>{request.agent_name}</strong> to connect —
-      that's the name your technician will have told you to look for.
+      Only continue if you're expecting <strong>{request.agent_name}</strong> to connect.
+      That's the name your technician will have told you to look for.
     </p>
 
     <div class="choices">
@@ -71,7 +71,7 @@
       disabled={store.busy}
       onclick={() => void store.deny(request)}
     >
-      No thanks — don't connect
+      No thanks, don't connect
     </button>
   </div>
 </div>

@@ -39,10 +39,12 @@ is [MyOwnMesh](https://github.com/mrjeeves/MyOwnMesh). See
    choices — **Approve Once**, **Auto-Approve for 3 hours**, **Auto-Approve
    Forever** — plus **Deny**. (These map to `ApprovalScope::Once` /
    `ThreeHours` / `Forever` in `allmystuff-cec-consent`.)
-5. **While connected**, a small banner shows "‹Agent› is connected — viewing /
-   controlling your screen" with a **Disconnect**, and a list of everyone with
-   standing access (with a live countdown for the 3-hour ones) each with a
-   **Forget** (revoke) button that bites immediately.
+5. **While connected**, the "Who can connect to your computer" list carries the
+   live state: each technician row shows a status dot (connected / connecting /
+   not connected) and, while a session is active, a green "Viewing your screen"
+   (or "Controlling your screen") chip that pulses gently next to the grant's
+   countdown. Each row has one kill-switch — **Forget** — which disconnects any
+   live session *and* revokes standing access in the same tap, immediately.
 6. **Settings**: a grant-scoped **autostart** policy for surviving a reboot
    mid-repair — `while_granted` (the default: start with Windows only while an
    active technician grant is open), `always`, or `off`; the separate
@@ -114,8 +116,9 @@ implements them on the AllMyStuff node):
 
 Events re-emitted onto the Tauri bus for the UI:
 `cec://request { tech, agent_name, want_control, session_id, verification_code }`
-(drives the modal), `cec://session { session_id, state }` (the banner), and
-`cec://grants { grants }` (the access list).
+(drives the modal), `cec://session { session_id, state }` (the access list's
+live dot + "viewing your screen" chip), and `cec://grants { grants }` (the
+access list).
 
 The background service is handled by `cec-support-service` directly (not the
 node), via the `service_*` Tauri commands.

@@ -18,19 +18,21 @@
       tiktok.com/@criticalerrorcomputing
     </button>
   </div>
-  <p class="note">
-    Haven't talked to us yet? Call, or catch the live — we'll match you by
-    the name and Support Number on your computer's card.
+  <!-- One short line each; the fuller explanation rides the tooltip. -->
+  <p
+    class="note"
+    title="We'll match you by the name and Support Number shown on your computer's card."
+  >
+    New to CEC? Call us or hop on the live.
   </p>
 
   <div class="promo">
-    <p class="promo-text">
-      CEC Support runs on the <strong>AllMyStuff</strong> system to connect and
-      show your screen. Want that kind of access to your own machines,
-      anywhere?
-    </p>
-    <button class="promo-link" onclick={() => openAllmystuffWorks()}>
-      Get AllMyStuff.works — and enjoy things just working →
+    <button
+      class="promo-link"
+      title="CEC Support runs on the AllMyStuff system to connect and show your screen. AllMyStuff.works gives you that same access to your own machines, anywhere."
+      onclick={() => openAllmystuffWorks()}
+    >
+      Powered by <strong>AllMyStuff</strong>. Get it at AllMyStuff.works →
     </button>
   </div>
 </section>
@@ -90,13 +92,7 @@
     flex-direction: column;
     gap: 0.4rem;
   }
-  .promo-text {
-    margin: 0;
-    font-size: 0.78rem;
-    color: var(--ink-soft, var(--ink-faint));
-    line-height: 1.45;
-  }
-  .promo-text strong {
+  .promo-link strong {
     color: var(--ink, inherit);
     font-weight: 700;
   }

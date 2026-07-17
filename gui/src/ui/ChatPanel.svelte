@@ -73,7 +73,7 @@
     <span class="dot" class:online={connected} aria-hidden="true"></span>
     <div class="who">
       <div class="name">{name}</div>
-      <div class="sub">{connected ? "Connected — you can chat now" : "Not connected right now"}</div>
+      <div class="sub">{connected ? "Connected. You can chat now" : "Not connected right now"}</div>
     </div>
     {#if canClose}
       <button class="close" aria-label="Close chat" title="Close chat" onclick={() => store.closeChat()}>

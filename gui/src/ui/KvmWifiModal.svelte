@@ -65,7 +65,7 @@
           <span>Connected to <strong>{status.ssid ?? "Wi-Fi"}</strong></span>
         {:else if status.apMode}
           <span class="dot" aria-hidden="true"></span>
-          <span>In setup (hotspot) mode — not on a network yet</span>
+          <span>In setup (hotspot) mode, not on a network yet</span>
         {:else}
           <span class="dot" aria-hidden="true"></span>
           <span>Not connected to Wi-Fi</span>

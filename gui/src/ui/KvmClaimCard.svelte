@@ -96,7 +96,7 @@
             <button
               class="btn danger"
               disabled={store.busy}
-              title="Release this KVM — resets it and offers it for setup again"
+              title="Release this KVM. It resets and offers itself for setup again"
               onclick={() => store.promptUnclaim(k.node, k.label)}
             >
               Unclaim
@@ -108,7 +108,7 @@
             <span class="dot" aria-hidden="true"></span>
             <div class="who">
               <div class="name">{k.label}</div>
-              <div class="sub">Claimed — not linked to this computer.</div>
+              <div class="sub">Claimed, not linked to this computer.</div>
             </div>
           </div>
           <div class="actions">
@@ -118,7 +118,7 @@
             <button
               class="btn danger"
               disabled={store.busy}
-              title="Release this KVM — resets it and offers it for setup again"
+              title="Release this KVM. It resets and offers itself for setup again"
               onclick={() => store.promptUnclaim(k.node, k.label)}
             >
               Unclaim

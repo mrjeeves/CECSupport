@@ -51,6 +51,7 @@ import {
 } from "./tauri";
 import { FEATURE_KVM } from "./types";
 import type {
+  AccessRow,
   ApprovalScope,
   CecChatMsg,
   CecKvm,
@@ -251,9 +252,13 @@ class CecStore {
     return this.pending[0] ?? null;
   }
 
-  /** Sessions that haven't ended — the Connected banner list. */
+  /** Sessions that haven't ended — connecting or active (a "requested" one is
+   *  still just a prompt, not a connection). Feeds the access list's live dot
+   *  and chip. */
   get liveSessions(): LiveSession[] {
-    return Object.values(this.sessions).filter((s) => s.state !== "ended");
+    return Object.values(this.sessions).filter(
+      (s) => s.state === "connecting" || s.state === "active",
+    );
   }
 
   /** Whether this device is live on the support area — the app is up and the
@@ -305,6 +310,50 @@ class CecStore {
   isConnectedTo(peer: string): boolean {
     const want = canonicalTech(peer);
     return this.liveSessions.some((s) => canonicalTech(s.tech) === want);
+  }
+
+  /** The access list's rows: every standing grant, each joined to that
+   *  technician's live session (if any) — plus a row for a live session whose
+   *  grant hasn't landed yet (a `cec://grants` event can trail the session by a
+   *  beat). One list is the single place "who can connect" and "who is
+   *  connected right now" both show, so the live signal can never render
+   *  somewhere the customer isn't looking. */
+  get accessRows(): AccessRow[] {
+    const live = this.liveSessions;
+    const rows: AccessRow[] = this.grants.map((g) => {
+      const key = canonicalTech(g.technician);
+      return {
+        key,
+        technician: g.technician,
+        agent_name: g.agent_name || "A CEC technician",
+        grant: g,
+        live: live.find((s) => canonicalTech(s.tech) === key) ?? null,
+      };
+    });
+    for (const s of live) {
+      // A session event that arrived before its tech id was known can't be
+      // keyed; skip it rather than render an anonymous row.
+      if (!s.tech) continue;
+      const key = canonicalTech(s.tech);
+      if (rows.some((r) => r.key === key)) continue;
+      rows.push({
+        key,
+        technician: s.tech,
+        agent_name: s.agent_name || "A CEC technician",
+        grant: null,
+        live: s,
+      });
+    }
+    return rows;
+  }
+
+  /** Whether a support engagement is underway in any form: the hand is up, a
+   *  technician is connected (or connecting), or standing grants exist. Drives
+   *  where the KVM & Claiming card sits — the right rail during an engagement
+   *  (the left column is busy with the session), the bottom of the quiet left
+   *  column otherwise. */
+  get engaged(): boolean {
+    return this.askingHelp || this.liveSessions.length > 0 || this.grants.length > 0;
   }
 
   /** A friendly display name for a technician peer (canonical id): the live
@@ -556,8 +605,8 @@ class CecStore {
         scope === "once"
           ? "Approved for this session."
           : scope === "three_hours"
-            ? "Approved — they can reconnect for the next 3 hours."
-            : "Approved — they can reconnect until you remove them.",
+            ? "Approved. They can reconnect for the next 3 hours."
+            : "Approved. They can reconnect until you remove them.",
       );
     } catch (e) {
       this.notify(`Couldn't approve: ${errMsg(e)}`);
@@ -583,23 +632,27 @@ class CecStore {
     }
   }
 
-  /** End a live session, leaving any standing grant intact (that's what Forget
-   *  is for). Sends the same End the wire uses for a decline. */
-  async disconnect(s: LiveSession): Promise<void> {
-    try {
-      await cecDeny(s.tech, s.session_id);
-    } catch (e) {
-      this.notify(`Couldn't disconnect: ${errMsg(e)}`);
-    }
-    const next = { ...this.sessions };
-    delete next[s.session_id];
-    this.sessions = next;
-    this.notify("Disconnected.");
-  }
-
-  /** Forget a technician entirely — revoke their standing approval and drop
-   *  their node from the mesh. Bites immediately. */
+  /** Forget a technician entirely: end any live session they're on right now,
+   *  revoke their standing approval, and drop their node from the mesh. One
+   *  button, one outcome — they're off the screen and can't come back without
+   *  asking again. Bites immediately. */
   async forget(tech: string): Promise<void> {
+    const want = canonicalTech(tech);
+    const live = this.liveSessions.filter((s) => canonicalTech(s.tech) === want);
+    // Disconnect first (the same End the wire uses for a decline), so the
+    // session closes cleanly before the node is dropped from the mesh.
+    for (const s of live) {
+      try {
+        await cecDeny(s.tech, s.session_id);
+      } catch {
+        // The revoke + forget below still cut access; a failed End just means
+        // the transport teardown does the disconnecting.
+      }
+      const next = { ...this.sessions };
+      delete next[s.session_id];
+      this.sessions = next;
+    }
+    if (live.length > 0) this.reconcileChatPanel();
     try {
       await cecRevoke(tech);
       await cecForgetNode(tech);
@@ -607,7 +660,11 @@ class CecStore {
       this.notify(`Couldn't remove: ${errMsg(e)}`);
     }
     await this.loadGrants();
-    this.notify("Removed. They can't reconnect without asking you again.");
+    this.notify(
+      live.length > 0
+        ? "Disconnected and removed. They can't reconnect without asking you again."
+        : "Removed. They can't reconnect without asking you again.",
+    );
   }
 
   /** "Ask for help": raise this machine's hand on the support area until a
@@ -759,7 +816,7 @@ class CecStore {
         this.appendChat(key, {
           id: `demo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           from: "technician",
-          text: "Thanks — I can see that. Give me one moment.",
+          text: "Thanks, I can see that. Give me one moment.",
           ts: Math.floor(Date.now() / 1000),
         });
       }, 1400);
@@ -1014,7 +1071,7 @@ class CecStore {
     }
     const me = this.localId;
     if (!me) {
-      this.notify("Still finding this computer on the mesh — try again in a moment.");
+      this.notify("Still finding this computer on the mesh. Try again in a moment.");
       return;
     }
     this.busy = true;
@@ -1048,7 +1105,7 @@ class CecStore {
     const peer = (this.snapshot?.peers ?? []).find((p) => this.sameNode(p.node, node));
     const site = peer ? this.kvmWebSite(peer) : undefined;
     if (!peer || !site) {
-      this.notify("This KVM hasn't published a console yet — can't reboot it.");
+      this.notify("This KVM hasn't published a console yet, so it can't be rebooted.");
       return;
     }
     this.busy = true;
@@ -1257,13 +1314,13 @@ class CecStore {
         void this.refreshKvms();
       } else if (rsp) {
         this.wifiError =
-          "Couldn't connect — check the network name and password, then try again.";
+          "Couldn't connect. Check the network name and password, then try again.";
       } else {
         // No reply: the request went out but nothing came back. Most often the
         // KVM has moved onto the new network and its mesh link is
         // re-establishing — not a failure we can be sure of.
         this.wifiError =
-          "Sent the Wi-Fi details. If the KVM moves onto this network it may drop off for a minute — then reopen Wi-Fi to check.";
+          "Sent the Wi-Fi details. If the KVM moves onto this network it may drop off for a minute. Reopen Wi-Fi to check.";
         void this.refreshKvms();
       }
     } finally {
@@ -1354,7 +1411,7 @@ class CecStore {
   promptUnclaim(node: string, label: string): void {
     this.askConfirm({
       title: "Unclaim this KVM?",
-      body: `${label} will reset — it forgets this computer and offers itself for setup again.`,
+      body: `${label} will reset. It forgets this computer and offers itself for setup again.`,
       confirmLabel: "Unclaim",
       danger: true,
       onConfirm: () => this.unclaimKvm(node),
@@ -1376,7 +1433,7 @@ class CecStore {
         p.claimable = true;
         p.kvm = { ...(p.kvm ?? {}), attached_to: undefined };
       });
-      this.notify("Unclaimed — it's offering itself for setup again.");
+      this.notify("Unclaimed. It's offering itself for setup again.");
       return;
     }
     this.busy = true;
@@ -1449,7 +1506,7 @@ class CecStore {
         {
           id: "demo-1",
           from: "technician",
-          text: "Hi! I'm connected now — I'll take a look at that printer for you.",
+          text: "Hi! I'm connected now. I'll take a look at that printer for you.",
           ts: this.now - 300,
         },
         {
@@ -1479,7 +1536,8 @@ class CecStore {
     this.specs = {
       hostname: "RECEPTION-01",
       os: "Windows 11 Pro 24H2",
-      board: "ASUS PRIME B550-PLUS",
+      // Raw board_name, exactly as firmware reports it (no vendor prefix).
+      board: "PRIME B550-PLUS",
       cpu: { brand: "AMD Ryzen 5 5600G", cores: 6, threads: 12, max_mhz: 4464 },
       memory: {
         total_bytes: 16 * 1024 ** 3,
