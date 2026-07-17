@@ -37,14 +37,14 @@
         <span class="pulse" aria-hidden="true"></span>
         <h2>Help is on the way</h2>
         <p class="sub">
-          CEC can see your hand — a technician will connect shortly. Keep
+          CEC can see your hand. A technician will connect shortly. Keep
           this window open. Nothing is shared until you approve them by name.
         </p>
       {:else}
         <span class="hand-raise" aria-hidden="true">✋</span>
         <h2>Raising your hand…</h2>
         <p class="sub">
-          Connecting to CEC — this usually takes a few seconds. Keep this
+          Connecting to CEC. This usually takes a few seconds. Keep this
           window open. Nothing is shared until you approve someone by name.
         </p>
       {/if}
@@ -59,7 +59,7 @@
         Ask for help
       </button>
       <p class="sub">
-        Raise your hand — a CEC technician sees your request and connects.
+        Raise your hand and a CEC technician sees your request and connects.
         You approve them before they can see anything.
       </p>
       <!-- The number is the quiet fallback, not a second front door: it only
@@ -78,7 +78,7 @@
             <span class="num">{store.grouped}</span>
             <span class="copyhint">{copied ? "✓ Copied" : "Tap to copy"}</span>
           </button>
-          <p class="sub tiny">If we ask for your number — or you'd like to confirm it.</p>
+          <p class="sub tiny">If we ask for your number, or you'd like to confirm it.</p>
         </div>
       {/if}
     </div>

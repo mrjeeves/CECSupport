@@ -1211,7 +1211,7 @@ fn run_id() -> ExitCode {
 
 fn print_help() {
     println!(
-        "CEC Support {ver} — one-tap remote help from Critical Error Computing.
+        "CEC Support {ver}, one-tap remote help from Critical Error Computing.
 
 USAGE:
     cec-support [COMMAND]
@@ -1219,7 +1219,7 @@ USAGE:
     With no command, opens the CEC Support app (what a customer runs).
 
 COMMANDS:
-    run [--service]   Start the client agent headless — join the Silent support
+    run [--service]   Start the client agent headless: join the Silent support
                       mesh and wait. `--service` is the mode the OS service runs.
     service <verb>    Install/manage the background service so CEC Support can
                       reconnect after reboots during a repair

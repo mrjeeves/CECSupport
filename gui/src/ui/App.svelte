@@ -6,7 +6,6 @@
   import StartScreen from "./StartScreen.svelte";
   import ApproveModal from "./ApproveModal.svelte";
   import ContactCard from "./ContactCard.svelte";
-  import ConnectedBanner from "./ConnectedBanner.svelte";
   import AccessList from "./AccessList.svelte";
   import KvmClaimCard from "./KvmClaimCard.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
@@ -126,19 +125,30 @@
       <!-- Same two-column shape as the number view. The rail has the room,
            so CEC's contact points simply live there — no appearing act. Live
            status shows on the front door too — a customer who asked for help
-           never opens the number screen, but "X is viewing your screen" and
-           "who can connect to your computer" must never be hidden behind a
-           navigation step while they're true. -->
+           never opens the number screen, but the access list (which now also
+           carries "viewing your screen") must never be hidden behind a
+           navigation step while it's true.
+
+           The KVM & Claiming card moves with the moment: on the quiet front
+           door (no hand up, nobody connected, nobody with access) it sits at
+           the bottom of the LEFT column; the instant the hand goes up it steps
+           over to the bottom of the right rail and stays there until the
+           engagement fully clears (no session, no grants) — at which point the
+           access section has hidden itself and the card comes back left. -->
       <div class="cols">
         <div class="col">
           <StartScreen />
-          <ConnectedBanner />
           <AccessList />
+          {#if !store.engaged}
+            <KvmClaimCard />
+          {/if}
         </div>
         <aside class="col">
           <ContactCard />
           <SpecSheet />
-          <KvmClaimCard />
+          {#if store.engaged}
+            <KvmClaimCard />
+          {/if}
         </aside>
       </div>
     {/if}

@@ -31,14 +31,13 @@ export interface CecStatus {
 export interface MachineSpecs {
   hostname: string;
   os: string;
-  /** DMI system/board label — "Dell Inc. XPS 15" on a laptop, the
-   *  motherboard model on a custom build. Null/absent when the firmware
-   *  doesn't say (the card hides the row). */
+  /** The system's board field, verbatim (Linux `board_name`, Windows
+   *  `Win32_BaseBoard.Product`, macOS `hw.model`) — the node does no parsing
+   *  or formatting on it, and the card shows it as-is. Null/absent when the
+   *  platform doesn't report one (the card hides the row). */
   board?: string | null;
-  /** Just the product / model name — the DMI product field without its
-   *  maker prefix ("XPS 15", not "Dell Inc. XPS 15"). This is what the
-   *  spec card shows: the model identifies the machine, the maker doesn't.
-   *  Null/absent on odd firmware — the card falls back to `board`. */
+  /** The product / model name (still on the wire for other consumers; the
+   *  spec card's Board row no longer reads it — Board shows `board`, raw). */
   product?: string | null;
   cpu: {
     brand: string;
@@ -143,6 +142,23 @@ export interface Grant {
  *  the consent store's `{ kind }` tagged object. */
 export function grantScope(g: Grant): ApprovalScope {
   return typeof g.scope === "string" ? g.scope : g.scope.kind;
+}
+
+/** One row of the "Who can connect to your computer" list: a standing grant,
+ *  its live session when that technician is connected right now, or (rarely) a
+ *  live session that has no grant row yet — merged in the store so the list is
+ *  the single place connection state shows. */
+export interface AccessRow {
+  /** The technician's canonical device id — the row key. */
+  key: string;
+  /** The id to act on (chat / forget) — as the grant or session carried it. */
+  technician: string;
+  /** Friendly name to show. */
+  agent_name: string;
+  /** The standing approval, or null for a session-only row. */
+  grant: Grant | null;
+  /** The technician's live session right now, or null when not connected. */
+  live: LiveSession | null;
 }
 
 /** The OS background-service status, from the `cec-support-service` crate. */

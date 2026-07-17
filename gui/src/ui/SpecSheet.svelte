@@ -15,7 +15,7 @@
 
   /** "16 GB" / "512 GB" / "1.8 TB" — spec-sheet sizes, one decimal max. */
   function gb(bytes: number | null | undefined): string {
-    if (!bytes || bytes <= 0) return "—";
+    if (!bytes || bytes <= 0) return "n/a";
     const g = bytes / 1024 ** 3;
     if (g >= 1024) return `${(g / 1024).toFixed(1)} TB`;
     return `${g >= 100 ? Math.round(g) : Math.round(g * 10) / 10} GB`;
@@ -68,12 +68,11 @@
         <span class="k">{specs.gpus.length > 1 ? `GPU ${i + 1}` : "GPU"}</span>
         <span class="v">{g.name}{g.vram_bytes ? ` · ${gb(g.vram_bytes)}` : ""}</span>
       {/each}
-      {#if specs.product || specs.board}
+      {#if specs.board}
         <span class="k">Board</span>
-        <!-- The product / model name — the machine's own identity. Falls
-             back to the maker+model board label only when firmware gives
-             no clean product string. -->
-        <span class="v">{specs.product || specs.board}</span>
+        <!-- The system's board field, shown exactly as reported — the node
+             does no parsing or formatting on it, and neither do we. -->
+        <span class="v">{specs.board}</span>
       {/if}
     </div>
     {#if disks.length > 0}
