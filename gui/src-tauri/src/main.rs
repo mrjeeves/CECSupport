@@ -386,6 +386,20 @@ async fn cec_grants(state: State<'_, AppState>) -> Result<Value, String> {
     Ok(v)
 }
 
+/// What each connected technician is actually doing right now — the node's
+/// `cec_viewing` projection `{ techs: { <tech>: { screen, control } } }`,
+/// derived from live routes rather than session state. The pull half of the
+/// `cec://viewing` event (which the generic pump already relays), so the
+/// access list paints the chip correctly on a mid-session app start.
+#[tauri::command]
+async fn cec_viewing(state: State<'_, AppState>) -> Result<Value, String> {
+    state
+        .node
+        .request("cec_viewing", json!({}))
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Set this computer's friendly name (shown to the technician on the mesh). A
 /// convenience beyond the core dial/approve contract.
 #[tauri::command]
@@ -960,6 +974,7 @@ fn run_gui() -> ExitCode {
             cec_revoke,
             cec_forget_node,
             cec_grants,
+            cec_viewing,
             cec_set_label,
             cec_chat_send,
             cec_chat_history,

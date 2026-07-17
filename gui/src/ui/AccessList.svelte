@@ -95,9 +95,14 @@
               {#if r.grant && remaining(r.grant)}
                 <span class="chip warn">{remaining(r.grant)}</span>
               {/if}
-              {#if dot === "live"}
+              {#if r.viewing?.screen}
+                <!-- Keyed on what their routes actually carry (the node's
+                     cec://viewing), not on the session: the session outlives
+                     the console (chat rides it), so "connected" alone must
+                     not read as "viewing". Closing the console clears this
+                     within a couple of seconds. -->
                 <span class="chip ok viewing">
-                  {r.live?.want_control ? "Controlling your screen" : "Viewing your screen"}
+                  {r.viewing.control ? "Controlling your screen" : "Viewing your screen"}
                 </span>
               {/if}
             </span>

@@ -159,6 +159,10 @@ export interface AccessRow {
   grant: Grant | null;
   /** The technician's live session right now, or null when not connected. */
   live: LiveSession | null;
+  /** What their live routes actually carry right now — the chip's truth. A
+   *  connected session with `viewing` null/false means chat only (or the
+   *  console was closed): no "Viewing your screen". */
+  viewing: { screen: boolean; control: boolean } | null;
 }
 
 /** The OS background-service status, from the `cec-support-service` crate. */
