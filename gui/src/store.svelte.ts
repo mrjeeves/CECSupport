@@ -28,6 +28,12 @@ import {
   cecViewing,
   cecPending,
   cecRevoke,
+  onUpdateChecked,
+  updateApply,
+  updateCheck,
+  updateRelaunch,
+  updateSetPrefs,
+  updateStatus,
   cecSetLabel,
   claimNode,
   fleetKick,
@@ -71,6 +77,9 @@ import type {
   SessionEvent,
   SessionSnapshot,
   SiteAdvert,
+  UpdateStatus,
+  CheckOutcome,
+  UpdatePrefs,
 } from "./types";
 
 /** The stable machine identity inside a mesh device id: the bare pubkey with
@@ -143,6 +152,12 @@ class CecStore {
   readonly demo = !isTauri();
 
   version = $state<string | null>(null);
+  /** Updater state — null until read, and in web mode where there's no
+   *  backend. */
+  updateInfo = $state<UpdateStatus | null>(null);
+  /** Result of the most recent check (manual or from the background ticker). */
+  updateOutcome = $state<CheckOutcome | null>(null);
+  updateBusy = $state(false);
   status = $state<CecStatus | null>(null);
   /** Technician requests awaiting a decision; `request` shows the first. */
   pending = $state<ConnectRequest[]>([]);
@@ -432,6 +447,15 @@ class CecStore {
     // until the node answers with our number, then settle into event-driven
     // updates. Runs in the background so the rest of init never blocks on it.
     void this.bringUp();
+
+    // The background self-update ticker's verdict. Registered here rather than
+    // in the settings panel so a release found while the customer is anywhere
+    // in the app still surfaces — the panel only mounts when they go looking,
+    // which is exactly what makes an updater seem never to run.
+    this.unlisteners.push(
+      await onUpdateChecked((o) => this.applyUpdateChecked(o)),
+    );
+    void this.loadUpdateStatus();
 
     this.service = await serviceStatus();
     this.autostart = await autostartGet();
@@ -1526,6 +1550,93 @@ class CecStore {
       return copy;
     });
     this.snapshot = { ...(this.snapshot ?? { ready: true }), peers };
+  }
+
+  // ---- self-update -------------------------------------------------------
+
+  /** Read the updater's current state (version, install kind, prefs, staged). */
+  async loadUpdateStatus(): Promise<void> {
+    if (this.demo) return;
+    this.updateInfo = await updateStatus();
+  }
+
+  /** A background check reported in. Only outcomes that mean "something newer
+   *  than what you're running exists" are worth a toast — the routine
+   *  up-to-date / not-due / disabled ticks refresh state quietly. */
+  private applyUpdateChecked(o: CheckOutcome): void {
+    this.updateOutcome = o;
+    void this.loadUpdateStatus();
+    switch (o.outcome) {
+      case "staged":
+        this.notify(`Update ${o.version} is ready — restart CEC Support to use it`);
+        break;
+      case "manual_update_available":
+        this.notify(`Version ${o.latest} is available — reinstall to update`);
+        break;
+      case "policy_blocked":
+        this.notify(`Version ${o.latest} is available — see Settings to install it`);
+        break;
+      default:
+        break;
+    }
+  }
+
+  /** Check the release feed now and stage anything permitted. */
+  async checkUpdates(): Promise<void> {
+    if (this.demo) return;
+    this.updateBusy = true;
+    this.updateOutcome = null;
+    try {
+      this.updateOutcome = await updateCheck();
+      this.updateInfo = (await updateStatus()) ?? this.updateInfo;
+    } finally {
+      this.updateBusy = false;
+    }
+  }
+
+  /** Apply a staged update and restart into it. On success the process
+   *  restarts, so nothing after this runs. */
+  async applyUpdateAndRestart(): Promise<void> {
+    if (this.demo) return;
+    this.updateBusy = true;
+    try {
+      await updateRelaunch();
+    } catch (e) {
+      this.notify(`Couldn't install the update: ${String(e)}`);
+      // Best-effort: leave the staged marker in place for the next launch.
+      await updateApply();
+      this.updateInfo = (await updateStatus()) ?? this.updateInfo;
+    } finally {
+      this.updateBusy = false;
+    }
+  }
+
+  /** Flip an updater preference (e.g. automatic updates on/off). */
+  async setUpdatePrefs(prefs: UpdatePrefs): Promise<void> {
+    if (this.demo) return;
+    const next = await updateSetPrefs(prefs);
+    if (next) this.updateInfo = next;
+  }
+
+  /** Plain-language summary of a check result, for the settings panel. */
+  checkOutcomeText(o: CheckOutcome | null): string | null {
+    if (!o) return null;
+    switch (o.outcome) {
+      case "staged":
+        return `Version ${o.version} is ready — restart CEC Support to use it`;
+      case "manual_update_available":
+        return `Version ${o.latest} is available, but this copy can't update itself — reinstall to update`;
+      case "up_to_date":
+        return "You're on the latest version";
+      case "policy_blocked":
+        return `Version ${o.latest} is available and waiting for you`;
+      case "disabled":
+        return "Automatic updates are off";
+      case "not_due":
+        return "Checked recently — try again shortly";
+      default:
+        return null;
+    }
   }
 
   // ---- toasts ----------------------------------------------------------

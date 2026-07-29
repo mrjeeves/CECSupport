@@ -20,6 +20,20 @@
 
   let serviceSupported = $derived(store.service?.supported ?? false);
   let serviceInstalled = $derived(store.service?.installed ?? false);
+
+  // ---- updates ----
+  const update = $derived(store.updateInfo);
+  // An install that can't swap its own binary: a package manager owns it, or
+  // it's a per-machine install this process can't write to. It still checks —
+  // it just can't install what it finds.
+  const managed = $derived(update?.install_kind === "package_manager");
+  const checkResult = $derived(store.checkOutcomeText(store.updateOutcome));
+
+  const lastChecked = $derived(
+    update?.last_check_at
+      ? new Date(update.last_check_at * 1000).toLocaleString()
+      : "not yet",
+  );
 </script>
 
 <div class="settings">
@@ -130,6 +144,66 @@
     </label>
   </section>
 
+  <section class="card block">
+    <h3>Updates</h3>
+    <p class="desc">
+      CEC Support keeps itself up to date so your technician is always working with a version
+      that matches theirs. It checks quietly in the background — you don't have to do anything.
+    </p>
+
+    {#if store.demo}
+      <p class="muted">Updates are handled by the installed app.</p>
+    {:else if !update}
+      <p class="muted">Checking your version…</p>
+    {:else}
+      <div class="upd-head">
+        <span class="muted">Version {update.current_version}</span>
+        <button class="btn" disabled={store.updateBusy} onclick={() => void store.checkUpdates()}>
+          {store.updateBusy ? "Checking…" : "Check now"}
+        </button>
+      </div>
+
+      {#if checkResult && !store.updateBusy}
+        <p class="muted">{checkResult}</p>
+      {/if}
+
+      {#if update.staged_version}
+        <!-- Something is downloaded and verified, waiting on a restart. This is
+             the whole point of the notification: it must be actionable right
+             here, not buried behind a menu. -->
+        <div class="chip ok">Version {update.staged_version} is ready to install</div>
+        <div class="btn-row">
+          <button
+            class="btn primary"
+            disabled={store.updateBusy}
+            onclick={() => void store.applyUpdateAndRestart()}
+          >
+            Restart and update
+          </button>
+        </div>
+      {/if}
+
+      {#if managed}
+        <p class="muted">
+          This copy of CEC Support can't replace its own files — it was installed for all users,
+          or through a package manager. It still checks for new versions and will tell you when
+          one is out; installing it means running the installer again.
+        </p>
+      {:else}
+        <label class="toggle">
+          <input
+            type="checkbox"
+            checked={update.enabled}
+            onchange={(e) => void store.setUpdatePrefs({ enabled: e.currentTarget.checked })}
+          />
+          <span>Keep CEC Support up to date automatically</span>
+        </label>
+      {/if}
+
+      <p class="muted">Last checked: {lastChecked}</p>
+    {/if}
+  </section>
+
   <footer class="ver">
     CEC Support{store.version ? ` v${store.version}` : ""}
     · by Critical Error Computing
@@ -169,6 +243,14 @@
   .name-row {
     display: flex;
     gap: 0.5rem;
+  }
+  /* Version on the left, "Check now" on the right. */
+  .upd-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    flex-wrap: wrap;
   }
   .input {
     flex: 1 1 auto;

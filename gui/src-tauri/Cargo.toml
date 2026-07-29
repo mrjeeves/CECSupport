@@ -60,6 +60,13 @@ allmystuff-cec-consent = { git = "https://github.com/mrjeeves/AllMyStuff", tag =
 # The client's OWN OS-service installer (never AllMyStuff's), so installing the
 # background service never clobbers an existing AllMyStuff install.
 cec-support-service = { path = "../../crates/cec-support-service" }
+# The client's OWN self-updater. CEC keeps the engine *beneath* it current (it
+# asks a reused `allmystuff-serve` to move to ALLMYSTUFF_PIN, which in turn
+# keeps `myownmesh` current); this is the missing top of that chain — the thing
+# that updates CEC Support itself. Self-contained by design: a git dep on
+# AllMyStuff's updater would pin us to a released tag that can't carry
+# not-yet-released fixes.
+cec-support-updater = { path = "../../crates/cec-support-updater" }
 
 # Async runtime — Tauri commands run on it; setup drives node bring-up + the
 # event pump; the headless `run --service` agent blocks on it.
