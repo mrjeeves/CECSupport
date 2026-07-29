@@ -31,6 +31,7 @@
     windows_subsystem = "windows"
 )]
 
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -1369,7 +1370,11 @@ fn main() -> ExitCode {
                 .with_writer(std::io::stdout.and(std::sync::Arc::new(file)))
                 .init();
         }
-        None => builder.init(),
+        // No log file — stdout only. Colour just when a human is looking:
+        // under a service manager this stdout is captured by journald/syslog,
+        // and the default (ANSI unconditionally on) writes escape sequences
+        // into it that bloat every line and break grep.
+        None => builder.with_ansi(std::io::stdout().is_terminal()).init(),
     }
 
     let args: Vec<String> = std::env::args().skip(1).collect();
