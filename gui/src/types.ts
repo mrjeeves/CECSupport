@@ -197,7 +197,7 @@ export const FEATURE_KVM = "kvm";
 
 /** One site a peer exposes for reverse-proxying (mirrors the node's
  *  `SiteAdvert`). Used here only to find a KVM's own web UI — the address the
- *  Reboot POST is tunnelled to. */
+ *  Update POST is tunnelled to. */
 export interface SiteAdvert {
   /** Stable id (`tcp:80`). */
   id: string;
@@ -284,14 +284,14 @@ export interface CecKvm {
   /** Ours, not yet attached here, and the customer hasn't answered the
    *  "is it on this computer?" prompt — so the card shows that prompt. */
   promptAttach: boolean;
-  /** It advertises a web UI, so Reboot / Wi-Fi (both over the tunnel) are
+  /** It advertises a web UI, so Update / Wi-Fi (both over the tunnel) are
    *  reachable. */
   hasWeb: boolean;
 }
 
 // ---------------------------------------------------------------------------
 // KVM Wi-Fi — reading and setting a claimed KVM's own Wi-Fi over the same mesh
-// "sites" tunnel the Reboot uses. The appliance already owns the Wi-Fi system;
+// "sites" tunnel Update uses. The appliance already owns the Wi-Fi system;
 // these types just mirror what its web API returns. The `GET /api/network/wifi`
 // body differs by model — a plain NanoKVM sends a bare `ssid` string, a
 // NanoKVM-Pro a `wifi` object (and adds a Pro-only `/scan`) — but the connect
@@ -328,6 +328,19 @@ export interface KvmHelpStatus {
   /** How long a grant lasts, so the UI can name the window without hardcoding
    *  it — the device is the authority on its own policy. */
   grantSeconds: number;
+}
+
+/** What a KVM reports about its firmware — `GET /api/application/version`.
+ *
+ *  Both fields are plain version strings with no leading "v", so they compare
+ *  directly. `latest` is best-effort: the device asks its own release channel
+ *  and omits the field when it can't reach it (no internet, rate limit), which
+ *  reads as "nothing to install" rather than as an error. */
+export interface KvmVersion {
+  /** The build the device is running now. */
+  current: string;
+  /** The newest build on its release channel, or "" when the lookup failed. */
+  latest?: string;
 }
 
 /** One way to reach a KVM's own web UI, as the "Open" menu lists them.

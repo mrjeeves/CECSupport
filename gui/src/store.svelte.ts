@@ -73,6 +73,7 @@ import type {
   KvmIp,
   KvmHelpStatus,
   KvmLink,
+  KvmVersion,
   KvmWifiNetwork,
   KvmWifiStatus,
   KvmWifiStatusRaw,
@@ -1037,8 +1038,8 @@ class CecStore {
   // it advertises FEATURE_KVM and offers itself for adoption. The customer app
   // surfaces any claimable KVM the node sees, exactly as AllMyStuff does. The
   // card walks it through claim → "is it on this computer?" → attached, then
-  // offers Reboot (the NanoKVM GPIO reset, tunnelled through the KVM's own web
-  // UI — exactly how the AllMyStuff app's `kvmFeature` does it) and Wi-Fi setup
+  // offers Update (the appliance's own firmware update, tunnelled through its
+  // web UI, falling back to a reboot when it's already current) and Wi-Fi setup
   // (reading and setting the KVM's own Wi-Fi over that same tunnel; see the KVM
   // Wi-Fi section below). Every backend step is an existing node command or a
   // tunnelled call to the KVM's web API; the node/appliance is the source of
@@ -1093,7 +1094,7 @@ class CecStore {
 
   /** The site serving a KVM's own web UI — the one whose id matches `kvm.web`,
    *  else the first web-scheme site. Undefined when the KVM advertises none
-   *  (Reboot then has nowhere to POST). */
+   *  (Update then has nowhere to POST). */
   private kvmWebSite(p: MeshPeer): SiteAdvert | undefined {
     const sites = p.sites ?? [];
     const named = p.kvm?.web ? sites.find((s) => s.id === p.kvm!.web) : undefined;
@@ -1248,44 +1249,105 @@ class CecStore {
     this.attachAsked = { ...this.attachAsked, [canonicalTech(node)]: true };
   }
 
-  /** Reboot the machine the KVM controls — map the KVM's web UI to a local
-   *  port, then POST the NanoKVM GPIO reset over the tunnel (auth is bypassed
-   *  on the mesh path, so no token). Mirrors the AllMyStuff app's `kvmFeature`. */
-  async rebootKvm(node: string): Promise<void> {
+  /** Update this KVM's firmware, then restart it.
+   *
+   *  This replaced a Reboot button that POSTed the GPIO reset — which resets
+   *  the machine on the other end of the KVM, not the appliance. This panel
+   *  manages the appliance.
+   *
+   *  "Already current" is deliberately not a no-op: the KVM is rebooted anyway,
+   *  so one button covers both jobs and nobody has to reason about which to
+   *  press. Applying an update doesn't need that second step — the device
+   *  restarts its own server (and the mesh daemon, when the bundle carries a
+   *  changed one) as the last act of installing, in an order it has good
+   *  reasons for. Issuing our own reboot on top would race that, so the two
+   *  paths end the same way by different means. */
+  async updateKvm(node: string): Promise<void> {
     if (this.busy) return;
     if (this.demo) {
-      this.notify("Reboot sent to the KVM.");
-      return;
-    }
-    const peer = (this.snapshot?.peers ?? []).find((p) => this.sameNode(p.node, node));
-    const site = peer ? this.kvmWebSite(peer) : undefined;
-    if (!peer || !site) {
-      this.notify("This KVM hasn't published a console yet, so it can't be rebooted.");
+      this.notify("Update sent to the KVM.");
       return;
     }
     this.busy = true;
     try {
-      const m = await siteMap(peer.node, site.port);
-      if (!m) {
-        this.notify("Couldn't reach the KVM's console.");
+      const port = await this.kvmConsolePort(node);
+      if (port === null) {
+        this.notify("This KVM hasn't published a console yet, so it can't be updated.");
         return;
       }
-      const { rsp, reason } = await this.kvmApi(m.localPort, "/api/vm/gpio", {
-        method: "POST",
-        body: { type: "reset" },
-      });
+      const { rsp, reason } = await this.kvmApi<KvmVersion>(port, "/api/application/version");
       if (!rsp) {
-        this.notify(`Couldn't reboot the KVM: ${reason}`);
+        this.notify(`Couldn't check this KVM's firmware: ${reason}`);
         return;
       }
       if (rsp.code !== 0) {
-        this.notify(`Couldn't reboot the KVM: ${this.kvmMsg(rsp, "the KVM declined.")}`);
+        this.notify(`Couldn't check this KVM's firmware: ${this.kvmMsg(rsp, "the KVM declined.")}`);
         return;
       }
-      this.notify("Reboot sent to the KVM.");
+      const current = (rsp.data?.current ?? "").trim();
+      const latest = (rsp.data?.latest ?? "").trim();
+      // No `latest` means the device couldn't reach its release channel, not
+      // that it's behind — so don't claim an update exists. The reboot still
+      // happens, which is the half of this button that never needs the network.
+      if (latest && latest !== current) {
+        await this.applyKvmUpdate(port, latest);
+      } else {
+        await this.rebootKvmDevice(port, current);
+      }
     } finally {
       this.busy = false;
     }
+  }
+
+  /** Install `latest` on the KVM and let it restart itself.
+   *
+   *  The device downloads, verifies and installs the bundle BEFORE it answers,
+   *  so this waits far longer than a normal call. A timeout here is not a
+   *  failure: the install may well have landed and taken the tunnel down with
+   *  the restart that follows it, so it reads as "under way". */
+  private async applyKvmUpdate(port: number, latest: string): Promise<void> {
+    this.notify(`Installing ${latest} on the KVM — this takes a few minutes.`);
+    const { rsp, timedOut, reason } = await this.kvmApi(port, "/api/application/update", {
+      method: "POST",
+      body: {},
+      timeoutMs: 300_000,
+    });
+    if (timedOut) {
+      this.notify(`The KVM is still installing ${latest}. It restarts on its own when it's done.`);
+      return;
+    }
+    if (!rsp) {
+      this.notify(`Couldn't update the KVM: ${reason}`);
+      return;
+    }
+    if (rsp.code !== 0) {
+      this.notify(`Couldn't update the KVM: ${this.kvmMsg(rsp, "the KVM declined.")}`);
+      return;
+    }
+    this.notify(`KVM updated to ${latest}. It's restarting now.`);
+  }
+
+  /** Reboot the KVM appliance itself — the up-to-date half of Update.
+   *
+   *  A reboot takes the device down mid-request by definition, so a timeout is
+   *  the expected outcome rather than a fault. */
+  private async rebootKvmDevice(port: number, current: string): Promise<void> {
+    const on = current ? ` (${current})` : "";
+    const { rsp, timedOut, reason } = await this.kvmApi(port, "/api/vm/system/reboot", {
+      method: "POST",
+      body: {},
+    });
+    if (timedOut || (rsp && rsp.code === 0)) {
+      this.notify(`KVM already on the latest firmware${on} — rebooting it now.`);
+      return;
+    }
+    if (!rsp) {
+      this.notify(`KVM already on the latest firmware${on}, but the reboot failed: ${reason}`);
+      return;
+    }
+    this.notify(
+      `KVM already on the latest firmware${on}, but the reboot failed: ${this.kvmMsg(rsp, "the KVM declined.")}`,
+    );
   }
 
   // ---- KVM "ask for help" ----------------------------------------------
@@ -1529,10 +1591,10 @@ class CecStore {
   // ---- KVM Wi-Fi -------------------------------------------------------
   //
   // Read and set a claimed KVM's own Wi-Fi over the SAME mesh "sites" tunnel
-  // the Reboot uses (`site_map` → a localhost port → the KVM's web API). The
+  // Update uses (`site_map` → a localhost port → the KVM's web API). The
   // appliance already owns the Wi-Fi system and authenticates the tunnel by
   // mesh roster, so no KVM login/token is needed on this path — exactly like
-  // the reboot POST. One flow covers both models: the connect request
+  // the update POST. One flow covers both models: the connect request
   // (`{ ssid, password }`) is identical, and the status read is normalized
   // across the plain-NanoKVM (`ssid`) and Pro (`wifi { … }`) shapes; the Pro's
   // scan is a pure enhancement that a plain NanoKVM simply 404s.
@@ -1543,7 +1605,7 @@ class CecStore {
     return k?.label ?? "KVM";
   }
 
-  /** Resolve the KVM console tunnel port for `node` — the same map the Reboot
+  /** Resolve the KVM console tunnel port for `node` — the same map Update
    *  performs. Null when the KVM advertises no web UI or the map fails. */
   private async kvmConsolePort(node: string): Promise<number | null> {
     const peer = (this.snapshot?.peers ?? []).find((p) => this.sameNode(p.node, node));
@@ -1558,7 +1620,8 @@ class CecStore {
    *  Goes through Rust (`kvmApiCall`), never the webview's `fetch`. The tunnel
    *  is a different origin from the app, the appliance only sends CORS headers
    *  when its own auth is disabled, and the tunnel adds none — so in the webview
-   *  a GET's response was unreadable and every JSON POST (reboot, Wi-Fi write)
+   *  a GET's response was unreadable and every JSON POST (the update, the
+   *  Wi-Fi write)
    *  died at a preflight gin has no route for. That surfaced as a bare
    *  "Failed to fetch" with no status, which is why this panel could only ever
    *  report *that* something broke, never *what*.
@@ -2082,7 +2145,7 @@ class CecStore {
     };
     // A claimable KVM (an ordinary NanoKVM — no `cec-kvm-` mesh) so the KVM &
     // Claiming card shows in the preview and proves normal KVMs surface. Claim
-    // → "attached to this computer?" → Reboot / Unclaim is fully clickable via
+    // → "attached to this computer?" → Update / Unclaim is fully clickable via
     // the demo mutations in claimKvm / attachKvmHere / unclaimKvm.
     this.snapshot = {
       ready: true,

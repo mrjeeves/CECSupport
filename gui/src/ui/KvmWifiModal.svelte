@@ -1,7 +1,7 @@
 <script lang="ts">
   // The Wi-Fi panel for a claimed KVM. Reads the appliance's own Wi-Fi state
   // and sets it — SSID + password, or a tap on a scanned network — over the
-  // same mesh tunnel the Reboot uses (see store `connectKvmWifi`). The store
+  // same mesh tunnel Update uses (see store `connectKvmWifi`). The store
   // owns every backend call and all the transient state; this is a dumb view.
   //
   // Rendered by KvmClaimCard only while `store.wifiFor` is set, so mounting

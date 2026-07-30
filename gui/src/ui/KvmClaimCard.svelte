@@ -2,16 +2,16 @@
   // The customer's "KVM and Claiming" area — sits under the stats block on the
   // right. A CEC KVM is a NanoKVM-class appliance plugged into this machine; it
   // shows up here (discovered from the node's mesh snapshot) as something the
-  // customer can claim, mark as attached to this computer, then reboot.
+  // customer can claim, mark as attached to this computer, then keep updated.
   //
   // One item per relevant KVM, each rendering exactly one lifecycle state:
   //   available   → Claim
   //   claimed     → "is it on this computer?"  (Yes / Not this computer)
-  //   attached    → KVM info + Wi-Fi + Reboot + Unclaim
+  //   attached    → KVM info + Wi-Fi + Update + Unclaim
   //   claimed-but-not-here → offer to link it here
   // The store owns the transitions; this file is a dumb view of `store.cecKvms`.
   // The Wi-Fi button opens KvmWifiModal (rendered below while `store.wifiFor`
-  // is set), which reads/sets the KVM's own Wi-Fi over the reboot tunnel.
+  // is set), which reads/sets the KVM's own Wi-Fi over that same tunnel.
   import { store } from "../store.svelte";
   import KvmWifiModal from "./KvmWifiModal.svelte";
 
@@ -166,10 +166,12 @@
             <button
               class="btn"
               disabled={store.busy || !k.hasWeb}
-              title={k.hasWeb ? "Reboot the machine this KVM controls" : "This KVM hasn't published a console yet"}
-              onclick={() => store.rebootKvm(k.node)}
+              title={k.hasWeb
+                ? "Update this KVM's firmware and restart it"
+                : "This KVM hasn't published a console yet"}
+              onclick={() => void store.updateKvm(k.node)}
             >
-              Reboot
+              Update
             </button>
             <button
               class="btn danger"
