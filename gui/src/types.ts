@@ -341,3 +341,48 @@ export interface KvmWifiNetwork {
   security?: string;
   frequency?: number;
 }
+
+// ---- self-update (mirrors `cec-support-updater`) -----------------------
+
+export type InstallKind = "raw" | "package_manager";
+
+/** Updater state (from `update_status`). */
+export interface UpdateStatus {
+  current_version: string;
+  install_kind: InstallKind;
+  enabled: boolean;
+  /** "stable" | "beta". */
+  channel: string;
+  /** Auto-apply policy: "patch" | "minor" | "all" | "none". */
+  auto_apply: string;
+  check_interval_hours: number;
+  last_check_at: number | null;
+  staged_version: string | null;
+  release_url: string;
+  release_url_overridden: boolean;
+}
+
+/** What a check decided (from `update_check`, and the `update://checked`
+ *  event the background ticker emits). Tagged on `outcome`. */
+export interface CheckOutcome {
+  outcome:
+    | "disabled"
+    | "not_due"
+    | "up_to_date"
+    | "policy_blocked"
+    | "staged"
+    /** Newer release exists, but this install can't swap its own binary. */
+    | "manual_update_available";
+  current?: string;
+  latest?: string;
+  policy?: string;
+  version?: string;
+}
+
+/** The bits of updater config the UI can change (sent to `update_set_prefs`). */
+export interface UpdatePrefs {
+  enabled?: boolean;
+  channel?: string;
+  auto_apply?: string;
+  check_interval_hours?: number;
+}

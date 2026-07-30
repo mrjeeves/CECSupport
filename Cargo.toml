@@ -10,13 +10,20 @@
 # This light workspace holds only what builds with no webview / media stack:
 #
 #   cec-support-service   the client's own OS service installer (Win SCM etc.)
+#   cec-support-updater   the client's own self-updater (release feed + apply)
+#
+# The updater is self-contained on purpose: CEC Support is the top of the
+# sidecar chain (it keeps `allmystuff-serve` current, which keeps `myownmesh`
+# current), so it can't rely on a sibling repo's unreleased code to update
+# itself. Same call `allmystuff-updater` made when it was ported from
+# `myownmesh-updater`.
 #
 # The Tauri + Svelte client GUI (`gui/`) — which embeds the AllMyStuff node in
 # "CEC client mode" — lives in its own excluded workspace, the same split
 # AllMyStuff and MyOwnMesh use, so `cargo build` here stays fast and webview-free.
 [workspace]
 resolver = "2"
-members = ["crates/cec-support-service"]
+members = ["crates/cec-support-service", "crates/cec-support-updater"]
 exclude = ["gui"]
 
 [workspace.package]
@@ -35,6 +42,21 @@ serde_json = "1"
 dirs = "5"
 libc = "0.2"
 tempfile = "3"
+# Self-update (`cec-support-updater`): release feed over HTTPS, fail-closed
+# SHA-256 + minisign verification, archive extraction. Kept to the same
+# versions AllMyStuff's updater uses so the two stay in step.
+thiserror = "2"
+tokio = { version = "1", features = ["rt", "time", "macros"] }
+reqwest = { version = "0.12", default-features = false, features = [
+  "json",
+  "rustls-tls",
+] }
+tracing = "0.1"
+sha2 = "0.10"
+hex = "0.4"
+flate2 = "1"
+tar = "0.4"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [profile.release]
 panic = "abort"

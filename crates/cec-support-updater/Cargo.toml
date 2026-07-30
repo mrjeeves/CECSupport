@@ -1,0 +1,34 @@
+[package]
+name = "cec-support-updater"
+description = "Self-update for CEC Support: configurable release feed, fail-closed SHA-256 + minisign verification, stage-then-apply — modelled on allmystuff-updater, self-contained."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+tracing = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+# Detached Ed25519 (minisign) verification of release artifacts. Pure-Rust,
+# verification-only — no signing in the client, which only checks. Matches
+# allmystuff-updater / myownmesh-updater so the whole ecosystem shares one
+# release-signing scheme.
+minisign-verify = "0.2"
+flate2 = { workspace = true }
+tar = { workspace = true }
+zip = { workspace = true }
+dirs = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

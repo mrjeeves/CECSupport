@@ -41,6 +41,9 @@ import type {
   SessionSnapshot,
   ServiceStatus,
   ServiceResult,
+  UpdateStatus,
+  CheckOutcome,
+  UpdatePrefs,
 } from "./types";
 
 /** True when running inside the Tauri webview (vs a plain browser tab). */
@@ -445,4 +448,53 @@ export async function copyToClipboard(text: string): Promise<boolean> {
     console.warn("clipboard write failed:", e);
   }
   return false;
+}
+
+// ---- self-update -------------------------------------------------------
+//
+// CEC Support's own release feed, not the node's. These degrade to null in web
+// mode (no backend), so the settings panel can render a plain version line
+// instead of throwing.
+
+/** Current updater state: running version, install kind, prefs, what's staged. */
+export function updateStatus(): Promise<UpdateStatus | null> {
+  return tryInvoke<UpdateStatus>("update_status");
+}
+
+/** Check the release feed now, ignoring the interval cooldown. */
+export function updateCheck(): Promise<CheckOutcome | null> {
+  return tryInvoke<CheckOutcome>("update_check");
+}
+
+/** Apply a staged update to disk. Takes effect when the app next starts. */
+export function updateApply(): Promise<{ applied: string | null } | null> {
+  return tryInvoke<{ applied: string | null }>("update_apply");
+}
+
+/** Apply a staged update and relaunch into it. The process restarts on
+ *  success, so this never resolves then — it only returns (throwing) if the
+ *  apply failed and we stayed on the old build. Uses a raw invoke so that
+ *  failure surfaces instead of being swallowed to null. */
+export async function updateRelaunch(): Promise<void> {
+  if (!isTauri()) return;
+  await rawInvoke("update_relaunch");
+}
+
+/** Change updater preferences. Returns the resulting status. */
+export function updateSetPrefs(
+  prefs: UpdatePrefs,
+): Promise<UpdateStatus | null> {
+  return tryInvoke<UpdateStatus>("update_set_prefs", { prefs });
+}
+
+/** The background ticker reporting what a check decided — the launch check
+ *  (~30s after start) and then every `check_interval_hours`. Without this the
+ *  ticker is mute: it stages updates nobody is told about, which is what makes
+ *  auto-update look like it never runs. No-op listener in web mode. */
+export async function onUpdateChecked(
+  cb: (o: CheckOutcome) => void,
+): Promise<() => void> {
+  if (!isTauri()) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<CheckOutcome>("update://checked", (e) => cb(e.payload));
 }

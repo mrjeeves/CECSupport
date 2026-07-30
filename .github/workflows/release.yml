@@ -5,6 +5,12 @@ name: Release
 # GitHub release at that tag — this is what support.cec.direct's "Download for
 # Windows" button points at (the NSIS `*-setup.exe` asset).
 #
+# Two kinds of asset ship here, for two different jobs:
+#   *-setup.exe / .msi              first install (what a customer downloads)
+#   cec-support-windows-x86_64.zip  self-update (what the running app fetches)
+# The updater applies an update by swapping the binary, so it needs the plain
+# archive — it can't install from an installer.
+#
 # CEC Support is a Windows-only product (one download, no OS picker), so the
 # matrix is Windows-only. The app is a Tauri bundle that ships two sidecars —
 # `myownmesh` (.myownmesh-rev) and `allmystuff-serve` (.allmystuff-rev) — which
@@ -119,3 +125,39 @@ jobs:
           releaseDraft: false
           prerelease: false
           args: --target x86_64-pc-windows-msvc
+
+      # Package the portable `cec-support.exe` so the SELF-UPDATER has something
+      # to fetch. The installers above (`*-setup.exe` / `.msi`) are for first
+      # install only — `cec-support-updater` applies an update by swapping the
+      # binary, which it can't do from an installer, so without this asset every
+      # background check would find a newer release and then fail to stage it
+      # ("release has no asset cec-support-windows-x86_64.zip").
+      #
+      # The name must stay in lockstep with `platform_asset()` in
+      # crates/cec-support-updater/src/lib.rs: `cec-support-<platform>.zip`.
+      # The `.sha256` sidecar is mandatory — the updater refuses to stage an
+      # artifact it can't verify, so a missing sidecar fails the update closed.
+      - name: Package portable binary (for self-update)
+        shell: bash
+        run: |
+          set -e
+          BIN=gui/src-tauri/target/x86_64-pc-windows-msvc/release/cec-support.exe
+          if [[ ! -f "$BIN" ]]; then
+            echo "::error::cec-support.exe not found at $BIN"; exit 1
+          fi
+          mkdir -p dist-bin
+          NAME="cec-support-windows-x86_64"
+          cp "$BIN" dist-bin/cec-support.exe
+          (cd dist-bin && 7z a "${NAME}.zip" cec-support.exe)
+          (cd dist-bin && (sha256sum "${NAME}.zip" || shasum -a 256 "${NAME}.zip") > "${NAME}.zip.sha256")
+          # Drop the raw binary so the upload glob only matches the archive +
+          # its checksum.
+          rm -f dist-bin/cec-support.exe
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          files: |
+            dist-bin/cec-support-*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

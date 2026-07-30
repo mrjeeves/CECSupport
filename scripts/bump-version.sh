@@ -4,8 +4,13 @@
 #
 # Edits:
 #   - Cargo.toml                    [workspace.package].version (the canonical
-#                                   source; `cec-support-service` inherits it via
-#                                   `version.workspace = true`)
+#                                   source; `cec-support-service` and
+#                                   `cec-support-updater` inherit it via
+#                                   `version.workspace = true`). The updater
+#                                   compares ITS version against the release
+#                                   feed, so this staying in lockstep with the
+#                                   GUI's version below is what keeps
+#                                   "am I up to date?" honest.
 #   - Cargo.lock                    refreshed by `cargo update` to track it
 #   - gui/src-tauri/Cargo.toml      [package].version (the `cec-support` binary —
 #                                   a separate, excluded workspace)

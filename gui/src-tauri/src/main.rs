@@ -31,6 +31,7 @@
     windows_subsystem = "windows"
 )]
 
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -795,6 +796,54 @@ fn background_set(state: State<'_, AppState>, enabled: bool) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Self-update (CEC Support's own release feed, not the node's)
+// ---------------------------------------------------------------------------
+
+/// Current updater state: running version, install kind, prefs, what's staged.
+#[tauri::command]
+async fn update_status() -> Result<Value, String> {
+    serde_json::to_value(cec_support_updater::status().map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
+}
+
+/// Check the release feed right now, ignoring the interval cooldown, and stage
+/// anything the apply policy permits.
+#[tauri::command]
+async fn update_check() -> Result<Value, String> {
+    let outcome = cec_support_updater::check_now(true)
+        .await
+        .map_err(|e| e.to_string())?;
+    serde_json::to_value(outcome).map_err(|e| e.to_string())
+}
+
+/// Apply a staged update to disk. The swap lands immediately, but this process
+/// keeps the old build until it restarts.
+#[tauri::command]
+async fn update_apply() -> Result<Value, String> {
+    let applied = cec_support_updater::apply_now().map_err(|e| e.to_string())?;
+    Ok(json!({ "applied": applied }))
+}
+
+/// Apply a staged update and relaunch into it. Applying *before* the restart is
+/// what makes the relaunch land on the new version in one step: a bare restart
+/// would re-exec the still-old binary and only swap it in on the following
+/// boot. Never returns on success — the process restarts.
+#[tauri::command]
+async fn update_relaunch(app: tauri::AppHandle) -> Result<(), String> {
+    cec_support_updater::apply_now().map_err(|e| e.to_string())?;
+    app.restart()
+}
+
+/// Change updater preferences (auto-update on/off, channel, policy, interval).
+#[tauri::command]
+async fn update_set_prefs(prefs: Value) -> Result<Value, String> {
+    let prefs: cec_support_updater::UpdatePrefs =
+        serde_json::from_value(prefs).map_err(|e| e.to_string())?;
+    serde_json::to_value(cec_support_updater::set_prefs(prefs).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
+}
+
+// ---------------------------------------------------------------------------
 // GUI plumbing
 // ---------------------------------------------------------------------------
 
@@ -997,6 +1046,11 @@ fn run_gui() -> ExitCode {
             autostart_set,
             background_get,
             background_set,
+            update_status,
+            update_check,
+            update_apply,
+            update_relaunch,
+            update_set_prefs,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -1094,6 +1148,29 @@ fn run_gui() -> ExitCode {
                 }
                 run_event_pump(handle, node).await;
             });
+
+            // Self-update ticker. A launch check fires ~30s in (past the
+            // interval cooldown, so opening the app is itself a check), then
+            // every `check_interval_hours`. Spawned unconditionally —
+            // `check_now` no-ops when auto-update is off, and reports rather
+            // than stages when this install can't write its own binary.
+            //
+            // Every outcome is forwarded to the webview as `update://checked`.
+            // A background task holds no handle to the UI, so without this a
+            // staged update would sit on disk with nothing to announce it —
+            // which is precisely how an updater ends up looking like it never
+            // runs at all.
+            let update_handle = app.handle().clone();
+            tauri::async_runtime::spawn(cec_support_updater::tick_forever_notify(
+                move |outcome| match serde_json::to_value(outcome) {
+                    Ok(payload) => {
+                        if let Err(e) = update_handle.emit("update://checked", payload) {
+                            tracing::warn!("couldn't emit the self-update outcome: {e}");
+                        }
+                    }
+                    Err(e) => tracing::warn!("couldn't serialise the self-update outcome: {e}"),
+                },
+            ));
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -1251,6 +1328,13 @@ fn main() -> ExitCode {
     // before the shared node socket is addressed.
     apply_cec_env();
 
+    // Swap in anything the updater staged on a previous run, before any of it
+    // is loaded. A running executable can't reliably replace itself, so the
+    // apply always happens here — at the very start of the *next* launch —
+    // rather than at the moment the download finished. Never fatal: a failure
+    // logs and leaves the marker for the launch after this one.
+    cec_support_updater::apply_pending_if_any();
+
     // Elevated Windows service action: `<exe> --service-do <verb>` — run the
     // verb in-process and exit, no webview. (Unix calls the crate directly.)
     if let Some(verb) = service_do_verb() {
@@ -1286,7 +1370,11 @@ fn main() -> ExitCode {
                 .with_writer(std::io::stdout.and(std::sync::Arc::new(file)))
                 .init();
         }
-        None => builder.init(),
+        // No log file — stdout only. Colour just when a human is looking:
+        // under a service manager this stdout is captured by journald/syslog,
+        // and the default (ANSI unconditionally on) writes escape sequences
+        // into it that bloat every line and break grep.
+        None => builder.with_ansi(std::io::stdout().is_terminal()).init(),
     }
 
     let args: Vec<String> = std::env::args().skip(1).collect();
