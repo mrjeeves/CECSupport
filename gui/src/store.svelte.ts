@@ -156,6 +156,7 @@ function demoLinks(): KvmLink[] {
   return [
     { kind: "wired", label: "Ethernet", detail: "192.168.1.42", host: "192.168.1.42", port: 80, scheme: "http" },
     { kind: "wireless", label: "Wi-Fi", detail: "192.168.1.77", host: "192.168.1.77", port: 80, scheme: "http" },
+    { kind: "usb", label: "USB", detail: "192.168.7.1", host: "192.168.7.1", port: 80, scheme: "http" },
     { kind: "mesh", label: "Mesh", detail: "Through this app", host: "127.0.0.1", port: 8000, scheme: "http" },
   ];
 }
@@ -179,6 +180,27 @@ function demoScanList(): KvmWifiNetwork[] {
  *  `PRESENCE_GRACE_MS`; an explicit `offline`/`error` clears it immediately, so
  *  a powered-off KVM still drops within one refresh, not after the window. */
 const REACHABLE_GRACE_MS = 45_000;
+
+/** The device's own interface classification → the Open menu's link kind.
+ *
+ *  A lookup rather than a chain of ternaries because it's now the one place
+ *  that decides which of a KVM's addresses are offered as a way in. Anything
+ *  absent here (the device's "Other" — bridges, tunnels, loopback) is not a
+ *  door and is skipped. Keys mirror `service/vm/ip.go` on both models. */
+const KVM_LINK_KINDS: Record<string, KvmLink["kind"] | undefined> = {
+  Wired: "wired",
+  Wireless: "wireless",
+  USB: "usb",
+};
+
+/** Menu label per link kind. "USB" stays the bare acronym — it's what's printed
+ *  on the cable the customer is looking at. */
+const KVM_LINK_LABELS: Record<KvmLink["kind"], string> = {
+  wired: "Ethernet",
+  wireless: "Wi-Fi",
+  usb: "USB",
+  mesh: "Mesh",
+};
 
 class CecStore {
   /** Whether we're running in the browser preview (no backend). */
@@ -1538,13 +1560,16 @@ class CecStore {
       const { rsp, reason } = await this.kvmApi<{ ips?: KvmIp[] }>(m.localPort, "/api/vm/info");
       if (rsp && rsp.code === 0) {
         for (const ip of rsp.data?.ips ?? []) {
-          // The device classifies its own interfaces ("Wired" / "Wireless");
-          // anything else it reports is a virtual/tunnel address, not a way in.
-          const kind = ip.type === "Wired" ? "wired" : ip.type === "Wireless" ? "wireless" : null;
+          // The device classifies its own interfaces; anything else it reports
+          // is a virtual/tunnel address, not a way in. "USB" is the network
+          // gadget on the appliance's own cable — the one address that needs no
+          // LAN at all, so it's worth offering wherever the device reports one.
+          // Firmware that predates USB reporting simply never sends it.
+          const kind = KVM_LINK_KINDS[ip.type];
           if (!kind || !ip.addr) continue;
           links.push({
             kind,
-            label: kind === "wired" ? "Ethernet" : "Wi-Fi",
+            label: KVM_LINK_LABELS[kind],
             detail: ip.addr,
             host: ip.addr,
             port: site.port,

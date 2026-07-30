@@ -112,7 +112,7 @@
                 onclick={() => void store.toggleKvmLinks(k.node)}
               >
                 Open
-                <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <svg class="caret" class:open={store.linksOpenFor(k.node)} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <path d="m6 9 6 6 6-6" />
                 </svg>
               </button>
@@ -134,6 +134,13 @@
                           <!-- wi-fi waves -->
                           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M5 13a10 10 0 0 1 14 0M8.5 16.5a5 5 0 0 1 7 0" /><circle cx="12" cy="20" r="1" fill="currentColor" />
+                          </svg>
+                        {:else if link.kind === "usb"}
+                          <!-- usb trident: the cable the customer is holding -->
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 21V5" /><path d="m9 8 3-5 3 5" fill="currentColor" />
+                            <path d="M12 15l4-3V9" /><circle cx="16" cy="8" r="1.4" fill="currentColor" />
+                            <path d="M12 12l-4-3V7" /><rect x="6.6" y="4.6" width="2.8" height="2.8" rx="0.4" fill="currentColor" />
                           </svg>
                         {:else}
                           <!-- linked nodes -->
@@ -416,15 +423,32 @@
     align-items: center;
     gap: 0.35rem;
   }
+  /* Points the way the menu will go — up, since that's where it opens — and
+     turns back over once it's open, so the chevron always indicates the action
+     the click performs rather than the state it's in. */
   .caret {
     width: 0.8rem;
     height: 0.8rem;
     opacity: 0.7;
+    transform: rotate(180deg);
+    transition: transform 0.15s ease;
+  }
+  .caret.open {
+    transform: rotate(0deg);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .caret {
+      transition: none;
+    }
   }
 
+  /* Opens UPWARD. The KVM card sits at the bottom of its column and the button
+     is on its last row, so there is nothing below to grow into — anchored
+     downward the menu ran off the card and, with a KVM reporting several
+     addresses, off the window. Above it has the whole card to overlay. */
   .menu {
     position: absolute;
-    top: calc(100% + 0.35rem);
+    bottom: calc(100% + 0.35rem);
     left: 0;
     z-index: 20;
     min-width: 13rem;
@@ -435,7 +459,9 @@
     background: var(--surface);
     border: 1px solid var(--line-strong);
     border-radius: var(--r-md);
-    box-shadow: 0 10px 28px rgb(0 0 0 / 0.18);
+    /* Cast the shadow upward too, or the menu reads as sitting behind the row
+       it just rose out of. */
+    box-shadow: 0 -10px 28px rgb(0 0 0 / 0.18);
   }
 
   .menu-item {
