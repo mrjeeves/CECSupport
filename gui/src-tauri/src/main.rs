@@ -629,10 +629,9 @@ async fn open_kvm_console(
     if !local {
         return Err(format!("{host} isn't a local address"));
     }
-    let scheme = match scheme.as_str() {
-        "http" | "https" => scheme,
-        other => return Err(format!("unsupported scheme {other}")),
-    };
+    if scheme != "http" && scheme != "https" {
+        return Err(format!("unsupported scheme {scheme}"));
+    }
     // Bracket a literal IPv6 host so the URL parses.
     let authority = if ip.is_ipv6() {
         format!("[{host}]:{port}")
