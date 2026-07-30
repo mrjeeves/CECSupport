@@ -503,6 +503,147 @@ async fn site_map(state: State<'_, AppState>, node: String, port: u16) -> Result
         .map_err(|e| e.to_string())
 }
 
+/// One JSON call to a claimed KVM's own web API, over the site tunnel already
+/// mapped at `http://localhost:<port>` by [`site_map`].
+///
+/// This deliberately does NOT live in the webview. The front-end runs on the
+/// app's own origin while the tunnel answers on `http://localhost:<port>`, so
+/// every such call is cross-origin — and the appliance only sends CORS headers
+/// when its *own* auth is disabled (NanoKVM `server/main.go`:
+/// `if conf.Authentication == "disable"`), while the tunnel itself is a raw TCP
+/// proxy that adds none. A browser `fetch` is therefore blocked both ways: a
+/// plain GET reaches the device but its response is unreadable, and any
+/// `content-type: application/json` POST (the reboot, the Wi-Fi write) dies at
+/// a preflight `OPTIONS` that gin has no route for, never reaching the device
+/// at all. Both surface as an opaque `TypeError: Failed to fetch` carrying no
+/// status — which is exactly why the Wi-Fi panel could only ever say "there was
+/// an error". Rust has no origin and no preflight, so the call simply works,
+/// and the real status and body reach the UI.
+///
+/// No KVM token is needed on this path: the request arrives over the mesh, and
+/// the appliance treats mesh-tunneled requests as authenticated by roster
+/// membership (`middleware.WithMeshAuth` → `allowByToken`).
+///
+/// Returns `{ status, body, error }`. `body` is the parsed `{ code, msg, data }`
+/// envelope when the device sent JSON and null otherwise (a plain NanoKVM
+/// answers an unknown route with HTML). A transport failure — refused, timed
+/// out, tunnel gone — comes back as `error: { kind, message }` rather than an
+/// `Err`, so the caller can tell a *timeout* apart from a hard failure: writing
+/// Wi-Fi credentials legitimately times out when the KVM moves onto the new
+/// network and the tunnel drops mid-write, and that must not read as an error.
+#[tauri::command]
+async fn kvm_api(
+    port: u16,
+    path: String,
+    method: Option<String>,
+    body: Option<Value>,
+    timeout_ms: Option<u64>,
+) -> Result<Value, String> {
+    // Keep this addressed at the loopback tunnel and nowhere else. A path that
+    // doesn't start with '/' can move the host entirely — "@example.com/x"
+    // would make the authority parse as userinfo `127.0.0.1:<port>` against
+    // host example.com — so anything else is refused rather than sent.
+    if !path.starts_with('/') || path.starts_with("//") {
+        return Err(format!("invalid device path {path}"));
+    }
+    let url = format!("http://127.0.0.1:{port}{path}");
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(timeout_ms.unwrap_or(12_000)))
+        // The tunnel is a loopback port; never let a system proxy intercept it.
+        .no_proxy()
+        // The device's JSON API never redirects, so following one could only
+        // take us somewhere we didn't mean to go. A 3xx is reported as-is.
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| format!("couldn't start the request: {e}"))?;
+
+    let verb = method.as_deref().unwrap_or("GET").to_ascii_uppercase();
+    let mut req = match verb.as_str() {
+        "GET" => client.get(&url),
+        "POST" => client.post(&url),
+        "DELETE" => client.delete(&url),
+        other => return Err(format!("unsupported method {other}")),
+    };
+    if let Some(b) = body {
+        req = req.json(&b);
+    }
+
+    let res = match req.send().await {
+        Ok(res) => res,
+        Err(e) => {
+            let (kind, message) = if e.is_timeout() {
+                ("timeout", "the KVM didn't answer in time".to_string())
+            } else if e.is_connect() {
+                ("connect", "couldn't reach the KVM's console tunnel".to_string())
+            } else {
+                ("other", format!("couldn't reach the KVM: {e}"))
+            };
+            return Ok(json!({
+                "status": 0,
+                "body": Value::Null,
+                "error": { "kind": kind, "message": message },
+            }));
+        }
+    };
+
+    let status = res.status().as_u16();
+    // Read the body even on a non-2xx: the device's own `{ code, msg }` is
+    // usually more useful to show than the bare status.
+    let text = res.text().await.unwrap_or_default();
+    Ok(json!({
+        "status": status,
+        "body": serde_json::from_str::<Value>(&text).ok(),
+        "error": Value::Null,
+    }))
+}
+
+/// Open a KVM's own web UI in the system browser — its LAN address (the
+/// ethernet or Wi-Fi IP the device reported) or the loopback port of the site
+/// tunnel this app already holds open.
+///
+/// Takes a host and port rather than a URL, and refuses anything that isn't a
+/// literal private or loopback IP, so this stays a named door rather than the
+/// open-anything primitive [`open_tiktok`] and friends deliberately avoid: the
+/// webview cannot use it to reach the public internet, and a hostname (which
+/// could resolve anywhere) is never accepted.
+#[tauri::command]
+async fn open_kvm_console(
+    app: tauri::AppHandle,
+    host: String,
+    port: u16,
+    scheme: String,
+) -> Result<(), String> {
+    use std::net::IpAddr;
+    use tauri_plugin_shell::ShellExt as _;
+
+    let ip: IpAddr = host
+        .parse()
+        .map_err(|_| format!("{host} isn't an IP address"))?;
+    let local = match ip {
+        IpAddr::V4(v4) => v4.is_private() || v4.is_loopback() || v4.is_link_local(),
+        // A KVM on IPv6 is reachable at a link-local or unique-local address.
+        IpAddr::V6(v6) => {
+            v6.is_loopback() || (v6.segments()[0] & 0xffc0) == 0xfe80 || (v6.segments()[0] & 0xfe00) == 0xfc00
+        }
+    };
+    if !local {
+        return Err(format!("{host} isn't a local address"));
+    }
+    let scheme = match scheme.as_str() {
+        "http" | "https" => scheme,
+        other => return Err(format!("unsupported scheme {other}")),
+    };
+    // Bracket a literal IPv6 host so the URL parses.
+    let authority = if ip.is_ipv6() {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    };
+    app.shell()
+        .open(format!("{scheme}://{authority}"), None)
+        .map_err(|e| e.to_string())
+}
+
 /// Unclaim a KVM we own — releases our ownership so the appliance resets to its
 /// own joining mesh and offers itself for adoption again. Claiming a KVM makes
 /// the customer its fleet owner, so `fleet_kick` (the eviction + Release) is the
@@ -1031,6 +1172,8 @@ fn run_gui() -> ExitCode {
             claim_node,
             kvm_attach,
             site_map,
+            kvm_api,
+            open_kvm_console,
             fleet_kick,
             mesh_networks,
             mesh_peers,

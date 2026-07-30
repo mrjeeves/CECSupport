@@ -134,7 +134,7 @@
             class="input"
             type="password"
             bind:value={password}
-            placeholder="Leave blank for an open network"
+            placeholder="Network password"
             autocomplete="off"
             disabled={store.wifiBusy}
           />

@@ -44,6 +44,7 @@ import type {
   UpdateStatus,
   CheckOutcome,
   UpdatePrefs,
+  KvmApiCallResult,
 } from "./types";
 
 /** True when running inside the Tauri webview (vs a plain browser tab). */
@@ -284,13 +285,56 @@ export function kvmAttach(node: string, target: string): Promise<void> {
   return mustInvoke("kvm_attach", { node, target });
 }
 
-/** Map a KVM's web UI (`port`) to a local port; `{ localPort }` is where the
- *  reboot POST goes. Null in web mode / on error. */
+/** Map a KVM's web UI (`port`) to a local port; `{ localPort }` is what every
+ *  device call below is addressed to. Null in web mode / on error. */
 export function siteMap(
   node: string,
   port: number,
 ): Promise<{ localPort: number } | null> {
   return tryInvoke<{ localPort: number }>("site_map", { node, port });
+}
+
+/** One call to a KVM's own web API over the mapped tunnel, performed in Rust.
+ *
+ *  It has to be Rust, not `fetch`: the webview's origin and the tunnel's
+ *  `http://localhost:<port>` are different origins, and the appliance only
+ *  sends CORS headers when its own auth is disabled (NanoKVM `server/main.go`),
+ *  while the tunnel is a raw TCP proxy that adds none. In the webview a GET's
+ *  response is unreadable and any JSON POST dies at a preflight gin never
+ *  answers — both as a bare `TypeError: Failed to fetch` with no status, which
+ *  is why this used to fail with nothing to report. Rust has no origin, so the
+ *  call works and the real status/body come back.
+ *
+ *  Resolves `{ status, body, error }`: `body` is null when the device didn't
+ *  send JSON, and `error` is set (with a `kind` of "timeout" | "connect" |
+ *  "other") when the call never got a reply at all. Timeouts stay
+ *  distinguishable on purpose — writing Wi-Fi credentials legitimately times
+ *  out when the KVM hops onto the new network and the tunnel drops mid-write. */
+export async function kvmApiCall(
+  port: number,
+  path: string,
+  opts?: { method?: string; body?: unknown; timeoutMs?: number },
+): Promise<KvmApiCallResult> {
+  if (!isTauri()) throw new Error("not available in the browser preview");
+  return rawInvoke<KvmApiCallResult>("kvm_api", {
+    port,
+    path,
+    method: opts?.method,
+    body: opts?.body,
+    timeoutMs: opts?.timeoutMs,
+  });
+}
+
+/** Open a KVM's own web UI in the system browser — a LAN IP it reported, or the
+ *  loopback port of the site tunnel. Host/port rather than a URL, and the
+ *  backend refuses anything that isn't a literal private or loopback IP, so
+ *  this stays a named door rather than an open-anything primitive. */
+export function openKvmConsole(
+  host: string,
+  port: number,
+  scheme: "http" | "https",
+): Promise<void> {
+  return mustInvoke("open_kvm_console", { host, port, scheme });
 }
 
 /** Unclaim a KVM we own — releases ownership so it resets and offers itself for

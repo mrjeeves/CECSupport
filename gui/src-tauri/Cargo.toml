@@ -72,6 +72,18 @@ cec-support-updater = { path = "../../crates/cec-support-updater" }
 # event pump; the headless `run --service` agent blocks on it.
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "signal"] }
 
+# The KVM console client. These calls MUST NOT be made with the webview's
+# `fetch`: the app's origin and the site tunnel's `http://localhost:<port>` are
+# different origins, the appliance only sends CORS headers when its own auth is
+# disabled (NanoKVM `main.go`: `if conf.Authentication == "disable"`), and the
+# tunnel is a raw TCP proxy that adds none — so a browser fetch fails the
+# preflight with an opaque "Failed to fetch". Going through Rust has no browser
+# and therefore no CORS, and it lets a real status/body reach the UI.
+reqwest = { version = "0.12", default-features = false, features = [
+  "json",
+  "rustls-tls",
+] }
+
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 parking_lot = "0.12"

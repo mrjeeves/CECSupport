@@ -16,7 +16,29 @@
   import KvmWifiModal from "./KvmWifiModal.svelte";
 
   const kvms = $derived(store.cecKvms);
+
+  /** Dismiss the Open menu on any click that didn't land inside it, and on
+   *  Escape — the ordinary expectations of a dropdown. The menu's own buttons
+   *  stop propagation implicitly by closing themselves after they act. */
+  function onDocClick(e: MouseEvent): void {
+    if (!store.linksFor) return;
+    const el = e.target as HTMLElement | null;
+    if (el?.closest(".menu-wrap")) return;
+    store.closeKvmLinks();
+  }
+
+  function onKeydown(e: KeyboardEvent): void {
+    if (e.key === "Escape" && store.linksFor) store.closeKvmLinks();
+  }
+
+  /** Group the 9-digit support number as "123 456 789" so it can be read out
+   *  over the phone without losing your place. */
+  function formatSupportId(id: string): string {
+    return /^\d{9}$/.test(id) ? `${id.slice(0, 3)} ${id.slice(3, 6)} ${id.slice(6)}` : id;
+  }
 </script>
+
+<svelte:window onclick={onDocClick} onkeydown={onKeydown} />
 
 {#if kvms.length > 0}
   <section class="card kvm" aria-label="KVM and claiming">
@@ -77,6 +99,62 @@
             </div>
           </div>
           <div class="actions">
+            <!-- Reach the KVM's own web UI. A KVM can sit on two networks at
+                 once and either address may be the reachable one, so this
+                 offers each it found plus the tunnel, which always works. -->
+            <div class="menu-wrap">
+              <button
+                class="btn"
+                disabled={store.busy || !k.hasWeb}
+                aria-haspopup="menu"
+                aria-expanded={store.linksOpenFor(k.node)}
+                title={k.hasWeb ? "Open this KVM's own page" : "This KVM hasn't published a console yet"}
+                onclick={() => void store.toggleKvmLinks(k.node)}
+              >
+                Open
+                <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </button>
+
+              {#if store.linksOpenFor(k.node)}
+                <div class="menu" role="menu">
+                  {#if store.linksLoading && store.kvmLinks.length === 0}
+                    <p class="menu-note">Looking for addresses…</p>
+                  {/if}
+                  {#each store.kvmLinks as link (link.kind + link.host)}
+                    <button class="menu-item" role="menuitem" onclick={() => void store.openKvmLink(link)}>
+                      <span class="ico" aria-hidden="true">
+                        {#if link.kind === "wired"}
+                          <!-- ethernet port -->
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="3" y="8" width="18" height="12" rx="2" /><path d="M8 8V5h8v3M8 20v-4M12 20v-4M16 20v-4" />
+                          </svg>
+                        {:else if link.kind === "wireless"}
+                          <!-- wi-fi waves -->
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M5 13a10 10 0 0 1 14 0M8.5 16.5a5 5 0 0 1 7 0" /><circle cx="12" cy="20" r="1" fill="currentColor" />
+                          </svg>
+                        {:else}
+                          <!-- linked nodes -->
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="5" r="2.5" /><circle cx="5" cy="19" r="2.5" /><circle cx="19" cy="19" r="2.5" /><path d="M10.5 7 6.5 16.5M13.5 7l4 9.5" />
+                          </svg>
+                        {/if}
+                      </span>
+                      <span class="menu-text">
+                        <span class="menu-label">{link.label}</span>
+                        <span class="menu-detail">{link.detail}</span>
+                      </span>
+                    </button>
+                  {/each}
+                  {#if store.linksError}
+                    <p class="menu-note err">{store.linksError}</p>
+                  {/if}
+                </div>
+              {/if}
+            </div>
+
             <button
               class="btn"
               disabled={store.busy || !k.hasWeb}
@@ -102,6 +180,47 @@
               Unclaim
             </button>
           </div>
+
+          <!-- Ask for help. The KVM raises its own hand on the CEC support
+               area; its physical button does the same thing, so this reflects
+               whichever was used. A technician who answers is authorised for a
+               bounded window, and that deadline is shown rather than left as an
+               open-ended "someone may be connected". -->
+          {@const help = store.helpFor(k.node)}
+          {#if help?.enabled}
+            {@const left = store.helpTimeLeft(k.node)}
+            <div class="help" class:up={help.asking} class:granted={!!left}>
+              <div class="help-state">
+                {#if left}
+                  <span class="dot ok" aria-hidden="true"></span>
+                  <span>A technician has access — <strong>{left}</strong> left</span>
+                {:else if help.asking}
+                  <span class="hand" aria-hidden="true">✋</span>
+                  <span>Hand up — waiting for a technician</span>
+                {:else}
+                  <span class="dot" aria-hidden="true"></span>
+                  <span>Support number <strong>{formatSupportId(help.supportId)}</strong></span>
+                {/if}
+              </div>
+              <button
+                class="btn small"
+                class:primary={!help.asking && !left}
+                disabled={store.helpPending(k.node)}
+                title={help.asking
+                  ? "Take the hand down and leave the queue"
+                  : `Raise this KVM's hand. A technician who answers gets ${store.helpWindowLabel(k.node)} of access.`}
+                onclick={() => void store.toggleKvmHelp(k.node)}
+              >
+                {#if store.helpPending(k.node)}
+                  Working…
+                {:else if help.asking}
+                  Cancel
+                {:else}
+                  Ask for help
+                {/if}
+              </button>
+            </div>
+          {/if}
         {:else}
           <!-- Ours, but the customer said it's not on this computer. -->
           <div class="row">
@@ -235,5 +354,130 @@
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
+  }
+
+  /* Ask-for-help row — hand-raise state and any live support authorisation. */
+  .help {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    padding: 0.55rem 0.7rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+  }
+  .help.up {
+    border-color: var(--accent);
+  }
+  .help.granted {
+    border-color: var(--ok);
+  }
+  .help-state {
+    flex: 1 1 10rem;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    line-height: 1.35;
+    color: var(--ink-soft);
+  }
+  .help-state strong {
+    color: var(--ink);
+    font-weight: 650;
+    white-space: nowrap;
+  }
+  .hand {
+    flex: 0 0 auto;
+    font-size: 0.95rem;
+    line-height: 1;
+  }
+
+  /* "Open" menu — the ways to reach the KVM's own web UI. */
+  .menu-wrap {
+    position: relative;
+    display: inline-flex;
+  }
+  .menu-wrap :global(.btn) {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+  .caret {
+    width: 0.8rem;
+    height: 0.8rem;
+    opacity: 0.7;
+  }
+
+  .menu {
+    position: absolute;
+    top: calc(100% + 0.35rem);
+    left: 0;
+    z-index: 20;
+    min-width: 13rem;
+    padding: 0.3rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-md);
+    box-shadow: 0 10px 28px rgb(0 0 0 / 0.18);
+  }
+
+  .menu-item {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    width: 100%;
+    padding: 0.5rem 0.6rem;
+    background: transparent;
+    border: 0;
+    border-radius: var(--r-sm);
+    color: var(--ink);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .menu-item:hover,
+  .menu-item:focus-visible {
+    background: var(--surface-2);
+  }
+  .ico {
+    flex: 0 0 auto;
+    display: inline-flex;
+    color: var(--ink-soft);
+  }
+  .ico :global(svg) {
+    width: 1.05rem;
+    height: 1.05rem;
+  }
+  .menu-text {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    line-height: 1.25;
+  }
+  .menu-label {
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+  .menu-detail {
+    font-size: 0.78rem;
+    color: var(--ink-soft);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .menu-note {
+    margin: 0;
+    padding: 0.45rem 0.6rem;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    color: var(--ink-soft);
+  }
+  .menu-note.err {
+    color: var(--danger);
   }
 </style>
