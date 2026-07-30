@@ -135,6 +135,13 @@
                           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M5 13a10 10 0 0 1 14 0M8.5 16.5a5 5 0 0 1 7 0" /><circle cx="12" cy="20" r="1" fill="currentColor" />
                           </svg>
+                        {:else if link.kind === "usb"}
+                          <!-- usb trident: the cable the customer is holding -->
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 21V5" /><path d="m9 8 3-5 3 5" fill="currentColor" />
+                            <path d="M12 15l4-3V9" /><circle cx="16" cy="8" r="1.4" fill="currentColor" />
+                            <path d="M12 12l-4-3V7" /><rect x="6.6" y="4.6" width="2.8" height="2.8" rx="0.4" fill="currentColor" />
+                          </svg>
                         {:else}
                           <!-- linked nodes -->
                           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

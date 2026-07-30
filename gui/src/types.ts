@@ -351,8 +351,8 @@ export interface KvmVersion {
  *  always present as the fallback that needs no LAN at all: it points at the
  *  site tunnel this app already holds open. */
 export interface KvmLink {
-  kind: "wired" | "wireless" | "mesh";
-  /** Menu label ("Ethernet", "Wi-Fi", "Mesh"). */
+  kind: "wired" | "wireless" | "usb" | "mesh";
+  /** Menu label ("Ethernet", "Wi-Fi", "USB", "Mesh"). */
   label: string;
   /** The address under the label — an IP, or a word for the tunnel. */
   detail: string;
@@ -362,7 +362,11 @@ export interface KvmLink {
 }
 
 /** One entry of a KVM's `GET /api/vm/info` `ips` list. `type` is the device's
- *  own classification — "Wired" or "Wireless" (NanoKVM `service/vm/ip.go`). */
+ *  own classification — "Wired", "Wireless" or "USB" (NanoKVM
+ *  `service/vm/ip.go`). "USB" is the network gadget on the appliance's own
+ *  cable, and only firmware that reports it will send one: older builds
+ *  classified the gadget as "Other" and dropped it, so its absence means "this
+ *  device can't tell us", never "there's no USB link". */
 export interface KvmIp {
   name: string;
   addr: string;
