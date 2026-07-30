@@ -74,7 +74,7 @@ dependencies = [
 
 [[package]]
 name = "cec-support-service"
-version = "0.1.29"
+version = "0.2.30"
 dependencies = [
  "anyhow",
  "dirs",
@@ -85,7 +85,7 @@ dependencies = [
 
 [[package]]
 name = "cec-support-updater"
-version = "0.1.29"
+version = "0.2.30"
 dependencies = [
  "dirs",
  "flate2",
