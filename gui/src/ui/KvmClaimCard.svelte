@@ -187,15 +187,25 @@
                area; its physical button does the same thing, so this reflects
                whichever was used. A technician who answers is authorised for a
                bounded window, and that deadline is shown rather than left as an
-               open-ended "someone may be connected". -->
+               open-ended "someone may be connected".
+
+               Whether access is live is `authorised`, NOT whether a countdown
+               could be computed: the KVM has no RTC, and a grant held while its
+               clock is still unset is real access the device can't yet put a
+               time on. Branching on the countdown would tell the customer
+               nobody was connected at the one moment that's least true. -->
           {@const help = store.helpFor(k.node)}
           {#if help?.enabled}
             {@const left = store.helpTimeLeft(k.node)}
-            <div class="help" class:up={help.asking} class:granted={!!left}>
+            <div class="help" class:up={help.asking} class:granted={help.authorised}>
               <div class="help-state">
-                {#if left}
+                {#if help.authorised}
                   <span class="dot ok" aria-hidden="true"></span>
-                  <span>A technician has access — <strong>{left}</strong> left</span>
+                  {#if left}
+                    <span>A technician has access — <strong>{left}</strong> left</span>
+                  {:else}
+                    <span>A technician has access</span>
+                  {/if}
                 {:else if help.asking}
                   <span class="hand" aria-hidden="true">✋</span>
                   <span>Hand up — waiting for a technician</span>
@@ -206,7 +216,7 @@
               </div>
               <button
                 class="btn small"
-                class:primary={!help.asking && !left}
+                class:primary={!help.asking && !help.authorised}
                 disabled={store.helpPending(k.node)}
                 title={help.asking
                   ? "Take the hand down and leave the queue"
