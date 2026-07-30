@@ -56,6 +56,8 @@ import {
   serviceUninstall,
   sessionSnapshot,
   siteMap,
+  kvmApiCall,
+  openKvmConsole,
 } from "./tauri";
 import { FEATURE_KVM } from "./types";
 import type {
@@ -66,7 +68,12 @@ import type {
   CecStatus,
   ConnectRequest,
   Grant,
+  KvmApiCallResult,
   KvmApiRsp,
+  KvmIp,
+  KvmHelpStatus,
+  KvmLink,
+  KvmVersion,
   KvmWifiNetwork,
   KvmWifiStatus,
   KvmWifiStatusRaw,
@@ -105,6 +112,22 @@ function errMsg(e: unknown): string {
   return String(e);
 }
 
+/** Upper-case the first letter so a lower-case reason from the backend reads
+ *  as a sentence when it lands in the UI. */
+function capitalise(s: string): string {
+  return s ? s[0].toUpperCase() + s.slice(1) : s;
+}
+
+/** What one {@link CecStore.kvmApi} call produced: the device's envelope when
+ *  the call succeeded, or a null `rsp` with a `reason` worth showing a human.
+ *  `timedOut` is carried separately because a timeout is not always a failure —
+ *  a Wi-Fi write times out exactly when it works and the KVM changes network. */
+interface KvmApiOutcome<T> {
+  rsp: KvmApiRsp<T> | null;
+  timedOut: boolean;
+  reason: string | null;
+}
+
 /** Fold a KVM's `GET /api/network/wifi` body — either model shape — into the
  *  one {@link KvmWifiStatus} the UI reads. A plain NanoKVM carries the SSID
  *  inline (`ssid`); a Pro nests it (`wifi.ssid`). */
@@ -125,6 +148,16 @@ function sortNetworks(list: KvmWifiNetwork[]): KvmWifiNetwork[] {
     .filter((w) => w && typeof w.ssid === "string" && w.ssid.length > 0)
     .slice()
     .sort((a, b) => (b.signal ?? -999) - (a.signal ?? -999));
+}
+
+/** Canned "Open" targets for the browser preview, so the menu is explorable
+ *  without a device (demo mode only). */
+function demoLinks(): KvmLink[] {
+  return [
+    { kind: "wired", label: "Ethernet", detail: "192.168.1.42", host: "192.168.1.42", port: 80, scheme: "http" },
+    { kind: "wireless", label: "Wi-Fi", detail: "192.168.1.77", host: "192.168.1.77", port: 80, scheme: "http" },
+    { kind: "mesh", label: "Mesh", detail: "Through this app", host: "127.0.0.1", port: 8000, scheme: "http" },
+  ];
 }
 
 /** A canned scan for the browser preview so the network picker is explorable
@@ -248,6 +281,25 @@ class CecStore {
    *  doesn't keep nagging. Session-local (clears on restart). */
   private attachAsked = $state<Record<string, boolean>>({});
 
+  // ---- KVM "ask for help" ----------------------------------------------
+  /** Each attached KVM's hand-raise state, keyed by canonical node id. The
+   *  device is the source of truth: its own button raises the same hand, so
+   *  this is re-read rather than assumed after every action. */
+  kvmHelp = $state<Record<string, KvmHelpStatus>>({});
+  /** Nodes with a raise/lower in flight (their button shows a pending label). */
+  helpBusy = $state<Record<string, boolean>>({});
+
+  // ---- "Open" menu (reach the KVM's own web UI) -------------------------
+  /** The KVM whose Open menu is showing (its node id), or null when closed. */
+  linksFor = $state<string | null>(null);
+  /** The ways to reach that KVM's web UI, best-first. Empty until loaded. */
+  kvmLinks = $state<KvmLink[]>([]);
+  /** The address read is in flight. */
+  linksLoading = $state(false);
+  /** Why the LAN addresses couldn't be read, or null. The Mesh entry is still
+   *  offered in that case — it doesn't depend on the device answering. */
+  linksError = $state<string | null>(null);
+
   // ---- KVM Wi-Fi panel -------------------------------------------------
   /** The KVM whose Wi-Fi panel is open (its node id), or null when closed. The
    *  KvmClaimCard renders the modal only while this is set. */
@@ -267,10 +319,10 @@ class CecStore {
   /** An inline message for the Wi-Fi panel (a failed or ambiguous connect),
    *  or null. Separate from the global toast so it sits next to the form. */
   wifiError = $state<string | null>(null);
-  /** The resolved console tunnel base (`http://localhost:<port>`) for the open
-   *  panel — mapped once when it opens and reused for every call, so status /
-   *  scan / connect don't each re-tunnel. Cleared on close. */
-  private wifiBase: string | null = null;
+  /** The resolved console tunnel port for the open panel — mapped once when it
+   *  opens and reused for every call, so status / scan / connect don't each
+   *  re-tunnel. Cleared on close. */
+  private wifiPort: number | null = null;
 
   /** A pending confirmation popup — the in-app modal (never `window.confirm`,
    *  which a customer's webview may block or style inconsistently). Set by
@@ -986,8 +1038,8 @@ class CecStore {
   // it advertises FEATURE_KVM and offers itself for adoption. The customer app
   // surfaces any claimable KVM the node sees, exactly as AllMyStuff does. The
   // card walks it through claim → "is it on this computer?" → attached, then
-  // offers Reboot (the NanoKVM GPIO reset, tunnelled through the KVM's own web
-  // UI — exactly how the AllMyStuff app's `kvmFeature` does it) and Wi-Fi setup
+  // offers Update (the appliance's own firmware update, tunnelled through its
+  // web UI, falling back to a reboot when it's already current) and Wi-Fi setup
   // (reading and setting the KVM's own Wi-Fi over that same tunnel; see the KVM
   // Wi-Fi section below). Every backend step is an existing node command or a
   // tunnelled call to the KVM's web API; the node/appliance is the source of
@@ -1042,7 +1094,7 @@ class CecStore {
 
   /** The site serving a KVM's own web UI — the one whose id matches `kvm.web`,
    *  else the first web-scheme site. Undefined when the KVM advertises none
-   *  (Reboot then has nowhere to POST). */
+   *  (Update then has nowhere to POST). */
   private kvmWebSite(p: MeshPeer): SiteAdvert | undefined {
     const sites = p.sites ?? [];
     const named = p.kvm?.web ? sites.find((s) => s.id === p.kvm!.web) : undefined;
@@ -1060,6 +1112,18 @@ class CecStore {
     const snap = await sessionSnapshot();
     if (snap) this.snapshot = snap;
     await this.refreshReachable();
+    // Pick up hand-raises made at the device itself — the physical button
+    // raises the same hand this app does, so the card must reflect it whichever
+    // one was pressed.
+    await this.refreshKvmHelp();
+  }
+
+  /** Re-read the hand-raise state of every KVM linked to this computer. Runs
+   *  off the same discovery pass as the card, and stays quiet on failure. */
+  private async refreshKvmHelp(): Promise<void> {
+    await Promise.all(
+      this.cecKvms.filter((k) => k.mine && k.attachedHere && k.hasWeb).map((k) => this.loadKvmHelp(k.node)),
+    );
   }
 
   /** Recompute which peers the node can reach across every network it's on —
@@ -1185,49 +1249,352 @@ class CecStore {
     this.attachAsked = { ...this.attachAsked, [canonicalTech(node)]: true };
   }
 
-  /** Reboot the machine the KVM controls — map the KVM's web UI to a local
-   *  port, then POST the NanoKVM GPIO reset over the tunnel (auth is bypassed
-   *  on the mesh path, so no token). Mirrors the AllMyStuff app's `kvmFeature`. */
-  async rebootKvm(node: string): Promise<void> {
+  /** Update this KVM's firmware, then restart it.
+   *
+   *  This replaced a Reboot button that POSTed the GPIO reset — which resets
+   *  the machine on the other end of the KVM, not the appliance. This panel
+   *  manages the appliance.
+   *
+   *  "Already current" is deliberately not a no-op: the KVM is rebooted anyway,
+   *  so one button covers both jobs and nobody has to reason about which to
+   *  press. Applying an update doesn't need that second step — the device
+   *  restarts its own server (and the mesh daemon, when the bundle carries a
+   *  changed one) as the last act of installing, in an order it has good
+   *  reasons for. Issuing our own reboot on top would race that, so the two
+   *  paths end the same way by different means. */
+  async updateKvm(node: string): Promise<void> {
     if (this.busy) return;
     if (this.demo) {
-      this.notify("Reboot sent to the KVM.");
+      this.notify("Update sent to the KVM.");
+      return;
+    }
+    this.busy = true;
+    try {
+      const port = await this.kvmConsolePort(node);
+      if (port === null) {
+        this.notify("This KVM hasn't published a console yet, so it can't be updated.");
+        return;
+      }
+      const { rsp, reason } = await this.kvmApi<KvmVersion>(port, "/api/application/version");
+      if (!rsp) {
+        this.notify(`Couldn't check this KVM's firmware: ${reason}`);
+        return;
+      }
+      if (rsp.code !== 0) {
+        this.notify(`Couldn't check this KVM's firmware: ${this.kvmMsg(rsp, "the KVM declined.")}`);
+        return;
+      }
+      const current = (rsp.data?.current ?? "").trim();
+      const latest = (rsp.data?.latest ?? "").trim();
+      // No `latest` means the device couldn't reach its release channel, not
+      // that it's behind — so don't claim an update exists. The reboot still
+      // happens, which is the half of this button that never needs the network.
+      if (latest && latest !== current) {
+        await this.applyKvmUpdate(port, latest);
+      } else {
+        await this.rebootKvmDevice(port, current);
+      }
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  /** Install `latest` on the KVM and let it restart itself.
+   *
+   *  The device downloads, verifies and installs the bundle BEFORE it answers,
+   *  so this waits far longer than a normal call. A timeout here is not a
+   *  failure: the install may well have landed and taken the tunnel down with
+   *  the restart that follows it, so it reads as "under way". */
+  private async applyKvmUpdate(port: number, latest: string): Promise<void> {
+    this.notify(`Installing ${latest} on the KVM — this takes a few minutes.`);
+    const { rsp, timedOut, reason } = await this.kvmApi(port, "/api/application/update", {
+      method: "POST",
+      body: {},
+      timeoutMs: 300_000,
+    });
+    if (timedOut) {
+      this.notify(`The KVM is still installing ${latest}. It restarts on its own when it's done.`);
+      return;
+    }
+    if (!rsp) {
+      this.notify(`Couldn't update the KVM: ${reason}`);
+      return;
+    }
+    if (rsp.code !== 0) {
+      this.notify(`Couldn't update the KVM: ${this.kvmMsg(rsp, "the KVM declined.")}`);
+      return;
+    }
+    this.notify(`KVM updated to ${latest}. It's restarting now.`);
+  }
+
+  /** Reboot the KVM appliance itself — the up-to-date half of Update.
+   *
+   *  A reboot takes the device down mid-request by definition, so a timeout is
+   *  the expected outcome rather than a fault. */
+  private async rebootKvmDevice(port: number, current: string): Promise<void> {
+    const on = current ? ` (${current})` : "";
+    const { rsp, timedOut, reason } = await this.kvmApi(port, "/api/vm/system/reboot", {
+      method: "POST",
+      body: {},
+    });
+    if (timedOut || (rsp && rsp.code === 0)) {
+      this.notify(`KVM already on the latest firmware${on} — rebooting it now.`);
+      return;
+    }
+    if (!rsp) {
+      this.notify(`KVM already on the latest firmware${on}, but the reboot failed: ${reason}`);
+      return;
+    }
+    this.notify(
+      `KVM already on the latest firmware${on}, but the reboot failed: ${this.kvmMsg(rsp, "the KVM declined.")}`,
+    );
+  }
+
+  // ---- KVM "ask for help" ----------------------------------------------
+  //
+  // A KVM raises its hand on the shared CEC support area in its own right — it
+  // is a help-seeker like a customer's app, not a thing this app raises a hand
+  // *about*. The device's physical button does exactly the same, so this is a
+  // second way into one path, and the state below is always re-read from the
+  // appliance rather than inferred from what we just asked for.
+  //
+  // A technician who answers is authorised for a bounded window (three hours,
+  // enforced and persisted on the device), which is why this surface shows a
+  // deadline rather than an open-ended "someone may be connected".
+
+  /** The hand-raise state for `node`, or null until first read. */
+  helpFor(node: string): KvmHelpStatus | null {
+    return this.kvmHelp[canonicalTech(node)] ?? null;
+  }
+
+  /** Whether a raise/lower is in flight for `node`. */
+  helpPending(node: string): boolean {
+    return !!this.helpBusy[canonicalTech(node)];
+  }
+
+  /** What's left of a KVM's support authorisation, as "2h 58m" — or null when
+   *  no grant is outstanding. Reads the store's one-second `now` so it ages
+   *  itself without a second timer. Rounds up, so a live grant never reads as
+   *  "0m left" in the seconds before it lapses. */
+  helpTimeLeft(node: string): string | null {
+    const st = this.helpFor(node);
+    if (!st?.authorised || !st.expiresAt) return null;
+    const secs = st.expiresAt - this.now;
+    if (secs <= 0) return null;
+    const mins = Math.ceil(secs / 60);
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  }
+
+  /** How long a grant lasts on this device, phrased for a sentence ("3 hours").
+   *  Taken from the appliance so the app never contradicts the real policy. */
+  helpWindowLabel(node: string): string {
+    const secs = this.helpFor(node)?.grantSeconds ?? 0;
+    if (secs <= 0) return "a set time";
+    const h = Math.round(secs / 3600);
+    if (h >= 1) return h === 1 ? "1 hour" : `${h} hours`;
+    const m = Math.max(1, Math.round(secs / 60));
+    return m === 1 ? "1 minute" : `${m} minutes`;
+  }
+
+  /** Read a KVM's hand-raise state. Quiet on failure — this is ambient status
+   *  the card simply omits when unavailable, not something the customer asked
+   *  for, so a toast would be noise. */
+  async loadKvmHelp(node: string): Promise<void> {
+    if (this.demo) {
+      this.kvmHelp = {
+        ...this.kvmHelp,
+        [canonicalTech(node)]: {
+          enabled: true,
+          asking: false,
+          supportId: "123456789",
+          authorised: false,
+          grantSeconds: 10800,
+        },
+      };
+      return;
+    }
+    const port = await this.kvmConsolePort(node);
+    if (!port) return;
+    const { rsp } = await this.kvmApi<KvmHelpStatus>(port, "/api/mesh/help");
+    if (!rsp || rsp.code !== 0 || !rsp.data) return;
+    this.kvmHelp = { ...this.kvmHelp, [canonicalTech(node)]: rsp.data };
+  }
+
+  /** Raise or lower a KVM's hand. The reply carries the resulting state, so one
+   *  round-trip both acts and refreshes. */
+  async toggleKvmHelp(node: string): Promise<void> {
+    const key = canonicalTech(node);
+    if (this.helpBusy[key]) return;
+    const raised = this.helpFor(node)?.asking ?? false;
+
+    if (this.demo) {
+      const cur = this.helpFor(node);
+      this.kvmHelp = {
+        ...this.kvmHelp,
+        [key]: { ...(cur ?? { enabled: true, supportId: "123456789", authorised: false, grantSeconds: 10800 }), asking: !raised } as KvmHelpStatus,
+      };
+      this.notify(raised ? "Cancelled the help request." : "The KVM has raised its hand.");
+      return;
+    }
+
+    const port = await this.kvmConsolePort(node);
+    if (!port) {
+      this.notify("Couldn't reach the KVM's console.");
+      return;
+    }
+    this.helpBusy = { ...this.helpBusy, [key]: true };
+    try {
+      const { rsp, reason } = await this.kvmApi<KvmHelpStatus>(
+        port,
+        raised ? "/api/mesh/help/lower" : "/api/mesh/help/raise",
+        { method: "POST" },
+      );
+      if (!rsp || rsp.code !== 0) {
+        this.notify(
+          rsp
+            ? this.kvmMsg(rsp, "The KVM couldn't ask for help.")
+            : (reason ?? "The KVM couldn't ask for help."),
+        );
+        return;
+      }
+      if (rsp.data) this.kvmHelp = { ...this.kvmHelp, [key]: rsp.data };
+      this.notify(
+        raised
+          ? "Cancelled the help request."
+          : `The KVM has raised its hand. A technician who answers gets ${this.helpWindowLabel(node)} of access.`,
+      );
+    } finally {
+      this.helpBusy = { ...this.helpBusy, [key]: false };
+    }
+  }
+
+  // ---- Reaching the KVM's own web UI ("Open") ---------------------------
+  //
+  // A KVM's console is a normal web UI, and a customer sometimes needs it
+  // directly — for the things this card doesn't wrap. It can be reached three
+  // ways, and which one works depends on where the customer is sitting, so the
+  // menu offers each rather than picking for them:
+  //
+  //   Ethernet / Wi-Fi — the device's own LAN addresses, read from
+  //                      `GET /api/vm/info` over the tunnel. Either may be
+  //                      absent (no lead plugged in, no Wi-Fi joined).
+  //   Mesh            — the site tunnel already mapped for this KVM. Needs no
+  //                      LAN at all, so it's the one that always works.
+
+  /** Whether the Open menu is showing for `node` (the card's render guard). */
+  linksOpenFor(node: string): boolean {
+    return this.sameNode(this.linksFor, node);
+  }
+
+  /** Toggle the Open menu for a KVM, loading its addresses on the way open. */
+  async toggleKvmLinks(node: string): Promise<void> {
+    if (this.sameNode(this.linksFor, node)) {
+      this.closeKvmLinks();
+      return;
+    }
+    this.linksFor = node;
+    this.kvmLinks = [];
+    this.linksError = null;
+    await this.loadKvmLinks(node);
+  }
+
+  /** Close the Open menu and drop its transient state. */
+  closeKvmLinks(): void {
+    this.linksFor = null;
+    this.kvmLinks = [];
+    this.linksError = null;
+    this.linksLoading = false;
+  }
+
+  /** Build the list of ways to reach `node`'s web UI. The Mesh entry is added
+   *  whenever the tunnel maps, so the menu is useful even when the device
+   *  can't report its LAN addresses. */
+  async loadKvmLinks(node: string): Promise<void> {
+    if (this.demo) {
+      this.kvmLinks = demoLinks();
       return;
     }
     const peer = (this.snapshot?.peers ?? []).find((p) => this.sameNode(p.node, node));
     const site = peer ? this.kvmWebSite(peer) : undefined;
     if (!peer || !site) {
-      this.notify("This KVM hasn't published a console yet, so it can't be rebooted.");
+      this.linksError = "This KVM hasn't published a console yet.";
       return;
     }
-    this.busy = true;
+    // The scheme the device serves its own UI with — a Pro with TLS on says
+    // https, and its LAN URL has to match or the browser gets a protocol error.
+    const scheme: "http" | "https" = site.scheme === "https" ? "https" : "http";
+
+    this.linksLoading = true;
     try {
       const m = await siteMap(peer.node, site.port);
       if (!m) {
-        this.notify("Couldn't reach the KVM's console.");
+        this.linksError = "Couldn't reach this KVM's console.";
         return;
       }
-      const res = await fetch(`http://localhost:${m.localPort}/api/vm/gpio`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ type: "reset" }),
+      const links: KvmLink[] = [];
+
+      const { rsp, reason } = await this.kvmApi<{ ips?: KvmIp[] }>(m.localPort, "/api/vm/info");
+      if (rsp && rsp.code === 0) {
+        for (const ip of rsp.data?.ips ?? []) {
+          // The device classifies its own interfaces ("Wired" / "Wireless");
+          // anything else it reports is a virtual/tunnel address, not a way in.
+          const kind = ip.type === "Wired" ? "wired" : ip.type === "Wireless" ? "wireless" : null;
+          if (!kind || !ip.addr) continue;
+          links.push({
+            kind,
+            label: kind === "wired" ? "Ethernet" : "Wi-Fi",
+            detail: ip.addr,
+            host: ip.addr,
+            port: site.port,
+            scheme,
+          });
+        }
+      } else {
+        this.linksError = rsp
+          ? this.kvmMsg(rsp, "Couldn't read this KVM's addresses.")
+          : (reason ?? "Couldn't read this KVM's addresses.");
+      }
+
+      // Always last, always present: the tunnel doesn't need the customer to be
+      // on the same network as the KVM.
+      links.push({
+        kind: "mesh",
+        label: "Mesh",
+        detail: "Through this app",
+        host: "127.0.0.1",
+        port: m.localPort,
+        scheme: "http",
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      this.notify("Reboot sent to the KVM.");
-    } catch (e) {
-      this.notify(`Couldn't reboot the KVM: ${errMsg(e)}`);
+      this.kvmLinks = links;
     } finally {
-      this.busy = false;
+      this.linksLoading = false;
+    }
+  }
+
+  /** Open one of those addresses in the customer's browser. */
+  async openKvmLink(link: KvmLink): Promise<void> {
+    if (this.demo) {
+      this.notify(`Would open ${link.scheme}://${link.host}:${link.port}`);
+      this.closeKvmLinks();
+      return;
+    }
+    try {
+      await openKvmConsole(link.host, link.port, link.scheme);
+      this.closeKvmLinks();
+    } catch (e) {
+      this.notify(`Couldn't open the KVM's page: ${errMsg(e)}`);
     }
   }
 
   // ---- KVM Wi-Fi -------------------------------------------------------
   //
   // Read and set a claimed KVM's own Wi-Fi over the SAME mesh "sites" tunnel
-  // the Reboot uses (`site_map` → a localhost port → the KVM's web API). The
+  // Update uses (`site_map` → a localhost port → the KVM's web API). The
   // appliance already owns the Wi-Fi system and authenticates the tunnel by
   // mesh roster, so no KVM login/token is needed on this path — exactly like
-  // the reboot POST. One flow covers both models: the connect request
+  // the update POST. One flow covers both models: the connect request
   // (`{ ssid, password }`) is identical, and the status read is normalized
   // across the plain-NanoKVM (`ssid`) and Pro (`wifi { … }`) shapes; the Pro's
   // scan is a pure enhancement that a plain NanoKVM simply 404s.
@@ -1238,52 +1605,78 @@ class CecStore {
     return k?.label ?? "KVM";
   }
 
-  /** Resolve the KVM console tunnel base (`http://localhost:<port>`) for `node`
-   *  — the same map the Reboot performs. Null when the KVM advertises no web UI
-   *  or the map fails. */
-  private async kvmConsoleBase(node: string): Promise<string | null> {
+  /** Resolve the KVM console tunnel port for `node` — the same map Update
+   *  performs. Null when the KVM advertises no web UI or the map fails. */
+  private async kvmConsolePort(node: string): Promise<number | null> {
     const peer = (this.snapshot?.peers ?? []).find((p) => this.sameNode(p.node, node));
     const site = peer ? this.kvmWebSite(peer) : undefined;
     if (!peer || !site) return null;
     const m = await siteMap(peer.node, site.port);
-    return m ? `http://localhost:${m.localPort}` : null;
+    return m ? m.localPort : null;
   }
 
-  /** Call one JSON endpoint on the KVM console over the tunnel and return its
-   *  `{ code, msg, data }` envelope. Returns null on a network error, a
-   *  timeout, a non-200, or a body that isn't that envelope (a plain NanoKVM
-   *  answering an unknown route with a 404 / HTML) — callers read null as
-   *  "unavailable" or, for a write, "sent but unconfirmed". */
+  /** Call one JSON endpoint on the KVM console over the tunnel.
+   *
+   *  Goes through Rust (`kvmApiCall`), never the webview's `fetch`. The tunnel
+   *  is a different origin from the app, the appliance only sends CORS headers
+   *  when its own auth is disabled, and the tunnel adds none — so in the webview
+   *  a GET's response was unreadable and every JSON POST (the update, the
+   *  Wi-Fi write)
+   *  died at a preflight gin has no route for. That surfaced as a bare
+   *  "Failed to fetch" with no status, which is why this panel could only ever
+   *  report *that* something broke, never *what*.
+   *
+   *  Returns the device's `{ code, msg, data }` envelope on success. On any
+   *  failure it returns null and sets `reason` to something worth showing a
+   *  human — the transport error, the HTTP status, or the device's own `msg`. */
   private async kvmApi<T>(
-    base: string,
+    port: number,
     path: string,
     init?: { method?: string; body?: unknown; timeoutMs?: number },
-  ): Promise<KvmApiRsp<T> | null> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), init?.timeoutMs ?? 12000);
+  ): Promise<KvmApiOutcome<T>> {
+    let out: KvmApiCallResult;
     try {
-      const hasBody = init?.body !== undefined;
-      const res = await fetch(`${base}${path}`, {
-        method: init?.method ?? "GET",
-        headers: hasBody ? { "content-type": "application/json" } : undefined,
-        body: hasBody ? JSON.stringify(init?.body) : undefined,
-        signal: controller.signal,
-      });
-      if (!res.ok) return null;
-      const json: unknown = await res.json();
-      if (
-        !json ||
-        typeof json !== "object" ||
-        typeof (json as { code?: unknown }).code !== "number"
-      ) {
-        return null;
-      }
-      return json as KvmApiRsp<T>;
-    } catch {
-      return null;
-    } finally {
-      clearTimeout(timer);
+      out = await kvmApiCall(port, path, init);
+    } catch (e) {
+      return { rsp: null, timedOut: false, reason: errMsg(e) };
     }
+
+    // No reply at all. A timeout is flagged separately: a caller writing Wi-Fi
+    // credentials treats it as "probably worked, the KVM moved networks".
+    if (out.error) {
+      return {
+        rsp: null,
+        timedOut: out.error.kind === "timeout",
+        reason: capitalise(out.error.message),
+      };
+    }
+
+    const body = out.body as { code?: unknown; msg?: unknown } | null;
+    const hasEnvelope = !!body && typeof body === "object" && typeof body.code === "number";
+    const fail = (reason: string): KvmApiOutcome<T> => ({ rsp: null, timedOut: false, reason });
+
+    if (out.status === 401 || out.status === 403) {
+      // Shouldn't happen over the mesh — roster membership stands in for the
+      // KVM login — so say that plainly rather than asking for a password this
+      // panel has no field for.
+      return fail("The KVM refused the request (not authorised over the mesh).");
+    }
+    if (out.status === 404) {
+      return fail("This KVM doesn't offer that (HTTP 404).");
+    }
+    if (out.status < 200 || out.status >= 300) {
+      const msg = hasEnvelope && typeof body!.msg === "string" ? ` — ${body!.msg}` : "";
+      return fail(`The KVM answered HTTP ${out.status}${msg}.`);
+    }
+    if (!hasEnvelope) {
+      return fail("The KVM sent a reply the app didn't understand.");
+    }
+    return { rsp: body as KvmApiRsp<T>, timedOut: false, reason: null };
+  }
+
+  /** The device's own message for a non-zero envelope, or a fallback. */
+  private kvmMsg(rsp: KvmApiRsp<unknown>, fallback: string): string {
+    return typeof rsp.msg === "string" && rsp.msg.trim() ? rsp.msg.trim() : fallback;
   }
 
   /** Open the Wi-Fi panel for a claimed KVM and read its current state. */
@@ -1292,7 +1685,7 @@ class CecStore {
     this.wifiStatus = null;
     this.wifiScan = null;
     this.wifiError = null;
-    this.wifiBase = null;
+    this.wifiPort = null;
     await this.loadKvmWifi(node);
   }
 
@@ -1302,7 +1695,7 @@ class CecStore {
     this.wifiStatus = null;
     this.wifiScan = null;
     this.wifiError = null;
-    this.wifiBase = null;
+    this.wifiPort = null;
     this.wifiLoading = false;
     this.wifiScanning = false;
     this.wifiBusy = false;
@@ -1317,18 +1710,20 @@ class CecStore {
     this.wifiLoading = true;
     this.wifiError = null;
     try {
-      const base = this.wifiBase ?? (await this.kvmConsoleBase(node));
-      if (!base) {
+      const port = this.wifiPort ?? (await this.kvmConsolePort(node));
+      if (!port) {
         this.wifiError = "Couldn't reach this KVM's console.";
         return;
       }
-      this.wifiBase = base;
-      const rsp = await this.kvmApi<KvmWifiStatusRaw>(base, "/api/network/wifi");
+      this.wifiPort = port;
+      const { rsp, reason } = await this.kvmApi<KvmWifiStatusRaw>(port, "/api/network/wifi");
       if (!rsp || rsp.code !== 0 || !rsp.data) {
         // Drop the cached tunnel so a retry re-maps a fresh one — the mapping
         // may have gone stale (the read is the first call on it each open).
-        this.wifiBase = null;
-        this.wifiError = "Couldn't read the KVM's Wi-Fi settings.";
+        this.wifiPort = null;
+        this.wifiError = rsp
+          ? this.kvmMsg(rsp, "The KVM couldn't report its Wi-Fi settings.")
+          : (reason ?? "Couldn't read the KVM's Wi-Fi settings.");
         return;
       }
       this.wifiStatus = normalizeWifi(rsp.data);
@@ -1348,13 +1743,13 @@ class CecStore {
       this.wifiScan = demoScanList();
       return;
     }
-    const base = this.wifiBase ?? (await this.kvmConsoleBase(node));
-    if (!base) return;
-    this.wifiBase = base;
+    const port = this.wifiPort ?? (await this.kvmConsolePort(node));
+    if (!port) return;
+    this.wifiPort = port;
     this.wifiScanning = true;
     try {
-      const rsp = await this.kvmApi<{ wifiList?: KvmWifiNetwork[] }>(
-        base,
+      const { rsp } = await this.kvmApi<{ wifiList?: KvmWifiNetwork[] }>(
+        port,
         "/api/network/wifi/scan",
         { timeoutMs: 20000 },
       );
@@ -1387,15 +1782,15 @@ class CecStore {
       }, 900);
       return;
     }
-    const base = this.wifiBase ?? (await this.kvmConsoleBase(node));
-    if (!base) {
+    const port = this.wifiPort ?? (await this.kvmConsolePort(node));
+    if (!port) {
       this.wifiError = "Couldn't reach this KVM's console.";
       return;
     }
-    this.wifiBase = base;
+    this.wifiPort = port;
     this.wifiBusy = true;
     try {
-      const rsp = await this.kvmApi(base, "/api/network/wifi/connect", {
+      const { rsp, timedOut, reason } = await this.kvmApi(port, "/api/network/wifi/connect", {
         method: "POST",
         body: { ssid: name, password },
         timeoutMs: 40000,
@@ -1405,15 +1800,24 @@ class CecStore {
         await this.loadKvmWifi(node);
         void this.refreshKvms();
       } else if (rsp) {
-        this.wifiError =
-          "Couldn't connect. Check the network name and password, then try again.";
-      } else {
-        // No reply: the request went out but nothing came back. Most often the
-        // KVM has moved onto the new network and its mesh link is
-        // re-establishing — not a failure we can be sure of.
+        // The appliance validates `password` as required on both models, so a
+        // blank one comes back as "invalid parameters" — a message that reads
+        // like a bug rather than the limitation it is. Name it.
+        this.wifiError = password
+          ? this.kvmMsg(
+              rsp,
+              "Couldn't connect. Check the network name and password, then try again.",
+            )
+          : "This KVM won't accept an empty password, so it can't join an open network.";
+      } else if (timedOut) {
+        // The write went out but nothing came back. Most often the KVM has
+        // moved onto the new network and its mesh link is re-establishing —
+        // not a failure we can be sure of, so don't report one.
         this.wifiError =
           "Sent the Wi-Fi details. If the KVM moves onto this network it may drop off for a minute. Reopen Wi-Fi to check.";
         void this.refreshKvms();
+      } else {
+        this.wifiError = reason ?? "Couldn't send the Wi-Fi details.";
       }
     } finally {
       this.wifiBusy = false;
@@ -1440,15 +1844,15 @@ class CecStore {
       this.notify("Disconnected the KVM's Wi-Fi.");
       return;
     }
-    const base = this.wifiBase ?? (await this.kvmConsoleBase(node));
-    if (!base) {
+    const port = this.wifiPort ?? (await this.kvmConsolePort(node));
+    if (!port) {
       this.wifiError = "Couldn't reach this KVM's console.";
       return;
     }
-    this.wifiBase = base;
+    this.wifiPort = port;
     this.wifiBusy = true;
     try {
-      const rsp = await this.kvmApi(base, "/api/network/wifi/disconnect", {
+      const { rsp, timedOut, reason } = await this.kvmApi(port, "/api/network/wifi/disconnect", {
         method: "POST",
         timeoutMs: 20000,
       });
@@ -1456,11 +1860,13 @@ class CecStore {
         this.notify("Disconnected the KVM's Wi-Fi.");
         await this.loadKvmWifi(node);
       } else if (rsp) {
-        this.wifiError = "Couldn't disconnect the Wi-Fi. Try again.";
-      } else {
+        this.wifiError = this.kvmMsg(rsp, "Couldn't disconnect the Wi-Fi. Try again.");
+      } else if (timedOut) {
         this.wifiError =
           "Sent the request. The KVM may drop off for a moment if Wi-Fi was its only connection.";
         void this.refreshKvms();
+      } else {
+        this.wifiError = reason ?? "Couldn't disconnect the Wi-Fi.";
       }
     } finally {
       this.wifiBusy = false;
@@ -1739,7 +2145,7 @@ class CecStore {
     };
     // A claimable KVM (an ordinary NanoKVM — no `cec-kvm-` mesh) so the KVM &
     // Claiming card shows in the preview and proves normal KVMs surface. Claim
-    // → "attached to this computer?" → Reboot / Unclaim is fully clickable via
+    // → "attached to this computer?" → Update / Unclaim is fully clickable via
     // the demo mutations in claimKvm / attachKvmHere / unclaimKvm.
     this.snapshot = {
       ready: true,

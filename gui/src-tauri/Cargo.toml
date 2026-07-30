@@ -49,13 +49,15 @@ tauri-plugin-single-instance = "2"
 
 # The shared AllMyStuff node engine — presence, the CEC connect handshake, the
 # media planes, and the node control socket the client drives. Reused in "CEC
-# client (customer) mode". Git deps on the sibling branch that adds the CEC
-# node commands; not yet published, so this won't resolve in this sandbox.
-allmystuff-node = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.49" }
+# client (customer) mode". Pinned to a published AllMyStuff release tag, so
+# these resolve wherever that tag is reachable; bump all three together with
+# `.allmystuff-rev`, which pins the `allmystuff-serve` sidecar to the same
+# release (see build.rs — it stamps the tag in as ALLMYSTUFF_PIN).
+allmystuff-node = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.50" }
 # The CEC wire contract + Support-ID derivation, and the three-choice consent
 # store — the customer's per-technician approvals.
-allmystuff-cec-protocol = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.49" }
-allmystuff-cec-consent = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.49" }
+allmystuff-cec-protocol = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.50" }
+allmystuff-cec-consent = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.50" }
 
 # The client's OWN OS-service installer (never AllMyStuff's), so installing the
 # background service never clobbers an existing AllMyStuff install.
@@ -71,6 +73,18 @@ cec-support-updater = { path = "../../crates/cec-support-updater" }
 # Async runtime — Tauri commands run on it; setup drives node bring-up + the
 # event pump; the headless `run --service` agent blocks on it.
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "signal"] }
+
+# The KVM console client. These calls MUST NOT be made with the webview's
+# `fetch`: the app's origin and the site tunnel's `http://localhost:<port>` are
+# different origins, the appliance only sends CORS headers when its own auth is
+# disabled (NanoKVM `main.go`: `if conf.Authentication == "disable"`), and the
+# tunnel is a raw TCP proxy that adds none — so a browser fetch fails the
+# preflight with an opaque "Failed to fetch". Going through Rust has no browser
+# and therefore no CORS, and it lets a real status/body reach the UI.
+reqwest = { version = "0.12", default-features = false, features = [
+  "json",
+  "rustls-tls",
+] }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

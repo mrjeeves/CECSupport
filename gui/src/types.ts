@@ -197,7 +197,7 @@ export const FEATURE_KVM = "kvm";
 
 /** One site a peer exposes for reverse-proxying (mirrors the node's
  *  `SiteAdvert`). Used here only to find a KVM's own web UI — the address the
- *  Reboot POST is tunnelled to. */
+ *  Update POST is tunnelled to. */
 export interface SiteAdvert {
   /** Stable id (`tcp:80`). */
   id: string;
@@ -284,14 +284,14 @@ export interface CecKvm {
   /** Ours, not yet attached here, and the customer hasn't answered the
    *  "is it on this computer?" prompt — so the card shows that prompt. */
   promptAttach: boolean;
-  /** It advertises a web UI, so Reboot / Wi-Fi (both over the tunnel) are
+  /** It advertises a web UI, so Update / Wi-Fi (both over the tunnel) are
    *  reachable. */
   hasWeb: boolean;
 }
 
 // ---------------------------------------------------------------------------
 // KVM Wi-Fi — reading and setting a claimed KVM's own Wi-Fi over the same mesh
-// "sites" tunnel the Reboot uses. The appliance already owns the Wi-Fi system;
+// "sites" tunnel Update uses. The appliance already owns the Wi-Fi system;
 // these types just mirror what its web API returns. The `GET /api/network/wifi`
 // body differs by model — a plain NanoKVM sends a bare `ssid` string, a
 // NanoKVM-Pro a `wifi` object (and adds a Pro-only `/scan`) — but the connect
@@ -305,6 +305,88 @@ export interface KvmApiRsp<T = unknown> {
   code: number;
   msg?: string;
   data?: T;
+}
+
+/** A KVM's CEC hand-raise state (`GET /api/mesh/help` on the appliance).
+ *
+ *  The KVM raises its own hand on the shared support area — it's a help-seeker
+ *  in its own right, exactly like a customer's app — and a technician who
+ *  answers is authorised for a bounded window rather than indefinitely. Both the
+ *  device's physical button and this app drive the same path, so this state is
+ *  the truth wherever the raise came from. */
+export interface KvmHelpStatus {
+  /** The device's mesh bridge is running (false → it can't ask for help). */
+  enabled: boolean;
+  /** Its hand is currently up, waiting for a technician. */
+  asking: boolean;
+  /** The 9-digit support number, readable out loud to identify the device. */
+  supportId: string;
+  /** A technician currently holds an authorisation. */
+  authorised: boolean;
+  /** Unix seconds when that authorisation runs out (0 = none). */
+  expiresAt?: number;
+  /** How long a grant lasts, so the UI can name the window without hardcoding
+   *  it — the device is the authority on its own policy. */
+  grantSeconds: number;
+}
+
+/** What a KVM reports about its firmware — `GET /api/application/version`.
+ *
+ *  Both fields are plain version strings with no leading "v", so they compare
+ *  directly. `latest` is best-effort: the device asks its own release channel
+ *  and omits the field when it can't reach it (no internet, rate limit), which
+ *  reads as "nothing to install" rather than as an error. */
+export interface KvmVersion {
+  /** The build the device is running now. */
+  current: string;
+  /** The newest build on its release channel, or "" when the lookup failed. */
+  latest?: string;
+}
+
+/** One way to reach a KVM's own web UI, as the "Open" menu lists them.
+ *
+ *  A KVM can sit on two networks at once (its ethernet lead and its Wi-Fi), and
+ *  either address may be the one that works from where the customer is — so the
+ *  menu offers each it actually found rather than guessing. The `mesh` entry is
+ *  always present as the fallback that needs no LAN at all: it points at the
+ *  site tunnel this app already holds open. */
+export interface KvmLink {
+  kind: "wired" | "wireless" | "mesh";
+  /** Menu label ("Ethernet", "Wi-Fi", "Mesh"). */
+  label: string;
+  /** The address under the label — an IP, or a word for the tunnel. */
+  detail: string;
+  host: string;
+  port: number;
+  scheme: "http" | "https";
+}
+
+/** One entry of a KVM's `GET /api/vm/info` `ips` list. `type` is the device's
+ *  own classification — "Wired" or "Wireless" (NanoKVM `service/vm/ip.go`). */
+export interface KvmIp {
+  name: string;
+  addr: string;
+  version: string;
+  type: string;
+}
+
+/** The result of one `kvm_api` call — the Rust-side console client.
+ *
+ *  These calls can't use the webview's `fetch`: the tunnel is a different
+ *  origin from the app, the appliance only sends CORS headers when its own auth
+ *  is disabled, and the tunnel adds none — so a GET's response was unreadable
+ *  and every JSON POST died at a preflight, both as a bare "Failed to fetch"
+ *  with no status. Rust has no origin, so the status and body survive. */
+export interface KvmApiCallResult {
+  /** The HTTP status, or 0 when the call never got a reply (see `error`). */
+  status: number;
+  /** The parsed JSON body, or null when the device didn't send JSON. */
+  body: unknown;
+  /** Set only when no reply arrived at all. `kind` is kept separate from the
+   *  message because a "timeout" is not necessarily a failure — writing Wi-Fi
+   *  credentials times out precisely when the KVM succeeds and hops onto the
+   *  new network, dropping the tunnel mid-write. */
+  error: { kind: "timeout" | "connect" | "other"; message: string } | null;
 }
 
 /** The raw `data` of a KVM's `GET /api/network/wifi`, spanning both model
