@@ -179,12 +179,11 @@ function demoScanList(): KvmWifiNetwork[] {
  *  the card between our on-demand refreshes. Mirrors the AllMyStuff app's
  *  `PRESENCE_GRACE_MS`; an explicit `offline`/`error` clears it immediately, so
  *  a powered-off KVM still drops within one refresh, not after the window. */
-/** How long a "seen live" stamp is kept. Not a liveness deadline — see
- *  refreshReachable: a peer is dropped when the daemon reports it offline or
- *  when it leaves the peer list, never merely because this many milliseconds
- *  passed without anyone pressing Refresh. Long enough that it is only ever
- *  memory hygiene across a long session. */
-const REACHABLE_STAMP_TTL_MS = 6 * 60 * 60 * 1000;
+/** Consecutive discovery passes a peer may go without reading live before the
+ *  card drops it. Counted in SAMPLES, not milliseconds, because sampling is
+ *  user-driven — see refreshReachable. One tolerates a look that lands mid-dial;
+ *  the next says it's really gone. */
+const REACHABLE_MAX_MISSES = 1;
 
 /** Shortest time the header's Refresh stays spinning. A discovery pass is
  *  usually near-instant, and feedback that lasts less than a blink reads as
@@ -293,9 +292,9 @@ class CecStore {
    *  claim/attach), never on a steady poll — a claimable KVM is rare and the
    *  front door shouldn't hammer the node. */
   snapshot = $state<SessionSnapshot | null>(null);
-  /** The set of peers the node has seen *reachable* — canonical ids that were
-   *  live (status active/shelved) on some network, and that the daemon hasn't
-   *  since reported gone — across every network it's on. The presence snapshot
+  /** The set of peers the node can currently reach — canonical ids that read
+   *  live (status active/shelved) on some network within the last
+   *  {@link REACHABLE_MAX_MISSES}+1 discovery passes. The presence snapshot
    *  remembers a KVM's last advert even after it powers off, so this is the
    *  liveness cross-check that lets the card drop an offline KVM. `null` =
    *  reachability unknown (web mode, or the node couldn't be asked) → the card
@@ -308,7 +307,7 @@ class CecStore {
    *  grace holds it "reachable" across that dip so it doesn't flicker out of the
    *  card, exactly as the AllMyStuff app's presence grace does. A plain Map (not
    *  reactive): it feeds `reachable`, which is the reactive signal. */
-  private lastReachableAt = new Map<string, number>();
+  private reachMisses = new Map<string, number>();
   /** Claimed-but-unattached KVMs the customer has answered "not this computer"
    *  for, keyed by canonical node id — so the "is it attached here?" prompt
    *  doesn't keep nagging. Session-local (clears on restart). */
@@ -1189,15 +1188,15 @@ class CecStore {
 
   /** Recompute which peers the node can reach across every network it's on —
    *  the liveness cross-check that lets the card drop an offline KVM (see
-   *  `reachable`). A peer counts as reachable once it's been live
-   *  (active/shelved) on some network, and stays so until the daemon says
-   *  otherwise. Sticky on purpose: a KVM reads `active` only after a second or
-   *  two of `sighted`/`handshaking` while the daemon dials it on the full-mesh
-   *  local-claim network, so a point-in-time check races that dial-up and culls
-   *  a device that is plainly there — at bring-up (the fleetless-customer bug)
-   *  and equally on any later look. An explicit `offline`/`error` drops it at
-   *  once, so a powered-off KVM still goes within one refresh rather than
-   *  lingering. Fail-open: if the node can't be asked for its networks,
+   *  `reachable`). A peer counts as reachable if it read live (active/shelved)
+   *  on some network within the last {@link REACHABLE_MAX_MISSES}+1 passes.
+   *  Tolerating one miss is what lets a *just-plugged-in* KVM show: it reads
+   *  `active` only after a second or two of `sighted`/`handshaking` while the
+   *  daemon dials it on the full-mesh local-claim network, so a single
+   *  point-in-time check races that dial-up and culls a device that is plainly
+   *  there (the fleetless-customer bug). An explicit `offline`/`error` drops it
+   *  at once, so a powered-off KVM goes without waiting out the misses.
+   *  Fail-open: if the node can't be asked for its networks,
    *  reachability is left unknown (null) and nothing is filtered on it. */
   private async refreshReachable(): Promise<void> {
     const nets = await meshNetworks();
@@ -1222,37 +1221,34 @@ class CecStore {
         }
       }
     }
-    const now = Date.now();
-    for (const canon of activeCanons) this.lastReachableAt.set(canon, now);
-    // A peer the daemon explicitly calls offline/error (and that isn't live on
-    // some other network) loses its grace immediately — no lingering.
-    for (const canon of offlineCanons) {
-      if (!activeCanons.has(canon)) this.lastReachableAt.delete(canon);
+    // Count MISSED SAMPLES, not elapsed time. Wall-clock ageing can't work when
+    // sampling is user-driven: too short and a KVM vanishes because nobody
+    // pressed Refresh; too long (or never) and a KVM that was switched off
+    // hangs around forever, because the presence snapshot keeps serving its
+    // last advert and nothing else culls it. A miss count is relative to when
+    // we actually looked, so it behaves the same whether the next look is in
+    // one second or ten minutes.
+    for (const canon of this.reachMisses.keys()) {
+      if (!activeCanons.has(canon)) {
+        this.reachMisses.set(canon, (this.reachMisses.get(canon) ?? 0) + 1);
+      }
     }
-    // Reachable = seen live, and not since reported gone.
-    //
-    // The stamp is deliberately NOT a liveness deadline. Sampling is
-    // user-driven (the header's Refresh, a refocus, an action) — so a stamp
-    // ageing out means "nobody has looked lately", not "the KVM left". Expiring
-    // on age would drop a perfectly present device for the crime of not being
-    // asked about, and that is exactly what it did: a refresh landing while the
-    // peer was mid-dial (sighted/handshaking, not yet active) found a stale
-    // stamp and culled it, so the card kept changing its mind about a KVM that
-    // never moved.
-    //
-    // What DOES remove one is the daemon saying so — the offline/error sweep
-    // above clears the stamp the moment it does. And a KVM that vanishes from
-    // the peer list entirely never reaches this filter at all, since the card
-    // is built from that list; `reachable` only cross-checks peers already in
-    // it. So nothing depends on the stamp rotting.
-    //
-    // The TTL below is memory hygiene, not a liveness signal: it keeps the map
-    // from growing without bound across a long session, at a bound far past any
-    // gap between a person pressing Refresh twice.
+    for (const canon of activeCanons) this.reachMisses.set(canon, 0);
+    // A peer the daemon explicitly calls offline/error (and that isn't live on
+    // some other network) goes at once — no waiting out the misses.
+    for (const canon of offlineCanons) {
+      if (!activeCanons.has(canon)) this.reachMisses.delete(canon);
+    }
+    // One miss is tolerated, the second drops it. A KVM reads active only after
+    // a second or two of sighted/handshaking while the daemon dials it, so a
+    // single look can land mid-dial on a device that is plainly there — that
+    // one miss must not cull it. Two consecutive looks with no life is a
+    // different claim, and the honest one: switch a KVM off and it is gone on
+    // the second refresh rather than sitting in the card forever.
     const live = new Set<string>();
-    for (const [canon, at] of this.lastReachableAt) {
-      if (now - at < REACHABLE_STAMP_TTL_MS) live.add(canon);
-      else this.lastReachableAt.delete(canon);
+    for (const [canon, misses] of this.reachMisses) {
+      if (misses <= REACHABLE_MAX_MISSES) live.add(canon);
+      else this.reachMisses.delete(canon);
     }
     this.reachable = live;
   }
