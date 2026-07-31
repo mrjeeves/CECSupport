@@ -502,6 +502,32 @@ async fn kvm_attach(state: State<'_, AppState>, node: String, target: String) ->
         .map_err(|e| e.to_string())
 }
 
+/// What Wi-Fi networks THIS computer can see, and which one it's on.
+///
+/// The KVM is the thing that needs to join a network, and it is the one thing
+/// that can't help: with no uplink it can't be asked what's nearby, and only a
+/// Pro has a scan endpoint at all — on a plain NanoKVM the picker has never had
+/// anything to show, so the name had to be typed from memory. That is where it
+/// goes wrong: the 2.4 and 5 GHz variants of one network, a trailing space, a
+/// name that isn't quite what's printed on the router.
+///
+/// The host is in the same room on the same radio and already knows. `current`
+/// — the network this computer is itself on — is the most useful field of the
+/// lot, because it is nearly always the one the KVM should join.
+///
+/// Nothing here is privileged, so it can't provoke a UAC or keychain prompt on
+/// a customer's machine. It reads no password: that IS privileged everywhere
+/// (Administrator on Windows, a keychain prompt on macOS, root for
+/// NetworkManager), so the customer still types their own — into a form that no
+/// longer also asks them to remember the network's exact name.
+///
+/// Never fails. A platform that can't answer says so in `note`, and the manual
+/// field the panel has always had carries the flow.
+#[tauri::command]
+fn host_wifi_scan() -> Value {
+    serde_json::to_value(cec_support_wifi::scan()).unwrap_or(Value::Null)
+}
+
 /// Map a peer's exposed site (here, a KVM's own web UI) to a local port,
 /// returning `{ localPort }`. The reboot flow maps the KVM's console then
 /// POSTs its NanoKVM GPIO endpoint at `http://localhost:<localPort>` over the
@@ -1183,6 +1209,7 @@ fn run_gui() -> ExitCode {
             session_snapshot,
             claim_node,
             kvm_attach,
+            host_wifi_scan,
             site_map,
             kvm_api,
             open_kvm_console,

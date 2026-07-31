@@ -104,6 +104,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cec-support-wifi"
+version = "0.2.31"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

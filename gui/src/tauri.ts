@@ -45,6 +45,7 @@ import type {
   CheckOutcome,
   UpdatePrefs,
   KvmApiCallResult,
+  HostWifi,
 } from "./types";
 
 /** True when running inside the Tauri webview (vs a plain browser tab). */
@@ -297,6 +298,28 @@ export function kvmAttach(node: string, target: string): Promise<void> {
 
 /** Map a KVM's web UI (`port`) to a local port; `{ localPort }` is what every
  *  device call below is addressed to. Null in web mode / on error. */
+/** The Wi-Fi networks this computer can see, and the one it's joined to.
+ *
+ *  Unprivileged by design — no UAC, no keychain prompt — so it never reads a
+ *  password; reading one is privileged on every platform. It answers the half
+ *  the customer can't be expected to get right (the exact network name) and
+ *  leaves them the half they know.
+ *
+ *  Resolves an unsupported-but-quiet result rather than throwing when the
+ *  platform can't scan, so the caller can show `note` and fall back to the
+ *  manual field. */
+export async function hostWifiScan(): Promise<HostWifi> {
+  const out = await tryInvoke<HostWifi>("host_wifi_scan", {});
+  return (
+    out ?? {
+      supported: false,
+      current: null,
+      networks: [],
+      note: null,
+    }
+  );
+}
+
 export function siteMap(
   node: string,
   port: number,

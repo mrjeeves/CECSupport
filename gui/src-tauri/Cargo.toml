@@ -62,6 +62,13 @@ allmystuff-cec-consent = { git = "https://github.com/mrjeeves/AllMyStuff", tag =
 # The client's OWN OS-service installer (never AllMyStuff's), so installing the
 # background service never clobbers an existing AllMyStuff install.
 cec-support-service = { path = "../../crates/cec-support-service" }
+# The access points THIS computer can see. A KVM with no network can't be asked
+# what's nearby — which is exactly when someone is putting it on Wi-Fi — and only
+# the Pro has a scan endpoint at all. The machine it's plugged into is in the
+# same room on the same radio and already knows, including which network it is
+# itself on. Lives in the light root workspace so CI compiles and tests it on all
+# three platforms; this crate is excluded from that and builds on none of them.
+cec-support-wifi = { path = "../../crates/cec-support-wifi" }
 # The client's OWN self-updater. CEC keeps the engine *beneath* it current (it
 # asks a reused `allmystuff-serve` to move to ALLMYSTUFF_PIN, which in turn
 # keeps `myownmesh` current); this is the missing top of that chain — the thing

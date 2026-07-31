@@ -1,0 +1,25 @@
+# Host Wi-Fi discovery — what the CUSTOMER'S computer can see.
+#
+# A KVM with no network can't be asked what's nearby, and that is exactly when
+# someone needs to put it on Wi-Fi. But the machine it's plugged into is sitting
+# in the same room, on the same radio, and can already see every access point
+# the KVM could reach. So the host answers the question the appliance can't.
+#
+# Lives in the LIGHT root workspace on purpose. CI builds and tests this
+# workspace on ubuntu / macos / windows; the `gui` crate is excluded and builds
+# on none of them. Putting the parsers here means every one of them is compiled
+# and unit-tested on all three platforms — including the Windows parser on a
+# Linux runner, since the parsing is plain string work and only the command
+# execution is target-gated.
+[package]
+name = "cec-support-wifi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Host Wi-Fi discovery for CEC Support — the access points the customer's computer can see, so a KVM with no network can be pointed at one."
+
+[dependencies]
+serde = { workspace = true }
