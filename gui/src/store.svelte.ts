@@ -180,15 +180,29 @@ function demoScanList(): KvmWifiNetwork[] {
  *  `PRESENCE_GRACE_MS`; an explicit `offline`/`error` clears it immediately, so
  *  a powered-off KVM still drops within one refresh, not after the window. */
 /** Consecutive discovery passes a peer may go without reading live before the
- *  card drops it. Counted in SAMPLES, not milliseconds, because sampling is
- *  user-driven — see refreshReachable. One tolerates a look that lands mid-dial;
- *  the next says it's really gone. */
+ *  card drops it. Counted in SAMPLES, not milliseconds — one tolerates a look
+ *  that lands mid-dial; the next says it's really gone. At the searching
+ *  cadence below that's ~20 s to notice a KVM has been unplugged, and at the
+ *  settled cadence ~2 min. */
 const REACHABLE_MAX_MISSES = 1;
 
 /** Shortest time the header's Refresh stays spinning. A discovery pass is
  *  usually near-instant, and feedback that lasts less than a blink reads as
  *  nothing having happened — the complaint the button exists to answer. */
 const REFRESH_MIN_SPIN_MS = 550;
+
+/** How often to look for KVMs while we can't see one. Short, because this is
+ *  the wait a customer actually lives through: they plug the thing in and
+ *  watch for it to turn up. Having to press Refresh to find out is the
+ *  annoyance, and a cheap local snapshot is a fine price for not asking. */
+const DISCOVERY_INTERVAL_SEARCHING_MS = 10_000;
+
+/** …and once one is on the card. The question that needed answering has been
+ *  answered; this is only keeping it honest — a KVM unplugged, a claim landing
+ *  — so it can be far cheaper. It's also the expensive cadence: a pass with a
+ *  KVM on the card re-reads each attached device's hand-raise over the site
+ *  tunnel, whereas a searching pass has nothing to ask and stays local. */
+const DISCOVERY_INTERVAL_FOUND_MS = 60_000;
 
 
 /** The device's own interface classification → the Open menu's link kind.
@@ -371,6 +385,7 @@ class CecStore {
   private unlisteners: Array<() => void> = [];
   private timer: ReturnType<typeof setInterval> | undefined;
   private chatSyncTimer: ReturnType<typeof setInterval> | undefined;
+  private discoveryTimer: ReturnType<typeof setTimeout> | undefined;
   private toastTimer: ReturnType<typeof setTimeout> | undefined;
 
   /** The connect request to prompt about (first pending), or null. */
@@ -560,18 +575,18 @@ class CecStore {
     // (see syncActiveChat); a no-op in demo (cec_chat_history returns null).
     this.chatSyncTimer = setInterval(() => this.syncActiveChat(), 4000);
 
-    // Refresh KVM & Claiming discovery when the app returns to the foreground
-    // — a customer who plugged in a KVM while the window was hidden sees it on
-    // return. Discovery is otherwise driven by the header's Refresh: presence
-    // isn't pushed to this app, and a background poll spends a snapshot request
-    // every few seconds on what may be a customer's laptop to answer a question
-    // nobody is asking most of the time.
+    // Presence isn't pushed to this app, so discovery has to be asked for.
+    this.scheduleDiscovery();
+
+    // Look again immediately when the app returns to the foreground, rather
+    // than making someone who just brought the window up wait out a tick.
     // Re-sync the live chat then too, so a reply that arrived while the window
-    // was hidden is there on return without waiting for the next poll tick.
+    // was hidden is there on return without waiting for the next poll.
     if (typeof document !== "undefined") {
       const onVisible = () => {
         if (document.visibilityState === "visible") {
           void this.refreshKvms();
+          this.scheduleDiscovery();
           this.syncActiveChat();
         }
       };
@@ -635,7 +650,48 @@ class CecStore {
     this.unlisteners = [];
     if (this.timer) clearInterval(this.timer);
     if (this.chatSyncTimer) clearInterval(this.chatSyncTimer);
+    if (this.discoveryTimer) clearTimeout(this.discoveryTimer);
     if (this.toastTimer) clearTimeout(this.toastTimer);
+  }
+
+  /** Queue the next discovery pass, at a cadence that follows the answer:
+   *  {@link DISCOVERY_INTERVAL_SEARCHING_MS} while the card has no KVM,
+   *  {@link DISCOVERY_INTERVAL_FOUND_MS} once it does.
+   *
+   *  A self-rescheduling timeout rather than setInterval, for two reasons: the
+   *  interval has to be re-decided after every pass (the whole point), and a
+   *  fixed interval would stack passes on top of each other whenever one ran
+   *  long — which the settled cadence can, since it talks to the device.
+   *
+   *  Silent by construction: `refreshKvms`, never `refreshKvmsVisibly`. The
+   *  header control spins because a person pressed it. A spinner going off by
+   *  itself every ten seconds is exactly the flicker the button was added to
+   *  replace. Clears any pending pass first, so callers that want the clock
+   *  restarted (a manual Refresh, returning to the foreground) just call it. */
+  private scheduleDiscovery(): void {
+    if (this.discoveryTimer) clearTimeout(this.discoveryTimer);
+    this.discoveryTimer = undefined;
+    if (this.stopped || this.demo) return;
+    const ms = this.cecKvms.length
+      ? DISCOVERY_INTERVAL_FOUND_MS
+      : DISCOVERY_INTERVAL_SEARCHING_MS;
+    this.discoveryTimer = setTimeout(() => {
+      void (async () => {
+        if (this.stopped) return;
+        // Don't stack onto a pass the Refresh button is already running.
+        if (!this.kvmRefreshing) {
+          // Swallowed: a snapshot that fails mid-poll is a transient the next
+          // pass retries. Nothing here was asked for, so nothing here gets to
+          // put an error in front of the customer.
+          try {
+            await this.refreshKvms();
+          } catch {
+            /* next tick */
+          }
+        }
+        this.scheduleDiscovery();
+      })();
+    }, ms);
   }
 
   async refresh(): Promise<void> {
@@ -1164,6 +1220,9 @@ class CecStore {
         await new Promise((r) => setTimeout(r, REFRESH_MIN_SPIN_MS - held));
       }
       this.kvmRefreshing = false;
+      // Someone just looked; restart the clock rather than letting a queued
+      // background pass land a second or two behind them.
+      this.scheduleDiscovery();
     }
   }
 
