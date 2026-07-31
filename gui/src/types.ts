@@ -374,6 +374,21 @@ export interface KvmIp {
   type: string;
 }
 
+/** `GET /api/vm/info` — the device describing itself.
+ *
+ *  `webScheme`/`webPort` are how to reach it DIRECTLY at one of `ips`. They are
+ *  deliberately not the mesh site advert's scheme, which describes the tunnel
+ *  (always plaintext — the sites plane serves the device's gin engine in-process
+ *  and never terminates TLS). A Pro defaults to https, so using the tunnel's
+ *  scheme for a LAN link built `http://…:443` and the device answered "Client
+ *  sent an HTTP request to an HTTPS server". Absent on firmware that predates
+ *  the split; the caller then falls back to the advert. */
+export interface KvmInfo {
+  ips?: KvmIp[];
+  webScheme?: string;
+  webPort?: number;
+}
+
 /** The result of one `kvm_api` call — the Rust-side console client.
  *
  *  These calls can't use the webview's `fetch`: the tunnel is a different
