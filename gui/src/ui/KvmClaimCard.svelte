@@ -53,9 +53,7 @@
 
   {#if kvms.length === 0}
     <p class="empty">
-      No KVM connected. A CEC KVM lets a technician see this computer&#39;s screen and
-      use its keyboard even when it won&#39;t start up — useful for the problems remote
-      support otherwise can&#39;t reach. Ask us if you&#39;d like one.
+      No KVM connected. One lets us help even when this computer won&#39;t start.
     </p>
   {:else}
     {#each kvms as k (k.node)}
