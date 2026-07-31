@@ -712,7 +712,7 @@ dependencies = [
 
 [[package]]
 name = "cec-support"
-version = "0.1.28"
+version = "0.2.30"
 dependencies = [
  "allmystuff-cec-consent",
  "allmystuff-cec-protocol",
@@ -738,7 +738,7 @@ dependencies = [
 
 [[package]]
 name = "cec-support-service"
-version = "0.1.28"
+version = "0.2.30"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
@@ -749,7 +749,7 @@ dependencies = [
 
 [[package]]
 name = "cec-support-updater"
-version = "0.1.28"
+version = "0.2.30"
 dependencies = [
  "dirs 5.0.1",
  "flate2",

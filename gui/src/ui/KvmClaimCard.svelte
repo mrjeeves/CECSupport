@@ -13,6 +13,7 @@
   // The Wi-Fi button opens KvmWifiModal (rendered below while `store.wifiFor`
   // is set), which reads/sets the KVM's own Wi-Fi over that same tunnel.
   import { store } from "../store.svelte";
+  import { openKvmStore } from "../tauri";
   import KvmWifiModal from "./KvmWifiModal.svelte";
 
   const kvms = $derived(store.cecKvms);
@@ -54,6 +55,7 @@
   {#if kvms.length === 0}
     <p class="empty">
       No KVM connected. One lets us help even when this computer won&#39;t start.
+      <button class="link" onclick={() => openKvmStore()}>Get one</button>
     </p>
   {:else}
     {#each kvms as k (k.node)}
@@ -307,6 +309,23 @@
     color: var(--ink-soft);
     font-size: 0.86rem;
     line-height: 1.5;
+  }
+
+  /* Inline text, not a button: this is a remark with a way to follow it up, and
+     anything with a border or a fill would turn the line into a pitch. */
+  .link {
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    color: var(--ink-soft);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+  }
+  .link:hover,
+  .link:focus-visible {
+    color: var(--ink);
   }
 
   .item {

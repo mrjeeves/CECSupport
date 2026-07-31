@@ -157,6 +157,16 @@ export function openAllmystuffWorks(): void {
   void tryInvoke("open_allmystuff_works");
 }
 
+/** Open the KVM page in the system browser — the "no KVM connected" line on the
+ *  KVM card. Backend-opened in the app, a plain tab in web mode. */
+export function openKvmStore(): void {
+  if (!isTauri()) {
+    window.open("https://support.cec.direct/#kvms", "_blank");
+    return;
+  }
+  void tryInvoke("open_kvm_store");
+}
+
 /** The help/asking state changed (`cec://help`). `asking: false` means the
  *  node auto-withdrew the ask (help arrived) and the waiting card must
  *  follow. `watchers` rides every beacon the node sends: how many live
