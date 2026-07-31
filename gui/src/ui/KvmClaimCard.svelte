@@ -40,22 +40,24 @@
 
 <svelte:window onclick={onDocClick} onkeydown={onKeydown} />
 
-{#if kvms.length > 0}
-  <section class="card kvm" aria-label="KVM and claiming">
-    <header class="head">
-      <h3 class="title">KVM &amp; Claiming</h3>
-      <button
-        class="refresh"
-        title="Look again for KVMs"
-        aria-label="Refresh"
-        onclick={() => store.refreshKvms()}
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" />
-        </svg>
-      </button>
-    </header>
+<!-- The card stays whether or not a KVM is present. It used to disappear
+     entirely with nothing to show, which quietly hid the feature from everyone
+     who doesn't already own one — and took the Refresh with it, so the control
+     for finding a KVM only existed once one had been found. Refresh now lives
+     in the header; the empty state below simply mentions that KVMs are a thing.
+     Gently: a sentence, no price, no button. -->
+<section class="card kvm" aria-label="KVM and claiming">
+  <header class="head">
+    <h3 class="title">KVM &amp; Claiming</h3>
+  </header>
 
+  {#if kvms.length === 0}
+    <p class="empty">
+      No KVM connected. A CEC KVM lets a technician see this computer&#39;s screen and
+      use its keyboard even when it won&#39;t start up — useful for the problems remote
+      support otherwise can&#39;t reach. Ask us if you&#39;d like one.
+    </p>
+  {:else}
     {#each kvms as k (k.node)}
       <div class="item">
         {#if !k.mine && k.claimable}
@@ -265,8 +267,8 @@
         {/if}
       </div>
     {/each}
-  </section>
-{/if}
+  {/if}
+</section>
 
 <!-- The Wi-Fi panel is a full-screen overlay, so it lives outside the card and
      renders only while a KVM's Wi-Fi is open. Conditionally mounted so its
@@ -298,27 +300,15 @@
     line-height: 1.2;
     color: var(--ink);
   }
-  .refresh {
-    flex: 0 0 auto;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.9rem;
-    height: 1.9rem;
-    padding: 0;
+
+  /* The empty state. Reads as information, not a pitch: same muted tone as the
+     card's other secondary text, no accent colour, no call-to-action styling. */
+  .empty {
+    margin: 0;
+    padding: 0.15rem 0 0.2rem;
     color: var(--ink-soft);
-    background: transparent;
-    border: 1px solid var(--line);
-    border-radius: var(--r-pill);
-    cursor: pointer;
-  }
-  .refresh:hover {
-    color: var(--ink);
-    border-color: var(--line-strong);
-  }
-  .refresh svg {
-    width: 1rem;
-    height: 1rem;
+    font-size: 0.86rem;
+    line-height: 1.5;
   }
 
   .item {
