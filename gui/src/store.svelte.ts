@@ -672,9 +672,17 @@ class CecStore {
     if (this.discoveryTimer) clearTimeout(this.discoveryTimer);
     this.discoveryTimer = undefined;
     if (this.stopped || this.demo) return;
-    const ms = this.cecKvms.length
-      ? DISCOVERY_INTERVAL_FOUND_MS
-      : DISCOVERY_INTERVAL_SEARCHING_MS;
+    // Settled cadence only while the answer is settled. A peer part-way
+    // through its misses is a KVM we're still drawing that didn't read live
+    // last pass — most often one just unplugged — and confirming that needs
+    // one more sample. At a minute apiece it would sit on the card for two
+    // minutes after the cable came out, which is the "it never goes away"
+    // complaint with extra steps. Unsure is a reason to look sooner.
+    const unsure = [...this.reachMisses.values()].some((n) => n > 0);
+    const ms =
+      this.cecKvms.length && !unsure
+        ? DISCOVERY_INTERVAL_FOUND_MS
+        : DISCOVERY_INTERVAL_SEARCHING_MS;
     this.discoveryTimer = setTimeout(() => {
       void (async () => {
         if (this.stopped) return;
