@@ -181,6 +181,13 @@ function demoScanList(): KvmWifiNetwork[] {
  *  a powered-off KVM still drops within one refresh, not after the window. */
 const REACHABLE_GRACE_MS = 45_000;
 
+/** How often the KVM & Claiming card re-reads discovery while the window is
+ *  visible. Comfortably inside {@link REACHABLE_GRACE_MS} so a KVM that is
+ *  present but momentarily unsampled is held by the grace rather than
+ *  flickering out of the card between ticks — and well under the time a person
+ *  waits before deciding the app hasn't noticed their device. */
+const KVM_DISCOVERY_POLL_MS = 5_000;
+
 /** The device's own interface classification → the Open menu's link kind.
  *
  *  A lookup rather than a chain of ternaries because it's now the one place
@@ -361,6 +368,7 @@ class CecStore {
   private unlisteners: Array<() => void> = [];
   private timer: ReturnType<typeof setInterval> | undefined;
   private chatSyncTimer: ReturnType<typeof setInterval> | undefined;
+  private kvmDiscoveryTimer: ReturnType<typeof setInterval> | undefined;
   private toastTimer: ReturnType<typeof setTimeout> | undefined;
 
   /** The connect request to prompt about (first pending), or null. */
@@ -550,9 +558,25 @@ class CecStore {
     // (see syncActiveChat); a no-op in demo (cec_chat_history returns null).
     this.chatSyncTimer = setInterval(() => this.syncActiveChat(), 4000);
 
+    // Poll KVM & Claiming discovery. A KVM's presence is not pushed to us — it
+    // is read out of a session snapshot — so without this the card shows
+    // whatever was true at the last claim, refocus or manual Refresh. A device
+    // that appeared, dropped or came back since then is simply not noticed,
+    // which reads as the app never being sure whether the KVM is there while
+    // another app watching the same mesh shows it reliably.
+    //
+    // Only while the window is visible: a hidden window can't be shown a KVM,
+    // and this is a snapshot request per tick on a machine that may be a
+    // customer's laptop. The visibility handler below refreshes on return, so
+    // nothing is missed by pausing.
+    this.kvmDiscoveryTimer = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      void this.refreshKvms();
+    }, KVM_DISCOVERY_POLL_MS);
+
     // Refresh KVM & Claiming discovery when the app returns to the foreground
-    // — a customer who plugged in a KVM while the window was hidden sees it on
-    // return, without a steady background poll (refreshKvms no-ops in demo).
+    // too — a customer who plugged in a KVM while the window was hidden sees it
+    // immediately on return rather than on the next tick (no-op in demo).
     // Re-sync the live chat then too, so a reply that arrived while the window
     // was hidden is there on return without waiting for the next poll tick.
     if (typeof document !== "undefined") {
@@ -622,6 +646,7 @@ class CecStore {
     this.unlisteners = [];
     if (this.timer) clearInterval(this.timer);
     if (this.chatSyncTimer) clearInterval(this.chatSyncTimer);
+    if (this.kvmDiscoveryTimer) clearInterval(this.kvmDiscoveryTimer);
     if (this.toastTimer) clearTimeout(this.toastTimer);
   }
 
