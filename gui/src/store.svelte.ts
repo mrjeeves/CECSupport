@@ -70,7 +70,7 @@ import type {
   Grant,
   KvmApiCallResult,
   KvmApiRsp,
-  KvmIp,
+  KvmInfo,
   KvmHelpStatus,
   KvmLink,
   KvmVersion,
@@ -1664,9 +1664,14 @@ class CecStore {
       this.linksError = "This KVM hasn't published a console yet.";
       return;
     }
-    // The scheme the device serves its own UI with — a Pro with TLS on says
-    // https, and its LAN URL has to match or the browser gets a protocol error.
-    const scheme: "http" | "https" = site.scheme === "https" ? "https" : "http";
+    // The site advert's scheme describes the TUNNEL, which is always plaintext:
+    // the sites plane serves the device's gin engine in-process and never
+    // terminates TLS. It is NOT how to reach the device directly. A Pro defaults
+    // to https, so using it for a LAN link built `http://<addr>:443` and the
+    // device answered, correctly, "Client sent an HTTP request to an HTTPS
+    // server". The device reports its own listener separately, below; this is
+    // only the fallback for firmware that predates that split.
+    const advertScheme: "http" | "https" = site.scheme === "https" ? "https" : "http";
 
     this.linksLoading = true;
     try {
@@ -1677,8 +1682,13 @@ class CecStore {
       }
       const links: KvmLink[] = [];
 
-      const { rsp, reason } = await this.kvmApi<{ ips?: KvmIp[] }>(m.localPort, "/api/vm/info");
+      const { rsp, reason } = await this.kvmApi<KvmInfo>(m.localPort, "/api/vm/info");
       if (rsp && rsp.code === 0) {
+        // How the device says to reach IT — not how to reach the tunnel.
+        const direct = rsp.data?.webScheme === "https" ? "https" : rsp.data?.webScheme === "http" ? "http" : advertScheme;
+        const directPort = typeof rsp.data?.webPort === "number" && rsp.data.webPort > 0
+          ? rsp.data.webPort
+          : site.port;
         for (const ip of rsp.data?.ips ?? []) {
           // The device classifies its own interfaces; anything else it reports
           // is a virtual/tunnel address, not a way in. "USB" is the network
@@ -1692,8 +1702,8 @@ class CecStore {
             label: KVM_LINK_LABELS[kind],
             detail: ip.addr,
             host: ip.addr,
-            port: site.port,
-            scheme,
+            port: directPort,
+            scheme: direct,
           });
         }
       } else {
@@ -1704,6 +1714,10 @@ class CecStore {
 
       // Always last, always present: the tunnel doesn't need the customer to be
       // on the same network as the KVM.
+      //
+      // http, always, even for a device whose own listener is https — this end
+      // of the tunnel is a plaintext loopback proxy. Same reason the direct
+      // links above must NOT use it.
       links.push({
         kind: "mesh",
         label: "Mesh",
