@@ -11,6 +11,8 @@
 #
 #   cec-support-service   the client's own OS service installer (Win SCM etc.)
 #   cec-support-updater   the client's own self-updater (release feed + apply)
+#   cec-support-wifi      the access points THIS computer can see, so a KVM with
+#                         no network can be pointed at one
 #
 # The updater is self-contained on purpose: CEC Support is the top of the
 # sidecar chain (it keeps `allmystuff-serve` current, which keeps `myownmesh`
@@ -23,7 +25,11 @@
 # AllMyStuff and MyOwnMesh use, so `cargo build` here stays fast and webview-free.
 [workspace]
 resolver = "2"
-members = ["crates/cec-support-service", "crates/cec-support-updater"]
+members = [
+  "crates/cec-support-service",
+  "crates/cec-support-updater",
+  "crates/cec-support-wifi",
+]
 exclude = ["gui"]
 
 [workspace.package]

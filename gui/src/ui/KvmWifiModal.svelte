@@ -15,8 +15,31 @@
   let password = $state("");
 
   const status = $derived(store.wifiStatus);
-  // Always an array so the template never has to narrow a nullable.
-  const nets = $derived(store.wifiScan ?? []);
+  // The network THIS computer is on. Nearly always the one the KVM should
+  // join, so it leads the list and pre-fills the field.
+  const hostCurrent = $derived(store.wifiHostCurrent);
+
+  // Always an array so the template never has to narrow a nullable. The
+  // computer's own network is hoisted to the top regardless of signal: it is
+  // the answer often enough that burying it three rows down under a neighbour's
+  // stronger router would be perverse.
+  const nets = $derived.by(() => {
+    const list = store.wifiScan ?? [];
+    if (!hostCurrent) return list;
+    const mine = list.filter((n) => n.ssid === hostCurrent);
+    return mine.length ? [...mine, ...list.filter((n) => n.ssid !== hostCurrent)] : list;
+  });
+
+  // Pre-fill with the computer's own network, once, and only while the field is
+  // untouched — the host scan lands a moment after the panel opens, and typing
+  // over someone mid-word would be worse than not helping at all.
+  let prefilled = $state(false);
+  $effect(() => {
+    if (!prefilled && ssid === "" && hostCurrent) {
+      ssid = hostCurrent;
+      prefilled = true;
+    }
+  });
 
   function isSecured(net: KvmWifiNetwork): boolean {
     return !!net.security && net.security.toLowerCase() !== "open";
@@ -72,15 +95,19 @@
         {/if}
       </div>
 
-      <!-- Scanned networks (NanoKVM-Pro only; hidden on a plain NanoKVM) -->
+      <!-- Networks to choose from: the KVM's own scan where it has one (a Pro),
+           otherwise this computer's — same room, same radio, and the only
+           source at all when the KVM has no uplink to scan from. -->
       {#if nets.length > 0}
         <div class="pick">
           <div class="pick-head">
-            <span class="lbl">Networks nearby</span>
+            <span class="lbl">
+              {store.wifiScanSource === "host" ? "Networks this computer can see" : "Networks nearby"}
+            </span>
             <button
               class="btn ghost small"
               disabled={store.wifiScanning || store.wifiBusy}
-              onclick={() => void store.scanKvmWifi(node)}
+              onclick={() => void store.rescanWifi(node)}
             >
               {store.wifiScanning ? "Scanning…" : "Rescan"}
             </button>
@@ -95,7 +122,12 @@
                   disabled={store.wifiBusy}
                   onclick={() => pick(net)}
                 >
-                  <span class="net-name">{net.ssid}</span>
+                  <span class="net-name">
+                    {net.ssid}
+                    {#if net.ssid === hostCurrent}
+                      <span class="mine">this computer's</span>
+                    {/if}
+                  </span>
                   <span class="net-meta">
                     {#if isSecured(net)}
                       <svg class="lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -111,6 +143,16 @@
             {/each}
           </ul>
         </div>
+      {/if}
+
+      {#if store.wifiScanSource === "host"}
+        <p class="hint">
+          The KVM can't list networks itself, so these are the ones this computer
+          can see. It's in the same room, so the KVM can almost certainly reach
+          them too.
+        </p>
+      {:else if nets.length === 0 && store.wifiHostNote}
+        <p class="hint">{store.wifiHostNote}</p>
       {/if}
 
       <!-- Enter / confirm the network -->
@@ -284,6 +326,20 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  /* "this computer's" — a quiet tag, not a badge. It's a hint about which row
+     is probably right, and it shouldn't out-shout the network's own name. */
+  .mine {
+    margin-left: 0.4rem;
+    font-size: 0.72rem;
+    letter-spacing: 0.02em;
+    color: var(--ink-soft);
+  }
+  .hint {
+    margin: 0.5rem 0 0;
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--ink-soft);
   }
   .net-meta {
     flex: 0 0 auto;

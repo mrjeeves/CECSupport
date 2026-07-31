@@ -428,6 +428,19 @@ export interface KvmWifiNetwork {
   frequency?: number;
 }
 
+/** What the CUSTOMER'S computer can see (`host_wifi_scan`).
+ *
+ *  Stands in for a scan the KVM can't do: with no uplink it can't be asked
+ *  what's nearby, and only a Pro has a scan route at all. `supported: false`
+ *  is a fact about the operating system, not a failure — `note` says which. */
+export interface HostWifi {
+  supported: boolean;
+  /** The network this computer is on. Nearly always the one the KVM wants. */
+  current: string | null;
+  networks: KvmWifiNetwork[];
+  note: string | null;
+}
+
 // ---- self-update (mirrors `cec-support-updater`) -----------------------
 
 export type InstallKind = "raw" | "package_manager";

@@ -58,6 +58,7 @@ import {
   siteMap,
   kvmApiCall,
   openKvmConsole,
+  hostWifiScan,
 } from "./tauri";
 import { FEATURE_KVM } from "./types";
 import type {
@@ -77,6 +78,7 @@ import type {
   KvmWifiNetwork,
   KvmWifiStatus,
   KvmWifiStatusRaw,
+  HostWifi,
   LiveSession,
   MachineSpecs,
   MeshPeer,
@@ -352,10 +354,23 @@ class CecStore {
   wifiFor = $state<string | null>(null);
   /** The open KVM's current Wi-Fi state, or null until the first read lands. */
   wifiStatus = $state<KvmWifiStatus | null>(null);
-  /** Nearby networks from the KVM's scan, or null when the device can't scan
-   *  (a plain NanoKVM 404s the scan route) — the picker then hides and it's
-   *  manual SSID entry only. An empty array means "can scan, found nothing". */
+  /** Nearby networks to choose from, or null when nobody could supply a list —
+   *  the picker then hides and it's manual SSID entry only. An empty array means
+   *  "we looked and found nothing". Sourced from the KVM when it can scan and
+   *  from this computer when it can't; see {@link wifiScanSource}. */
   wifiScan = $state<KvmWifiNetwork[] | null>(null);
+  /** Where {@link wifiScan} came from, so the panel can say so. The distinction
+   *  matters to whoever is reading it: the KVM's list is what the KVM can
+   *  actually reach, while this computer's is a very good proxy for it — same
+   *  room, same radio — but a proxy. */
+  wifiScanSource = $state<"kvm" | "host" | null>(null);
+  /** The network THIS computer is on, when it would tell us. Nearly always the
+   *  one the KVM should join, so the panel leads with it. */
+  wifiHostCurrent = $state<string | null>(null);
+  /** Why this computer couldn't produce a list, when it couldn't. A fact about
+   *  the operating system (macOS gates scanning behind Location access), not an
+   *  error — shown only when there's no list from either side. */
+  wifiHostNote = $state<string | null>(null);
   /** Reading the initial status when the panel opens. */
   wifiLoading = $state(false);
   /** A re-scan is in flight. */
@@ -1829,6 +1844,9 @@ class CecStore {
     this.wifiFor = node;
     this.wifiStatus = null;
     this.wifiScan = null;
+    this.wifiScanSource = null;
+    this.wifiHostCurrent = null;
+    this.wifiHostNote = null;
     this.wifiError = null;
     this.wifiPort = null;
     await this.loadKvmWifi(node);
@@ -1839,6 +1857,9 @@ class CecStore {
     this.wifiFor = null;
     this.wifiStatus = null;
     this.wifiScan = null;
+    this.wifiScanSource = null;
+    this.wifiHostCurrent = null;
+    this.wifiHostNote = null;
     this.wifiError = null;
     this.wifiPort = null;
     this.wifiLoading = false;
@@ -1872,9 +1893,14 @@ class CecStore {
         return;
       }
       this.wifiStatus = normalizeWifi(rsp.data);
-      // Scan is Pro-only and purely additive: on a plain NanoKVM the route
-      // 404s (kvmApi → null) and the picker just never shows.
+      // Scan is Pro-only: on a plain NanoKVM the route 404s (kvmApi → null).
       if (this.wifiStatus.supported) await this.scanKvmWifi(node);
+      // Whatever the KVM couldn't answer, ask this computer. It's in the same
+      // room on the same radio, so its list is a very good proxy for what the
+      // KVM can reach — and the network it's joined to is nearly always the
+      // one the KVM should be on. Runs either way, because `current` is worth
+      // having even when the device produced its own list.
+      await this.loadHostWifi();
     } finally {
       this.wifiLoading = false;
     }
@@ -1901,6 +1927,7 @@ class CecStore {
       const list = rsp?.data?.wifiList;
       if (rsp && rsp.code === 0 && Array.isArray(list)) {
         this.wifiScan = sortNetworks(list);
+        this.wifiScanSource = "kvm";
       }
       // Any other outcome (null = no scan route; code !== 0 = AP mode / busy)
       // leaves wifiScan as it was — the picker stays hidden and the form carries
@@ -1908,6 +1935,70 @@ class CecStore {
     } finally {
       this.wifiScanning = false;
     }
+  }
+
+  /** Look again, from whichever side supplied the list.
+   *
+   *  The KVM's own scan is asked for first where it exists — it's the better
+   *  answer, being what the device can actually reach. Only when that produced
+   *  nothing does this clear and re-run the host's, because `loadHostWifi`
+   *  deliberately won't overwrite a KVM list and a rescan of a host list would
+   *  otherwise be a no-op. */
+  async rescanWifi(node: string): Promise<void> {
+    if (this.wifiBusy) return;
+    if (this.wifiStatus?.supported) await this.scanKvmWifi(node);
+    if (this.wifiScanSource === "kvm") return;
+    this.wifiScan = null;
+    this.wifiScanSource = null;
+    this.wifiScanning = true;
+    try {
+      await this.loadHostWifi();
+    } finally {
+      this.wifiScanning = false;
+    }
+  }
+
+  /** Ask THIS computer what Wi-Fi it can see, and which network it's on.
+   *
+   *  The fallback for the case the panel exists to serve: a KVM with no uplink,
+   *  which is exactly the KVM that can't be asked what's nearby — and on a plain
+   *  NanoKVM there is no scan route to ask down even when it is online. The host
+   *  is in the same room on the same radio, so its list is a very good proxy.
+   *  Called a proxy, and labelled as one in the panel, because that is what it
+   *  is: signal at the laptop on the desk isn't signal at the appliance behind
+   *  the machine.
+   *
+   *  Never overwrites a list the KVM produced — its own scan is the better
+   *  answer where it exists, being what the device can actually reach. What this
+   *  always contributes is `current`, which no KVM scan can tell us and which is
+   *  the single most useful thing here.
+   *
+   *  Unprivileged: it reads no password (that needs Administrator on Windows, a
+   *  keychain prompt on macOS, root under NetworkManager), so it can never put a
+   *  consent dialog in front of a customer who only opened a Wi-Fi panel. */
+  private async loadHostWifi(): Promise<void> {
+    if (this.demo) {
+      this.wifiHostCurrent = "CEC-Guest";
+      if (!this.wifiScan) {
+        this.wifiScan = demoScanList();
+        this.wifiScanSource = "host";
+      }
+      return;
+    }
+    let host: HostWifi;
+    try {
+      host = await hostWifiScan();
+    } catch {
+      return; // best-effort; the manual field carries the flow
+    }
+    this.wifiHostCurrent = host.current;
+    if (this.wifiScan === null && host.networks.length > 0) {
+      this.wifiScan = sortNetworks(host.networks);
+      this.wifiScanSource = "host";
+    }
+    // Only worth showing when nobody produced a list at all — otherwise it's
+    // an explanation for a problem the reader doesn't have.
+    this.wifiHostNote = this.wifiScan === null ? host.note : null;
   }
 
   /** Point the KVM at a Wi-Fi network. `password` may be blank for an open
