@@ -97,6 +97,23 @@
         <span class="support-num">{store.grouped}</span>
       {/if}
     </div>
+    <div class="header-actions">
+    <!-- Look again for KVMs. Lives here rather than on the KVM card because the
+         moment you most want it is when the card is showing nothing — and a
+         control that only exists once the thing it finds has been found is no
+         use for finding it. -->
+    <button
+      class="btn ghost small header-action"
+      title="Look again for KVMs"
+      aria-label="Look again for KVMs"
+      disabled={store.kvmRefreshing}
+      onclick={() => void store.refreshKvmsVisibly()}
+    >
+      <svg class="ico" class:spin={store.kvmRefreshing} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" />
+      </svg>
+      Refresh
+    </button>
     <button
       class="btn ghost small header-action"
       aria-label={store.view === "settings" ? "Back" : "Settings"}
@@ -115,6 +132,7 @@
         Settings
       {/if}
     </button>
+    </div>
   </header>
 
   <main class="content" bind:this={contentEl}>
@@ -173,10 +191,35 @@
     flex-direction: column;
   }
 
+  .header-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.4rem;
+  }
+
+  /* The Refresh icon turns while a discovery pass runs. Held to a minimum
+     duration in the store, because feedback shorter than a blink reads as
+     nothing having happened. */
+  .spin {
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spin {
+      animation: none;
+      opacity: 0.55;
+    }
+  }
+
   .topbar {
     flex: 0 0 auto;
-    /* Three cells — brand left, Support number dead-centre, Settings right —
-       so the number stays centred regardless of the side widths. */
+    /* Three cells — brand left, Support number dead-centre, the action pair
+       right — so the number stays centred regardless of the side widths. */
     display: grid;
     grid-template-columns: 1fr auto 1fr;
     align-items: center;

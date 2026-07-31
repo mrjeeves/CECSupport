@@ -251,6 +251,18 @@ async fn open_allmystuff_works(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Open the KVM page in the system browser — the "no KVM connected" line on the
+/// KVM card. Same hardcoded-URL discipline as [`open_tiktok`] and
+/// [`open_allmystuff_works`]: the webview gets one named door, never an
+/// open-anything primitive.
+#[tauri::command]
+async fn open_kvm_store(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_shell::ShellExt as _;
+    app.shell()
+        .open("https://support.cec.direct/#kvms", None)
+        .map_err(|e| e.to_string())
+}
+
 /// Temps alone — the sensor read without the full scan, cheap enough for the
 /// spec card to poll so its one moving number actually moves.
 #[tauri::command]
@@ -1157,6 +1169,7 @@ fn run_gui() -> ExitCode {
             machine_temps,
             open_tiktok,
             open_allmystuff_works,
+            open_kvm_store,
             cec_pending,
             cec_approve,
             cec_deny,

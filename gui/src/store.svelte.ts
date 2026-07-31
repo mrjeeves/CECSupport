@@ -179,7 +179,31 @@ function demoScanList(): KvmWifiNetwork[] {
  *  the card between our on-demand refreshes. Mirrors the AllMyStuff app's
  *  `PRESENCE_GRACE_MS`; an explicit `offline`/`error` clears it immediately, so
  *  a powered-off KVM still drops within one refresh, not after the window. */
-const REACHABLE_GRACE_MS = 45_000;
+/** Consecutive discovery passes a peer may go without reading live before the
+ *  card drops it. Counted in SAMPLES, not milliseconds — one tolerates a look
+ *  that lands mid-dial; the next says it's really gone. At the searching
+ *  cadence below that's ~20 s to notice a KVM has been unplugged, and at the
+ *  settled cadence ~2 min. */
+const REACHABLE_MAX_MISSES = 1;
+
+/** Shortest time the header's Refresh stays spinning. A discovery pass is
+ *  usually near-instant, and feedback that lasts less than a blink reads as
+ *  nothing having happened — the complaint the button exists to answer. */
+const REFRESH_MIN_SPIN_MS = 550;
+
+/** How often to look for KVMs while we can't see one. Short, because this is
+ *  the wait a customer actually lives through: they plug the thing in and
+ *  watch for it to turn up. Having to press Refresh to find out is the
+ *  annoyance, and a cheap local snapshot is a fine price for not asking. */
+const DISCOVERY_INTERVAL_SEARCHING_MS = 10_000;
+
+/** …and once one is on the card. The question that needed answering has been
+ *  answered; this is only keeping it honest — a KVM unplugged, a claim landing
+ *  — so it can be far cheaper. It's also the expensive cadence: a pass with a
+ *  KVM on the card re-reads each attached device's hand-raise over the site
+ *  tunnel, whereas a searching pass has nothing to ask and stays local. */
+const DISCOVERY_INTERVAL_FOUND_MS = 60_000;
+
 
 /** The device's own interface classification → the Open menu's link kind.
  *
@@ -282,13 +306,13 @@ class CecStore {
    *  claim/attach), never on a steady poll — a claimable KVM is rare and the
    *  front door shouldn't hammer the node. */
   snapshot = $state<SessionSnapshot | null>(null);
-  /** The set of peers the node can currently *reach* (canonical ids that were
-   *  live — status active/shelved — on some network now or within the last
-   *  {@link REACHABLE_GRACE_MS}), across every network it's on. The presence
-   *  snapshot remembers a KVM's last advert even after it powers off, so this
-   *  is the liveness cross-check that lets the card drop an offline KVM. `null`
-   *  = reachability unknown (web mode, or the node couldn't be asked) → the
-   *  card fails open and doesn't filter on it. */
+  /** The set of peers the node can currently reach — canonical ids that read
+   *  live (status active/shelved) on some network within the last
+   *  {@link REACHABLE_MAX_MISSES}+1 discovery passes. The presence snapshot
+   *  remembers a KVM's last advert even after it powers off, so this is the
+   *  liveness cross-check that lets the card drop an offline KVM. `null` =
+   *  reachability unknown (web mode, or the node couldn't be asked) → the card
+   *  fails open and doesn't filter on it. */
   private reachable = $state<Set<string> | null>(null);
   /** When each peer (canonical id) was last seen live (active/shelved), in ms.
    *  Backs the reachability grace: a claimable KVM is genuinely `active` on the
@@ -297,7 +321,7 @@ class CecStore {
    *  grace holds it "reachable" across that dip so it doesn't flicker out of the
    *  card, exactly as the AllMyStuff app's presence grace does. A plain Map (not
    *  reactive): it feeds `reachable`, which is the reactive signal. */
-  private lastReachableAt = new Map<string, number>();
+  private reachMisses = new Map<string, number>();
   /** Claimed-but-unattached KVMs the customer has answered "not this computer"
    *  for, keyed by canonical node id — so the "is it attached here?" prompt
    *  doesn't keep nagging. Session-local (clears on restart). */
@@ -361,6 +385,7 @@ class CecStore {
   private unlisteners: Array<() => void> = [];
   private timer: ReturnType<typeof setInterval> | undefined;
   private chatSyncTimer: ReturnType<typeof setInterval> | undefined;
+  private discoveryTimer: ReturnType<typeof setTimeout> | undefined;
   private toastTimer: ReturnType<typeof setTimeout> | undefined;
 
   /** The connect request to prompt about (first pending), or null. */
@@ -550,15 +575,18 @@ class CecStore {
     // (see syncActiveChat); a no-op in demo (cec_chat_history returns null).
     this.chatSyncTimer = setInterval(() => this.syncActiveChat(), 4000);
 
-    // Refresh KVM & Claiming discovery when the app returns to the foreground
-    // — a customer who plugged in a KVM while the window was hidden sees it on
-    // return, without a steady background poll (refreshKvms no-ops in demo).
+    // Presence isn't pushed to this app, so discovery has to be asked for.
+    this.scheduleDiscovery();
+
+    // Look again immediately when the app returns to the foreground, rather
+    // than making someone who just brought the window up wait out a tick.
     // Re-sync the live chat then too, so a reply that arrived while the window
-    // was hidden is there on return without waiting for the next poll tick.
+    // was hidden is there on return without waiting for the next poll.
     if (typeof document !== "undefined") {
       const onVisible = () => {
         if (document.visibilityState === "visible") {
           void this.refreshKvms();
+          this.scheduleDiscovery();
           this.syncActiveChat();
         }
       };
@@ -622,7 +650,56 @@ class CecStore {
     this.unlisteners = [];
     if (this.timer) clearInterval(this.timer);
     if (this.chatSyncTimer) clearInterval(this.chatSyncTimer);
+    if (this.discoveryTimer) clearTimeout(this.discoveryTimer);
     if (this.toastTimer) clearTimeout(this.toastTimer);
+  }
+
+  /** Queue the next discovery pass, at a cadence that follows the answer:
+   *  {@link DISCOVERY_INTERVAL_SEARCHING_MS} while the card has no KVM,
+   *  {@link DISCOVERY_INTERVAL_FOUND_MS} once it does.
+   *
+   *  A self-rescheduling timeout rather than setInterval, for two reasons: the
+   *  interval has to be re-decided after every pass (the whole point), and a
+   *  fixed interval would stack passes on top of each other whenever one ran
+   *  long — which the settled cadence can, since it talks to the device.
+   *
+   *  Silent by construction: `refreshKvms`, never `refreshKvmsVisibly`. The
+   *  header control spins because a person pressed it. A spinner going off by
+   *  itself every ten seconds is exactly the flicker the button was added to
+   *  replace. Clears any pending pass first, so callers that want the clock
+   *  restarted (a manual Refresh, returning to the foreground) just call it. */
+  private scheduleDiscovery(): void {
+    if (this.discoveryTimer) clearTimeout(this.discoveryTimer);
+    this.discoveryTimer = undefined;
+    if (this.stopped || this.demo) return;
+    // Settled cadence only while the answer is settled. A peer part-way
+    // through its misses is a KVM we're still drawing that didn't read live
+    // last pass — most often one just unplugged — and confirming that needs
+    // one more sample. At a minute apiece it would sit on the card for two
+    // minutes after the cable came out, which is the "it never goes away"
+    // complaint with extra steps. Unsure is a reason to look sooner.
+    const unsure = [...this.reachMisses.values()].some((n) => n > 0);
+    const ms =
+      this.cecKvms.length && !unsure
+        ? DISCOVERY_INTERVAL_FOUND_MS
+        : DISCOVERY_INTERVAL_SEARCHING_MS;
+    this.discoveryTimer = setTimeout(() => {
+      void (async () => {
+        if (this.stopped) return;
+        // Don't stack onto a pass the Refresh button is already running.
+        if (!this.kvmRefreshing) {
+          // Swallowed: a snapshot that fails mid-poll is a transient the next
+          // pass retries. Nothing here was asked for, so nothing here gets to
+          // put an error in front of the customer.
+          try {
+            await this.refreshKvms();
+          } catch {
+            /* next tick */
+          }
+        }
+        this.scheduleDiscovery();
+      })();
+    }, ms);
   }
 
   async refresh(): Promise<void> {
@@ -1129,6 +1206,34 @@ class CecStore {
 
   /** Pull a fresh mesh snapshot (the KVM card's whole data source). On-demand
    *  only — see `snapshot`. */
+  /** True while a discovery pass is running — drives the header Refresh's
+   *  spin. Held for at least {@link REFRESH_MIN_SPIN_MS} so the control always
+   *  reads as having done something: a snapshot usually returns in a few
+   *  milliseconds, and a spinner that appears and vanishes within one frame is
+   *  indistinguishable from a button that did nothing at all. */
+  kvmRefreshing = $state(false);
+
+  /** Look again for KVMs, visibly. The button's whole job is to be believable,
+   *  so this owns the minimum-spin rather than leaving each caller to fake it;
+   *  the silent background callers use {@link refreshKvms} directly. */
+  async refreshKvmsVisibly(): Promise<void> {
+    if (this.kvmRefreshing) return;
+    this.kvmRefreshing = true;
+    const started = Date.now();
+    try {
+      await this.refreshKvms();
+    } finally {
+      const held = Date.now() - started;
+      if (held < REFRESH_MIN_SPIN_MS) {
+        await new Promise((r) => setTimeout(r, REFRESH_MIN_SPIN_MS - held));
+      }
+      this.kvmRefreshing = false;
+      // Someone just looked; restart the clock rather than letting a queued
+      // background pass land a second or two behind them.
+      this.scheduleDiscovery();
+    }
+  }
+
   async refreshKvms(): Promise<void> {
     if (this.demo) return;
     const snap = await sessionSnapshot();
@@ -1150,15 +1255,15 @@ class CecStore {
 
   /** Recompute which peers the node can reach across every network it's on —
    *  the liveness cross-check that lets the card drop an offline KVM (see
-   *  `reachable`). A peer counts as reachable if it's live (active/shelved) on
-   *  some network right now, OR was within {@link REACHABLE_GRACE_MS}: that
-   *  grace is what lets a *just-plugged-in* claimable show, because the daemon
-   *  auto-dials it on the full-mesh local-claim network and it reads `active`
-   *  only after a second or two of `sighted`/`handshaking` — a single
-   *  point-in-time check at bring-up would race that dial-up and cull it (the
-   *  fleetless-customer bug). An explicit `offline`/`error` clears the grace at
-   *  once, so a powered-off KVM still drops within one refresh rather than
-   *  lingering. Fail-open: if the node can't be asked for its networks,
+   *  `reachable`). A peer counts as reachable if it read live (active/shelved)
+   *  on some network within the last {@link REACHABLE_MAX_MISSES}+1 passes.
+   *  Tolerating one miss is what lets a *just-plugged-in* KVM show: it reads
+   *  `active` only after a second or two of `sighted`/`handshaking` while the
+   *  daemon dials it on the full-mesh local-claim network, so a single
+   *  point-in-time check races that dial-up and culls a device that is plainly
+   *  there (the fleetless-customer bug). An explicit `offline`/`error` drops it
+   *  at once, so a powered-off KVM goes without waiting out the misses.
+   *  Fail-open: if the node can't be asked for its networks,
    *  reachability is left unknown (null) and nothing is filtered on it. */
   private async refreshReachable(): Promise<void> {
     const nets = await meshNetworks();
@@ -1183,19 +1288,34 @@ class CecStore {
         }
       }
     }
-    const now = Date.now();
-    for (const canon of activeCanons) this.lastReachableAt.set(canon, now);
-    // A peer the daemon explicitly calls offline/error (and that isn't live on
-    // some other network) loses its grace immediately — no lingering.
-    for (const canon of offlineCanons) {
-      if (!activeCanons.has(canon)) this.lastReachableAt.delete(canon);
+    // Count MISSED SAMPLES, not elapsed time. Wall-clock ageing can't work when
+    // sampling is user-driven: too short and a KVM vanishes because nobody
+    // pressed Refresh; too long (or never) and a KVM that was switched off
+    // hangs around forever, because the presence snapshot keeps serving its
+    // last advert and nothing else culls it. A miss count is relative to when
+    // we actually looked, so it behaves the same whether the next look is in
+    // one second or ten minutes.
+    for (const canon of this.reachMisses.keys()) {
+      if (!activeCanons.has(canon)) {
+        this.reachMisses.set(canon, (this.reachMisses.get(canon) ?? 0) + 1);
+      }
     }
-    // Reachable = seen live within the grace. Prune expired stamps as we go so
-    // the map can't grow without bound across a long session.
+    for (const canon of activeCanons) this.reachMisses.set(canon, 0);
+    // A peer the daemon explicitly calls offline/error (and that isn't live on
+    // some other network) goes at once — no waiting out the misses.
+    for (const canon of offlineCanons) {
+      if (!activeCanons.has(canon)) this.reachMisses.delete(canon);
+    }
+    // One miss is tolerated, the second drops it. A KVM reads active only after
+    // a second or two of sighted/handshaking while the daemon dials it, so a
+    // single look can land mid-dial on a device that is plainly there — that
+    // one miss must not cull it. Two consecutive looks with no life is a
+    // different claim, and the honest one: switch a KVM off and it is gone on
+    // the second refresh rather than sitting in the card forever.
     const live = new Set<string>();
-    for (const [canon, at] of this.lastReachableAt) {
-      if (now - at < REACHABLE_GRACE_MS) live.add(canon);
-      else this.lastReachableAt.delete(canon);
+    for (const [canon, misses] of this.reachMisses) {
+      if (misses <= REACHABLE_MAX_MISSES) live.add(canon);
+      else this.reachMisses.delete(canon);
     }
     this.reachable = live;
   }
