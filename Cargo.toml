@@ -27,7 +27,7 @@ members = ["crates/cec-support-service", "crates/cec-support-updater"]
 exclude = ["gui"]
 
 [workspace.package]
-version = "0.2.30"
+version = "0.2.31"
 edition = "2021"
 rust-version = "1.88.0"
 license = "MIT"
