@@ -29,11 +29,12 @@
 <section class="start card">
   {#if store.askingHelp}
     <div class="waiting" role="status" aria-live="polite">
-      <!-- Two honest phases, keyed to the node's dispatched-to count: the
-           hand is either still going up (no beacon has reached a watcher
-           yet — spinner) or provably seen (a live watcher received it —
-           breathing dot). No decorative waiting. -->
-      {#if (store.helpWatchers ?? 0) > 0}
+      <!-- Two honest phases: the hand is either still going up (the
+           asking-room join hasn't round-tripped yet — spinner) or
+           confirmed up (this machine is present in the queue room, where
+           every watching technician reads it — breathing dot). No
+           decorative waiting. -->
+      {#if store.helpRaised}
         <span class="pulse" aria-hidden="true"></span>
         <h2>Help is on the way</h2>
         <p class="sub">

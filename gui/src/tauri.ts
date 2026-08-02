@@ -170,15 +170,19 @@ export function openKvmStore(): void {
 
 /** The help/asking state changed (`cec://help`). `asking: false` means the
  *  node auto-withdrew the ask (help arrived) and the waiting card must
- *  follow. `watchers` rides every beacon the node sends: how many live
- *  peers the broadcast actually reached — 0 is "still raising your hand",
- *  1+ is "CEC can see you". */
+ *  follow. `raised: true` means the asking-room join landed — this machine
+ *  is present in the queue room's signaling, where every watching
+ *  technician reads it ("CEC can see you"). Older nodes send per-beacon
+ *  `watchers` reach counts instead; any positive count means the same. */
 export async function onCecHelp(
-  cb: (e: { asking?: boolean; watchers?: number }) => void,
+  cb: (e: { asking?: boolean; raised?: boolean; watchers?: number }) => void,
 ): Promise<() => void> {
   if (!isTauri()) return () => {};
   const { listen } = await import("@tauri-apps/api/event");
-  return listen<{ asking?: boolean; watchers?: number }>("cec://help", (e) => cb(e.payload));
+  return listen<{ asking?: boolean; raised?: boolean; watchers?: number }>(
+    "cec://help",
+    (e) => cb(e.payload),
+  );
 }
 
 /** The technician requests currently awaiting the customer's decision. */

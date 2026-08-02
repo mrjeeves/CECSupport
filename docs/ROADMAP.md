@@ -44,8 +44,8 @@ frontend type-checker — and reviewed by inspection:
   `cec_help_list`, `cec_pending`, `cec_approve`, `cec_deny`, `cec_revoke`,
   `cec_dialed`, the app-wide `forget_node` (on every node's gear), and the
   `cec://*` events. The Svelte frontend is type-checked (`pnpm check`); the node
-  backend needs the Linux media stack **and** the MyOwnMesh hub/`Silent` API
-  below.
+  backend needs the Linux media stack **and** the MyOwnMesh `Silent` /
+  listen-only signaling API below.
 - **CEC Support client GUI (`gui/`) + `cec-support` binary** — the Tauri + Svelte
   customer app (inline support number, three-choice approve modal, connected
   banner, access list, grant-scoped autostart settings). It installs like a
@@ -98,9 +98,9 @@ the runtime acceptance tests, run on a Windows box against a live mesh:
   immediately.
 - End-to-end (fallback): technician types the customer's number → node resolves
   it to that device on the shared area → same approve/connect flow.
-- On the shared area, a customer connects only to the CEC infra hubs and forms
-  **no** connection to another customer, and no session forms until the
-  technician's deliberate `connect_peer`.
+- On the shared area, a customer holds **no** connection to anyone — the area
+  is Silent, presence-only — and no session forms until the technician's
+  deliberate `connect_peer`.
 - Windows: grant-scoped autostart (start with Windows while a grant is live) and
   the `sc.exe` service installer both keeping the machine reachable across a
   reboot mid-repair, and that a 3-hour grant expires and re-prompts.

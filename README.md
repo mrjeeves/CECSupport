@@ -26,13 +26,18 @@ is [MyOwnMesh](https://github.com/mrjeeves/MyOwnMesh). See
    rather read a number out, or for when the raised-hand queue is too crowded
    to pick them out, a technician can type the number and the node resolves it
    to this device on the area. It is **not** a mesh room.
-3. **One shared support area.** On launch the app takes up residence on the one
-   well-known MyOwnMesh network every CEC node shares
-   (`HELP_NETWORK_ID` = `cecsupport-clients`), hub-shaped via `CEC_HELP_HUBS`.
-   The customer connects only to CEC-operated infra hubs — never to other
-   customers — and sees nobody; a technician's deliberate dial (device id,
-   from the beacon) opens the one session. It connects to a technician only
-   when asked, and only after the customer approves.
+3. **One shared support area, Silent.** On launch the app takes up residence
+   on the one well-known MyOwnMesh network every CEC node shares
+   (`HELP_NETWORK_ID` = `cecsupport-clients`). The area is a **Silent** mesh:
+   the customer is merely *present* in its signaling room — connected to
+   nobody, connecting to nobody, gossiping nothing. Raising a hand joins a
+   second Silent room (`ASK_NETWORK_ID` = `cecsupport-asking`) whose
+   membership IS the technicians' queue; lowering it leaves. A technician's
+   deliberate dial (the device id, straight from the queue or resolved from a
+   read-out number) opens the one **direct WebRTC session** — CEC
+   infrastructure carries signaling and, at worst, TURN-relayed ciphertext,
+   never a routed session. It connects to a technician only when asked, and
+   only after the customer approves.
 4. **Approve or deny.** When a technician dials in, a modal appears:
    "**‹Agent Name› is trying to connect to your computer**", with the 6-digit
    verification code to check against what the technician reads out, and three

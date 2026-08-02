@@ -30,7 +30,7 @@ AllMyStuff's remote-control console**, layered on the same substrate:
 ┌───────────────┴──────────────────────────────────────────────────────┐
 │  MyOwnMesh  (the peer-to-peer substrate)                               │
 │  identity · mutual ed25519 auth · WebRTC transport · signaling ·       │
-│  + a new network type: **Silent** (no auto-connect, no gossip)         │
+│  + **Silent** networks (no auto-connect, no gossip) + listen-only join │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -39,7 +39,8 @@ engine and the technician's app; putting the CEC logic there means the
 technician side and the customer side share **one** implementation of the wire
 protocol, the consent rules, and the media planes. The customer's app is then a
 small, calm, single-purpose GUI on top. MyOwnMesh stays a general substrate —
-its only CEC-related addition is the reusable `Silent` network type.
+its CEC-related additions are two reusable signaling behaviours: the `Silent`
+network type and the `listen_only` signaling join.
 
 ## The "Silent" mesh — one shared support area
 
@@ -59,18 +60,35 @@ Support uses a new MyOwnMesh network type, **`Silent`**:
 
 On top of that, **every CEC node — customers and technicians alike — lives on
 one well-known shared area**: the constant
-`allmystuff_cec_protocol::HELP_NETWORK_ID` (`cecsupport-clients`), shaped into a
-hub topology by `CEC_HELP_HUBS`. There is no per-customer room; the hub shape is
-what makes one shared area safe:
+`allmystuff_cec_protocol::HELP_NETWORK_ID` (`cecsupport-clients`). There is no
+per-customer room, and no connection topology to shape — because on a Silent
+area there are **no connections to shape**. MyOwnMesh is a mesh *signaling*
+system for direct WebRTC peer-to-peer connections, and the area uses exactly
+that half:
 
-- Customers connect **only to CEC-operated infra hubs**, never to each other. On
-  the area a customer dials nobody and sees nobody — the Silent rules above mean
-  no auto-connect, no gossip, no roster — so there is no N² connection fan-out.
-- A technician on the area reaches a customer by **deliberately dialing that one
-  device**: they answer a raised hand (a `SupportPresence` beacon) by
-  `connect_peer`-ing that customer's device, or — as a fallback when the
-  raised-hand queue is too crowded to pick someone out — type the number and let
-  the node resolve those digits to a device on the area.
+- On the area a customer **dials nobody and is dialed by nobody**: the Silent
+  rules above mean no auto-connect, no gossip, no roster. Residents are merely
+  present in the signaling room — that presence is what lets a technician's
+  pinned redial find a rebooted customer, and a phoned-in number resolve to a
+  device. There is no N² fan-out because there are no connections at all until
+  a technician deliberately opens one.
+- **Raising a hand is joining a second Silent room**,
+  `allmystuff_cec_protocol::ASK_NETWORK_ID` (`cecsupport-asking`): membership
+  is the entire "I need help" signal, and lowering the hand is leaving.
+  Watching technicians read that room's presence as the queue — with a
+  **listen-only** signaling join (`SignalingConfig::listen_only`), so a
+  watcher never appears as a raised hand itself, and waiting customers can't
+  tell who is watching. (The previous design carried the hand as a
+  `SupportPresence` beacon over data channels — which needed the very
+  connections Silent forbids, the deadlock that briefly forced the area
+  `open` and auto-connected every customer to every co-present stranger.)
+- A technician reaches a customer by **deliberately dialing that one
+  device** (`connect_peer`, pinned): they answer a queue entry, or — when the
+  queue is too crowded to pick someone out — type the read-out number and let
+  the node resolve those digits against the area's member list. The session is
+  a **direct WebRTC link**; CEC infrastructure carries signaling and, when NAT
+  forces it, TURN-relayed ciphertext — never a routed or inspected session
+  (see `infra/README.md` for the hub boxes themselves).
 - The number (`support_id_from_device`, 9 digits like `123 456 789`) is a
   **display / verification label and a dial fallback — not a network id, room
   key, or rendezvous secret**. It is derived deterministically from the device's
@@ -81,10 +99,10 @@ what makes one shared area safe:
 
 1. **Discovery gate — being a technician who dials you.** Reaching a customer at
    all means being a technician on the shared support area and **deliberately
-   dialing that one device**. Customers are non-connectable to one another; the
-   area is hub-mediated and Silent — no auto-connect, no gossip, no roster — so
-   nothing reaches a customer until a technician picks their device (from a
-   raised hand, or the number as a fallback) and dials it.
+   dialing that one device**. The area is Silent — no auto-connect, no gossip,
+   no roster, connections exist only when someone opens one — so nothing
+   reaches a customer until a technician picks their device (from the asking
+   room's queue, or the number as a fallback) and dials it.
 2. **Access gate — the approval.** Discovery is not access. Even once a
    technician has dialed in, nothing happens until the customer **approves** them
    (below). Screen and control frames are authorised per-frame against the
@@ -102,9 +120,12 @@ Customer (CEC Support app)                 Technician (AllMyStuff + CEC tab)
 ──────────────────────────                 ────────────────────────────────
 launch → identity → number N
 join shared support area (cecsupport-clients)
-Ask for help → raise hand (SupportPresence), wait
+Ask for help → join asking room
+ (cecsupport-asking) — membership IS
+ the raised hand; wait
                                            already on the shared support area
-                                           sees the raised hand in the queue
+                                           watching the asking room (listen-only)
+                                           sees the hand in the queue
                                            answers it (or types N as a fallback)
                                            connect_peer(customer)         ─┐
    ◀───────────── inbound offer + connect-request (agent_name) ───────────┘
@@ -168,9 +189,10 @@ Support does **not** fork `MYOWNMESH_HOME`, the signaling app-id, or the
 machine identity — one daemon, one node, one device id, whichever app brought
 it up. Either app runs solo (it spawns the stack itself) or side by side (it
 reuses the running one); neither requires the other's GUI. Per-session privacy
-comes from the shared area being Silent and hub-mediated (customers reach only
-CEC infra hubs, never each other) plus the customer's per-frame consent — not
-from siloing the apps.
+comes from the shared area being Silent (nobody connects to anybody until a
+technician deliberately dials, and the apps' own graph presence never crosses
+the CEC rooms except between deliberate CEC peers) plus the customer's
+per-frame consent — not from siloing the apps.
 
 `CEC_SUPPORT_HOME` holds only CEC's **own app files** (service state, logs);
 the mesh stack's home stays the shared `~/.myownmesh`.
@@ -197,7 +219,8 @@ CEC's own app files (service state, logs) live under `CEC_SUPPORT_HOME`
 |---|---|---|
 | `allmystuff-cec-protocol` — wire contract, Support ID, shared support area | AllMyStuff | ✅ implemented + tested |
 | `allmystuff-cec-consent` — Once/3h/Forever store | AllMyStuff | ✅ implemented + tested |
-| `NetworkKind::Silent` + `connect_peer` | MyOwnMesh | ✅ shipped (the one substrate addition) |
+| `NetworkKind::Silent` + `connect_peer` | MyOwnMesh | ✅ shipped |
+| `SignalingConfig::listen_only` — the watcher's lurk join | MyOwnMesh | ✅ shipped |
 | node "CEC mode" + technician secret tab (dialed customers are ordinary graph peers) | AllMyStuff | ✅ shipped |
 | app-wide "Forget this node" on every node's gear | AllMyStuff | ✅ shipped |
 | `cec-support-service` — the client's own service installer | CECSupport | ✅ implemented + tested |
