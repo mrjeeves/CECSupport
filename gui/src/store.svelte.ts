@@ -273,10 +273,13 @@ class CecStore {
    *  room — drives the start screen's waiting card. Synced from `cec_status`
    *  and cleared live by the `cec://help` event when help arrives. */
   askingHelp = $state(false);
-  /** How many watchers the latest help beacon actually reached (from the
-   *  node's dispatched-to count). null = no beacon reported yet this ask.
-   *  0 = hand going up but nobody wired yet; 1+ = CEC can see the hand. */
-  helpWatchers = $state<number | null>(null);
+  /** Whether the raised hand is confirmed up. A hand is asking-room
+   *  membership now: the node reports `raised: true` once the join has
+   *  round-tripped through the daemon — from that moment this device is
+   *  present in the queue room's signaling and every watching technician
+   *  can see it. (An older node reports beacon `watchers` counts instead;
+   *  any positive count means the same thing.) */
+  helpRaised = $state(false);
   /** This machine's headline hardware for the spec card (null until the node
    *  answers — the card hides). Fetched once the node is up; a fresh scan
    *  each launch is plenty for a spec sheet. */
@@ -548,9 +551,12 @@ class CecStore {
         // owns the flag then, so a stale bring-up beacon can't flick the
         // optimistic card off.
         if (e.asking === false && !this.busy) this.askingHelp = false;
-        // Every beacon reports how many watchers it reached — the waiting
-        // card's "raising your hand…" vs "CEC can see you" signal.
-        if (typeof e.watchers === "number") this.helpWatchers = e.watchers;
+        // The waiting card's "raising your hand…" vs "CEC can see you"
+        // signal. A new node says `raised: true` when the asking-room join
+        // lands (membership IS the hand); an older node reports per-beacon
+        // watcher counts — any positive count means the same thing.
+        if (e.raised === true) this.helpRaised = true;
+        if (typeof e.watchers === "number" && e.watchers > 0) this.helpRaised = true;
       }),
     );
 
@@ -901,15 +907,15 @@ class CecStore {
    *  technician connects or the customer cancels. The node ensures area
    *  residence as part of the ask, so a tap on a fresh launch still just works. */
   async askHelp(): Promise<void> {
-    // A fresh ask starts with an unknown reach — the card shows "raising
-    // your hand…" until the first beacon reports who it reached.
-    this.helpWatchers = null;
+    // A fresh ask starts unconfirmed — the card shows "raising your
+    // hand…" until the node reports the asking-room join landed.
+    this.helpRaised = false;
     if (this.demo) {
       this.askingHelp = true;
       // Act out the real sequence: a couple of seconds of hand-raising,
-      // then a watcher hears it.
+      // then the hand is confirmed up.
       setTimeout(() => {
-        if (this.askingHelp) this.helpWatchers = 1;
+        if (this.askingHelp) this.helpRaised = true;
       }, 2500);
       return;
     }

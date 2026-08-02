@@ -1,0 +1,29 @@
+# CEC support-infrastructure daemon: the MyOwnMesh binary running as pure
+# plumbing (signaling relay + TURN, no mesh membership — services are
+# configured in /var/lib/cec-signaling/.myownmesh/config.json; see
+# ../README.md). Install:
+#   sudo cp cec-signaling.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now cec-signaling
+[Unit]
+Description=CEC Support signaling relay + TURN (myownmesh services)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# A dedicated system user keeps the identity/config out of any human home.
+User=cec-signaling
+Group=cec-signaling
+Environment=MYOWNMESH_HOME=/var/lib/cec-signaling/.myownmesh
+ExecStart=/usr/local/bin/myownmesh serve
+Restart=always
+RestartSec=2
+# Hardening: this process needs sockets and its state dir, nothing else.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/cec-signaling
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
