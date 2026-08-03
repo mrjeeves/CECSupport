@@ -113,13 +113,29 @@ restart *ARGS: kill
     @just dev {{ARGS}}
 
 # Discard local changes, pull the latest, and fetch every remote branch — a
-# pristine tree so `just dev` starts clean each time. git commands are identical
-# on bash and PowerShell, so no [windows] variant is needed.
-[doc("Discard local changes + git pull + fetch all branches — a clean slate.")]
+# pristine tree so `just dev` starts clean each time. If the current branch no
+# longer exists on origin, fall back to the remote's default branch before
+# pulling. This matches the AllMyStuff checkout contract.
+[unix]
+[doc("Discard local changes + pull + fetch all; falls back to the default branch when yours is gone on origin.")]
 pull:
-    @git reset --hard HEAD
-    @git pull
-    @git fetch --all --prune
+    #!/usr/bin/env bash
+    set -euo pipefail
+    git reset --hard HEAD
+    git fetch --all --prune
+    branch=$(git rev-parse --abbrev-ref HEAD)
+    if ! git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+        default=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD | sed 's|^origin/||' || true)
+        default=${default:-main}
+        echo "→ origin no longer has '$branch' (merged & deleted?) — switching to '$default'"
+        git checkout "$default"
+    fi
+    git pull
+
+[windows]
+[doc("Discard local changes + pull + fetch all; falls back to the default branch when yours is gone on origin.")]
+pull:
+    @$branch = git rev-parse --abbrev-ref HEAD; git reset --hard HEAD; git fetch --all --prune; git show-ref --verify --quiet "refs/remotes/origin/$branch"; if ($LASTEXITCODE -ne 0) { $default = git symbolic-ref --quiet --short refs/remotes/origin/HEAD; if ($default) { $default = $default -replace '^origin/','' } else { $default = 'main' }; Write-Host "origin no longer has '$branch' (merged & deleted?) - switching to '$default'"; git checkout $default }; git pull
 
 # `git checkout` with a clean slate first: `pull` runs ahead of it, so the tree
 # is pristine and whatever branch you name is already fetched. Args pass straight
