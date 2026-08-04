@@ -1,0 +1,12 @@
+{
+  "bundle": {
+    "resources": [
+      "resources/vc_redist.x64.exe"
+    ],
+    "windows": {
+      "nsis": {
+        "installerHooks": "installer-hooks.nsh"
+      }
+    }
+  }
+}
