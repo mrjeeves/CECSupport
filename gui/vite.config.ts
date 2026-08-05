@@ -2,8 +2,8 @@ import { defineConfig } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 
 // Tauri expects a fixed dev port and leaves the build output in `dist/`.
-// Mirrors the AllMyStuff / MyOwnMesh GUI setup so `pnpm tauri dev|build`
-// works the same way across the product family.
+// CEC Support owns 1432/1433 so its dev shell can run beside AllMyStuff's
+// 1430/1431 pair on the same machine.
 const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig({
@@ -16,10 +16,10 @@ export default defineConfig({
     conditions: ["browser", "module", "import", "default"],
   },
   server: {
-    port: 1430,
+    port: 1432,
     strictPort: true,
     host: host || false,
-    hmr: host ? { protocol: "ws", host, port: 1431 } : undefined,
+    hmr: host ? { protocol: "ws", host, port: 1433 } : undefined,
     watch: { ignored: ["**/src-tauri/**"] },
   },
   build: {
