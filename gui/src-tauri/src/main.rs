@@ -486,6 +486,108 @@ async fn session_snapshot(state: State<'_, AppState>) -> Result<Value, String> {
         .map_err(|e| e.to_string())
 }
 
+/// This machine's current capabilities, including each mounted storage
+/// volume and the synthetic mapped-drive sink.
+#[tauri::command]
+async fn drive_scan(state: State<'_, AppState>) -> Result<Value, String> {
+    state
+        .node
+        .request("scan_self", json!({}))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn drive_map(state: State<'_, AppState>, from: String, to: String) -> Result<String, String> {
+    let value = state
+        .node
+        .request(
+            "connect_route",
+            json!({ "from": from, "to": to, "media": "storage", "video": [], "session": null }),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    serde_json::from_value(value).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn drive_unmap(state: State<'_, AppState>, route_id: String) -> Result<(), String> {
+    state
+        .node
+        .request("disconnect_route", json!({ "route_id": route_id }))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn file_send(
+    state: State<'_, AppState>,
+    route_id: String,
+    event: Value,
+) -> Result<(), String> {
+    state
+        .node
+        .request("file_send", json!({ "route_id": route_id, "event": event }))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn file_watch(app: tauri::AppHandle, route_id: String) -> u64 {
+    let state = app.state::<AppState>();
+    state
+        .node
+        .request("file_watch", json!({ "route_id": route_id }))
+        .await
+        .ok()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+async fn file_poll(app: tauri::AppHandle, route_id: String) -> tauri::ipc::Response {
+    let state = app.state::<AppState>();
+    tauri::ipc::Response::new(
+        state
+            .node
+            .request_bytes("file_poll", json!({ "route_id": route_id }))
+            .await
+            .unwrap_or_default(),
+    )
+}
+
+#[tauri::command]
+async fn file_unwatch(app: tauri::AppHandle, route_id: String, token: u64) {
+    let state = app.state::<AppState>();
+    let _ = state
+        .node
+        .request(
+            "file_unwatch",
+            json!({ "route_id": route_id, "token": token }),
+        )
+        .await;
+}
+
+#[tauri::command]
+async fn file_download(
+    state: State<'_, AppState>,
+    route_id: String,
+    req: u64,
+    name: String,
+) -> Result<String, String> {
+    let value = state
+        .node
+        .request(
+            "file_download",
+            json!({ "route_id": route_id, "req": req, "name": name }),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    serde_json::from_value(value).map_err(|e| e.to_string())
+}
+
 /// Adopt a claimable device (a CEC KVM) — records this node as its owner. The
 /// device confirms by re-advertising its new owner in presence, which the next
 /// snapshot reflects. `node` is the KVM's mesh id.
@@ -1373,6 +1475,14 @@ fn run_gui() -> ExitCode {
             cec_chat_send,
             cec_chat_history,
             session_snapshot,
+            drive_scan,
+            drive_map,
+            drive_unmap,
+            file_send,
+            file_watch,
+            file_poll,
+            file_unwatch,
+            file_download,
             claim_node,
             kvm_attach,
             host_wifi_scan,

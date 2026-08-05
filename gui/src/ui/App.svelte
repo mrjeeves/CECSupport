@@ -3,6 +3,7 @@
   import { store } from "../store.svelte";
   import { isTauri } from "../tauri";
   import SpecSheet from "./SpecSheet.svelte";
+  import DrivesCard from "./DrivesCard.svelte";
   import StartScreen from "./StartScreen.svelte";
   import ApproveModal from "./ApproveModal.svelte";
   import ContactCard from "./ContactCard.svelte";
@@ -157,6 +158,7 @@
         <div class="col">
           <StartScreen />
           <AccessList />
+          <DrivesCard />
           {#if !store.engaged}
             <KvmClaimCard />
           {/if}

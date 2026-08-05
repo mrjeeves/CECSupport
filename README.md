@@ -118,6 +118,11 @@ implements them on the AllMyStuff node):
 | `cec_grants` | `{}` | active grants |
 | `cec_forget_node` | `{ node }` | — |
 | `cec_set_label` | `{ label }` | — (friendly-name helper, beyond the core dial/approve contract) |
+| `scan_self` | `{}` | local capability inventory used to discover attached drives |
+| `connect_route` | `{ from, to, media: "storage", video: [], session: null }` | map a local drive to a peer's app-native drive browser |
+| `disconnect_route` | `{ route_id }` | unmap a drive route |
+| `file_send` | `{ route_id, event }` | browse and transfer files over an active mapped-drive route |
+| `file_watch` / `file_poll` / `file_unwatch` | `{ route_id, ... }` | receive mapped-drive listings and file data |
 
 Events re-emitted onto the Tauri bus for the UI:
 `cec://request { tech, agent_name, want_control, session_id, verification_code }`

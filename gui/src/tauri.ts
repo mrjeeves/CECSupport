@@ -46,6 +46,8 @@ import type {
   UpdatePrefs,
   KvmApiCallResult,
   HostWifi,
+  DriveScan,
+  FileEvent,
 } from "./types";
 
 /** True when running inside the Tauri webview (vs a plain browser tab). */
@@ -286,6 +288,77 @@ export async function cecChatHistory(
  *  card's discovery of claimable CEC KVMs. Null in web mode / on error. */
 export function sessionSnapshot(): Promise<SessionSnapshot | null> {
   return tryInvoke<SessionSnapshot>("session_snapshot");
+}
+
+export function driveScan(): Promise<DriveScan | null> {
+  return tryInvoke<DriveScan>("drive_scan");
+}
+
+export async function driveMap(from: string, to: string): Promise<string | null> {
+  return tryInvoke<string>("drive_map", { from, to });
+}
+
+export function driveUnmap(routeId: string): Promise<void> {
+  return mustInvoke("drive_unmap", { routeId });
+}
+
+export function fileSend(routeId: string, event: FileEvent): Promise<void> {
+  return mustInvoke("file_send", { routeId, event });
+}
+
+export async function watchFiles(
+  routeId: string,
+  cb: (event: FileEvent) => void,
+): Promise<() => void> {
+  if (!isTauri()) return () => {};
+  const { invoke } = await import("@tauri-apps/api/core");
+  const { listen } = await import("@tauri-apps/api/event");
+  const token = (await invoke("file_watch", { routeId })) as number;
+  const decoder = new TextDecoder();
+  let stopped = false;
+  let inFlight = false;
+  const tick = async () => {
+    if (stopped || inFlight) return;
+    inFlight = true;
+    try {
+      const batch = (await invoke("file_poll", { routeId })) as ArrayBuffer;
+      if (stopped || !(batch instanceof ArrayBuffer)) return;
+      const view = new DataView(batch);
+      let offset = 0;
+      while (offset + 4 <= batch.byteLength) {
+        const len = view.getUint32(offset, true);
+        offset += 4;
+        if (len === 0 || offset + len > batch.byteLength) break;
+        try {
+          cb(JSON.parse(decoder.decode(new Uint8Array(batch, offset, len))) as FileEvent);
+        } catch {
+          // A bad frame is isolated; the rest of the route stays usable.
+        }
+        offset += len;
+      }
+    } catch {
+      // The route may be reconnecting or may just have been unmapped. A later
+      // tick drains anything that survived without leaking rejected promises.
+    } finally {
+      inFlight = false;
+    }
+  };
+  const unlisten = await listen<string>("allmystuff://file-ready", (e) => {
+    if (e.payload === routeId) void tick();
+  });
+  const timer = setInterval(() => void tick(), 100);
+  void tick();
+  return () => {
+    stopped = true;
+    clearInterval(timer);
+    unlisten();
+    void invoke("file_unwatch", { routeId, token }).catch(() => {});
+  };
+}
+
+export async function fileDownload(routeId: string, req: number, name: string): Promise<string> {
+  if (!isTauri()) throw new Error("Downloads need the desktop app");
+  return rawInvoke<string>("file_download", { routeId, req, name });
 }
 
 /** Adopt a claimable device (a CEC KVM). Errors surface — a claim is an
