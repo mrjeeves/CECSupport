@@ -112,7 +112,107 @@ fn main() {
         }
     }
 
+    bundle_vc_redist(require);
+
     tauri_build::build();
+}
+
+/// Where the bundled Visual C++ redistributable is staged for `bundle.resources`.
+fn vc_redist_path() -> PathBuf {
+    PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
+        .join("resources")
+        .join(VC_REDIST_FILE)
+}
+
+/// The Microsoft Visual C++ 2015–2022 redistributable (x64). Its DLLs
+/// (`vcruntime140.dll`, `msvcp140.dll`) are what an MSVC-built Rust binary and
+/// the media sidecar link against.
+const VC_REDIST_FILE: &str = "vc_redist.x64.exe";
+/// Microsoft's permanent "latest supported" link. Deliberately not version-pinned:
+/// the redistributable is explicitly backward-compatible within the 14.x series,
+/// and pinning would ship an ageing runtime to customers for no benefit.
+const VC_REDIST_URL: &str = "https://aka.ms/vs/17/release/vc_redist.x64.exe";
+
+/// Stage the VC++ redistributable so the installer can run it for the customer.
+///
+/// Why this ships at all: a Rust MSVC build and the `allmystuff-serve` media
+/// sidecar both link the dynamic VC runtime. A Windows install that has never
+/// had it — a fresh machine, a reimaged one, the exact machines a repair tool
+/// gets pointed at — starts the app and gets "vcruntime140.dll was not found",
+/// which is an unrecoverable dead end for a customer who was reaching for
+/// support in the first place. Handing them a Microsoft download link to go and
+/// find is precisely the thing this app exists to avoid.
+///
+/// Best-effort, exactly like the sidecars: a release build (`CEC_REQUIRE_SIDECARS=1`)
+/// fails loudly rather than shipping an installer that can't bootstrap its own
+/// runtime, and a dev/offline build just warns and carries on — a developer's
+/// machine already has the runtime, or they'd have no toolchain to build with.
+fn bundle_vc_redist(require: bool) {
+    println!("cargo:rerun-if-env-changed=CEC_SKIP_VC_REDIST");
+    // Only Windows installers carry it, and only the NSIS/MSI bundle runs it.
+    if !target_triple().contains("windows") {
+        return;
+    }
+    if env::var_os("CEC_SKIP_VC_REDIST").is_some() || env::var_os("CEC_SKIP_SIDECAR").is_some() {
+        return;
+    }
+    let dest = vc_redist_path();
+    if dest.exists() && fs::metadata(&dest).map(|m| m.len()).unwrap_or(0) > 0 {
+        return; // already staged
+    }
+    if let Some(dir) = dest.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    match download_vc_redist(&dest) {
+        Ok(()) => println!("cargo:warning=bundled {VC_REDIST_FILE} for the installer"),
+        Err(e) => {
+            if require {
+                panic!(
+                    "the Visual C++ redistributable is required for a release build but could \
+                     not be fetched: {e}. Without it a fresh Windows machine cannot start the \
+                     app at all (missing vcruntime140.dll)."
+                );
+            }
+            println!(
+                "cargo:warning={VC_REDIST_FILE} not bundled: {e} — dev builds are fine \
+                 (your machine has the runtime); a release build will fail loudly instead"
+            );
+            // Stamp an empty placeholder so `bundle.resources` still resolves in
+            // a dev build; the installer hook skips a zero-byte file.
+            let _ = fs::write(&dest, b"");
+        }
+    }
+}
+
+fn download_vc_redist(dest: &Path) -> Result<(), String> {
+    let status = Command::new("curl")
+        .args([
+            "-fsSL",
+            "--retry",
+            "3",
+            "--retry-delay",
+            "2",
+            "-o",
+            &dest.to_string_lossy(),
+            VC_REDIST_URL,
+        ])
+        .status()
+        .map_err(|e| format!("curl spawn failed: {e}"))?;
+    if !status.success() {
+        let _ = fs::remove_file(dest);
+        return Err(format!("curl failed fetching {VC_REDIST_URL}"));
+    }
+    // A redirect page or an error body would "succeed" and then fail to run at
+    // install time on a customer's machine, where nobody can debug it. The real
+    // redistributable is tens of megabytes; anything tiny is not it.
+    let size = fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
+    if size < 1_000_000 {
+        let _ = fs::remove_file(dest);
+        return Err(format!(
+            "downloaded {VC_REDIST_FILE} is only {size} bytes — not the real redistributable"
+        ));
+    }
+    Ok(())
 }
 
 fn target_triple() -> String {
@@ -340,7 +440,11 @@ fn sibling_binary(sc: &Sidecar) -> Option<PathBuf> {
     let name = format!("{}{}", sc.base, exe_suffix());
     let triple = target_triple();
     let profile = env::var("PROFILE").unwrap_or_else(|_| "debug".into());
-    let other = if profile == "release" { "debug" } else { "release" };
+    let other = if profile == "release" {
+        "debug"
+    } else {
+        "release"
+    };
     let candidates = [
         target.join(&triple).join(&profile).join(&name),
         target.join(&profile).join(&name),
@@ -478,15 +582,13 @@ fn release_platform_name(triple: &str) -> Result<&'static str, String> {
 /// Run a staging subprocess with a hard deadline, killing it on overrun.
 /// Everything build.rs shells out to must be bounded — an unbounded child
 /// hangs the whole build at the final crate with no output.
-fn run_bounded(
-    cmd: &mut Command,
-    what: &str,
-    secs: u64,
-) -> Result<std::process::Output, String> {
+fn run_bounded(cmd: &mut Command, what: &str, secs: u64) -> Result<std::process::Output, String> {
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| format!("{what} spawn failed: {e}"))?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("{what} spawn failed: {e}"))?;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
     loop {
         match child.try_wait() {
@@ -565,7 +667,10 @@ fn download_release_asset(sc: &Sidecar, tag: &str, staging: &Path) -> Result<Pat
 
     // Say so before going to the network: this step is why a build can sit on
     // the final crate for a while, and without the line it reads as a hang.
-    println!("cargo:warning=[{}] downloading {asset} from {} {tag}…", sc.base, sc.repo);
+    println!(
+        "cargo:warning=[{}] downloading {asset} from {} {tag}…",
+        sc.base, sc.repo
+    );
     // Bounded fetch: a stalled connection must fail the step, not wedge the
     // whole build indefinitely (--retry would otherwise multiply the wait).
     // On timeout/failure a dev build falls back to the stub path and keeps
@@ -618,7 +723,11 @@ fn download_release_asset(sc: &Sidecar, tag: &str, staging: &Path) -> Result<Pat
         }
     } else {
         let out = run_bounded(
-            Command::new("tar").arg("-xzf").arg(&archive).arg("-C").arg(staging),
+            Command::new("tar")
+                .arg("-xzf")
+                .arg(&archive)
+                .arg("-C")
+                .arg(staging),
             "tar",
             60,
         )?;
