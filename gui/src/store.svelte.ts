@@ -128,6 +128,8 @@ interface KvmApiOutcome<T> {
   rsp: KvmApiRsp<T> | null;
   timedOut: boolean;
   reason: string | null;
+  /** The tunnel port that carried the request, including a repaired mapping. */
+  localPort: number;
 }
 
 /** Fold a KVM's `GET /api/network/wifi` body — either model shape — into the
@@ -1438,7 +1440,7 @@ class CecStore {
         this.notify("This KVM hasn't published a console yet, so it can't be updated.");
         return;
       }
-      const { rsp, reason } = await this.kvmApi<KvmVersion>(port, "/api/application/version");
+      const { rsp, reason, localPort } = await this.kvmApi<KvmVersion>(port, "/api/application/version");
       if (!rsp) {
         this.notify(`Couldn't check this KVM's firmware: ${reason}`);
         return;
@@ -1453,9 +1455,9 @@ class CecStore {
       // that it's behind — so don't claim an update exists. The reboot still
       // happens, which is the half of this button that never needs the network.
       if (latest && latest !== current) {
-        await this.applyKvmUpdate(port, latest);
+        await this.applyKvmUpdate(localPort, latest);
       } else {
-        await this.rebootKvmDevice(port, current);
+        await this.rebootKvmDevice(localPort, current);
       }
     } finally {
       this.busy = false;
@@ -1703,7 +1705,7 @@ class CecStore {
       }
       const links: KvmLink[] = [];
 
-      const { rsp, reason } = await this.kvmApi<KvmInfo>(m.localPort, "/api/vm/info");
+      const { rsp, reason, localPort } = await this.kvmApi<KvmInfo>(m.localPort, "/api/vm/info");
       if (rsp && rsp.code === 0) {
         // How the device says to reach IT — not how to reach the tunnel.
         const direct = rsp.data?.webScheme === "https" ? "https" : rsp.data?.webScheme === "http" ? "http" : advertScheme;
@@ -1744,7 +1746,7 @@ class CecStore {
         label: "Mesh",
         detail: "Through this app",
         host: "127.0.0.1",
-        port: m.localPort,
+        port: localPort,
         scheme: "http",
       });
       this.kvmLinks = links;
@@ -1818,7 +1820,7 @@ class CecStore {
     try {
       out = await kvmApiCall(port, path, init);
     } catch (e) {
-      return { rsp: null, timedOut: false, reason: errMsg(e) };
+      return { rsp: null, timedOut: false, reason: errMsg(e), localPort: port };
     }
 
     // No reply at all. A timeout is flagged separately: a caller writing Wi-Fi
@@ -1828,12 +1830,18 @@ class CecStore {
         rsp: null,
         timedOut: out.error.kind === "timeout",
         reason: capitalise(out.error.message),
+        localPort: out.localPort,
       };
     }
 
     const body = out.body as { code?: unknown; msg?: unknown } | null;
     const hasEnvelope = !!body && typeof body === "object" && typeof body.code === "number";
-    const fail = (reason: string): KvmApiOutcome<T> => ({ rsp: null, timedOut: false, reason });
+    const fail = (reason: string): KvmApiOutcome<T> => ({
+      rsp: null,
+      timedOut: false,
+      reason,
+      localPort: out.localPort,
+    });
 
     if (out.status === 401 || out.status === 403) {
       // Shouldn't happen over the mesh — roster membership stands in for the
@@ -1851,7 +1859,7 @@ class CecStore {
     if (!hasEnvelope) {
       return fail("The KVM sent a reply the app didn't understand.");
     }
-    return { rsp: body as KvmApiRsp<T>, timedOut: false, reason: null };
+    return { rsp: body as KvmApiRsp<T>, timedOut: false, reason: null, localPort: out.localPort };
   }
 
   /** The device's own message for a non-zero envelope, or a fallback. */
@@ -1902,7 +1910,8 @@ class CecStore {
         return;
       }
       this.wifiPort = port;
-      const { rsp, reason } = await this.kvmApi<KvmWifiStatusRaw>(port, "/api/network/wifi");
+      const { rsp, reason, localPort } = await this.kvmApi<KvmWifiStatusRaw>(port, "/api/network/wifi");
+      this.wifiPort = localPort;
       if (!rsp || rsp.code !== 0 || !rsp.data) {
         // Drop the cached tunnel so a retry re-maps a fresh one — the mapping
         // may have gone stale (the read is the first call on it each open).
@@ -1939,11 +1948,12 @@ class CecStore {
     this.wifiPort = port;
     this.wifiScanning = true;
     try {
-      const { rsp } = await this.kvmApi<{ wifiList?: KvmWifiNetwork[] }>(
+      const { rsp, localPort } = await this.kvmApi<{ wifiList?: KvmWifiNetwork[] }>(
         port,
         "/api/network/wifi/scan",
         { timeoutMs: 20000 },
       );
+      this.wifiPort = localPort;
       const list = rsp?.data?.wifiList;
       if (rsp && rsp.code === 0 && Array.isArray(list)) {
         this.wifiScan = sortNetworks(list);
@@ -2046,11 +2056,12 @@ class CecStore {
     this.wifiPort = port;
     this.wifiBusy = true;
     try {
-      const { rsp, timedOut, reason } = await this.kvmApi(port, "/api/network/wifi/connect", {
+      const { rsp, timedOut, reason, localPort } = await this.kvmApi(port, "/api/network/wifi/connect", {
         method: "POST",
         body: { ssid: name, password },
         timeoutMs: 40000,
       });
+      this.wifiPort = localPort;
       if (rsp && rsp.code === 0) {
         this.notify(`Connected the KVM to ${name}.`);
         await this.loadKvmWifi(node);
@@ -2108,10 +2119,11 @@ class CecStore {
     this.wifiPort = port;
     this.wifiBusy = true;
     try {
-      const { rsp, timedOut, reason } = await this.kvmApi(port, "/api/network/wifi/disconnect", {
+      const { rsp, timedOut, reason, localPort } = await this.kvmApi(port, "/api/network/wifi/disconnect", {
         method: "POST",
         timeoutMs: 20000,
       });
+      this.wifiPort = localPort;
       if (rsp && rsp.code === 0) {
         this.notify("Disconnected the KVM's Wi-Fi.");
         await this.loadKvmWifi(node);
