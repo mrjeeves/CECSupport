@@ -56,8 +56,9 @@
   {:else}
     <h2>How can we help?</h2>
     <div class="choices">
-      <button class="btn primary big" disabled={store.busy} onclick={() => void store.askHelp()}>
-        Ask for help
+      <button class="btn primary big help-button" disabled={store.busy} onclick={() => void store.askHelp()}>
+        <span class="help-icon" aria-hidden="true">✋</span>
+        <span>Press for Help</span>
       </button>
       <p class="sub">
         Raise your hand and a CEC technician sees your request and connects.
@@ -113,6 +114,56 @@
   .btn.big {
     font-size: 1.05rem;
     padding: 0.85rem 1rem;
+  }
+  /* The front-door action should look like something meant to be physically
+     pressed, not a flat navigation choice. The darker lower edge is its
+     "button body"; active motion consumes that depth. */
+  .help-button {
+    min-height: 4.25rem;
+    gap: 0.7rem;
+    padding: 0.9rem 1.25rem 0.8rem;
+    border: 2px solid color-mix(in oklch, var(--accent-strong), white 12%);
+    border-radius: 1rem;
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--accent-strong), white 8%),
+      var(--accent)
+    );
+    font-family: var(--font-display);
+    font-size: 1.22rem;
+    font-weight: 800;
+    letter-spacing: 0.015em;
+    box-shadow:
+      0 6px 0 color-mix(in oklch, var(--accent), black 38%),
+      0 11px 22px -8px color-mix(in oklch, var(--accent), transparent 38%),
+      inset 0 1px 0 color-mix(in oklch, white 42%, transparent);
+    transform: translateY(0);
+    transition: transform 0.08s ease, box-shadow 0.08s ease, filter 0.12s ease;
+  }
+  .help-button:hover:not(:disabled) {
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--accent-strong), white 13%),
+      color-mix(in oklch, var(--accent), white 5%)
+    );
+    filter: brightness(1.04);
+    transform: translateY(-1px);
+    box-shadow:
+      0 7px 0 color-mix(in oklch, var(--accent), black 38%),
+      0 13px 24px -8px color-mix(in oklch, var(--accent), transparent 34%),
+      inset 0 1px 0 color-mix(in oklch, white 48%, transparent);
+  }
+  .help-button:active:not(:disabled) {
+    transform: translateY(5px);
+    box-shadow:
+      0 1px 0 color-mix(in oklch, var(--accent), black 42%),
+      0 5px 11px -7px color-mix(in oklch, var(--accent), transparent 45%),
+      inset 0 2px 4px color-mix(in oklch, black 24%, transparent);
+  }
+  .help-icon {
+    font-size: 1.55rem;
+    line-height: 1;
+    filter: drop-shadow(0 1px 0 color-mix(in oklch, black 35%, transparent));
   }
   .sub {
     margin: 0 0 0.9rem;
