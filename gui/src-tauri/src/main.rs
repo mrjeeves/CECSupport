@@ -31,6 +31,7 @@
     windows_subsystem = "windows"
 )]
 
+use std::collections::HashSet;
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -1242,6 +1243,10 @@ async fn respawn_and_rehost(app: &tauri::AppHandle, node: &NodeClient) {
 
 async fn run_event_pump(app: tauri::AppHandle, node: Arc<NodeClient>) {
     use tokio::sync::mpsc;
+    // A node reconnect can replay a still-pending permission request. Raise the
+    // customer window for the first event of each session, never on every
+    // replay/poll while they are deciding.
+    let mut foregrounded_requests = HashSet::<String>::new();
     // Consecutive grace windows the socket stayed dead while OUR child kept
     // running — the wedged-not-gone state. Only a repeat offender earns a
     // deliberate, owner-controlled restart.
@@ -1302,6 +1307,19 @@ async fn run_event_pump(app: tauri::AppHandle, node: Arc<NodeClient>) {
         while let Some(ev) = rx.recv().await {
             match ev {
                 NodeEvent::Emit { event, payload } => {
+                    if event == "cec://request" {
+                        let request_key = payload
+                            .get("session_id")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned)
+                            // The wire contract always includes a session id;
+                            // retaining the full payload is a stable fallback
+                            // for an older node that does not.
+                            .unwrap_or_else(|| payload.to_string());
+                        if foregrounded_requests.insert(request_key) {
+                            reveal_main_window(&app);
+                        }
+                    }
                     let _ = app.emit(&event, payload);
                 }
                 NodeEvent::Restart => app.restart(), // never returns
