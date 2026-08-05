@@ -59,6 +59,10 @@ const ALLMYSTUFF_PIN: Option<&str> = option_env!("ALLMYSTUFF_PIN");
 struct AppState {
     node: Arc<NodeClient>,
     node_child: Mutex<Option<NodeChild>>,
+    /// Serialises repair of a stale KVM site mapping. Both the background KVM
+    /// refresh and a user action can discover the same dead tunnel at once;
+    /// only one of them should tear it down while the other waits and retries.
+    kvm_tunnel_repair: tokio::sync::Mutex<()>,
     /// Opt-in "keep running in the background": when set, closing the window
     /// hides to the tray instead of quitting. Off by default — close quits.
     keep_background: std::sync::atomic::AtomicBool,
@@ -336,7 +340,10 @@ async fn cec_deny(
 ) -> Result<(), String> {
     state
         .node
-        .request("cec_deny", json!({ "tech": tech, "session_id": session_id }))
+        .request(
+            "cec_deny",
+            json!({ "tech": tech, "session_id": session_id }),
+        )
         .await
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -494,7 +501,11 @@ async fn claim_node(state: State<'_, AppState>, node: String) -> Result<Value, S
 /// own node id (from `session_snapshot.me`) — i.e. "this KVM is attached to
 /// this computer". The KVM confirms by re-advertising `kvm.attached_to`.
 #[tauri::command]
-async fn kvm_attach(state: State<'_, AppState>, node: String, target: String) -> Result<Value, String> {
+async fn kvm_attach(
+    state: State<'_, AppState>,
+    node: String,
+    target: String,
+) -> Result<Value, String> {
     state
         .node
         .request("kvm_attach", json!({ "node": node, "target": target }))
@@ -571,6 +582,7 @@ async fn site_map(state: State<'_, AppState>, node: String, port: u16) -> Result
 /// network and the tunnel drops mid-write, and that must not read as an error.
 #[tauri::command]
 async fn kvm_api(
+    state: State<'_, AppState>,
     port: u16,
     path: String,
     method: Option<String>,
@@ -584,7 +596,6 @@ async fn kvm_api(
     if !path.starts_with('/') || path.starts_with("//") {
         return Err(format!("invalid device path {path}"));
     }
-    let url = format!("http://127.0.0.1:{port}{path}");
     let client = reqwest::Client::builder()
         .timeout(Duration::from_millis(timeout_ms.unwrap_or(12_000)))
         // The tunnel is a loopback port; never let a system proxy intercept it.
@@ -596,14 +607,76 @@ async fn kvm_api(
         .map_err(|e| format!("couldn't start the request: {e}"))?;
 
     let verb = method.as_deref().unwrap_or("GET").to_ascii_uppercase();
-    let mut req = match verb.as_str() {
+    if !matches!(verb.as_str(), "GET" | "POST" | "DELETE") {
+        return Err(format!("unsupported method {verb}"));
+    }
+
+    let first = kvm_api_once(&client, port, &path, &verb, body.as_ref()).await;
+    // A state-changing request may have reached the appliance even when its
+    // reply was lost, so never replay POST/DELETE. GET is safe to heal and
+    // retry. HTTP errors are real device replies and likewise do not imply a
+    // dead tunnel; only a transport-level failure takes this path.
+    if !should_repair_kvm_tunnel(&verb, &first) {
+        return Ok(first);
+    }
+
+    // The shared node can outlive CEC Support when AllMyStuff owns it. A KVM
+    // route may then remain locally "active" after its far side disappeared,
+    // and `site_map` quite correctly hands both apps the existing listener --
+    // a listener that accepts TCP and immediately closes it. Repair only after
+    // the GET above proved that condition. If another caller is already doing
+    // so, wait and first try the route it just repaired.
+    let repair_guard = match state.kvm_tunnel_repair.try_lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            let guard = state.kvm_tunnel_repair.lock().await;
+            let after_wait = kvm_api_once(&client, port, &path, &verb, body.as_ref()).await;
+            if !kvm_transport_failed(&after_wait) {
+                return Ok(after_wait);
+            }
+            guard
+        }
+    };
+
+    let repaired_port = match remap_site_for_local_port(&state.node, port).await {
+        Ok(Some(repaired_port)) => repaired_port,
+        Ok(None) => {
+            tracing::warn!(
+                "KVM tunnel on :{port} failed, but the shared node no longer lists that mapping"
+            );
+            drop(repair_guard);
+            return Ok(first);
+        }
+        Err(e) => {
+            tracing::warn!("couldn't repair stale KVM tunnel on :{port}: {e}");
+            drop(repair_guard);
+            return Ok(first);
+        }
+    };
+    let repaired = kvm_api_once(&client, repaired_port, &path, &verb, body.as_ref()).await;
+    drop(repair_guard);
+    Ok(repaired)
+}
+
+/// Perform one HTTP request through an already-mapped KVM site tunnel.
+/// Transport failures are values rather than Rust errors because the UI needs
+/// to distinguish a timeout from a refused/closed tunnel.
+async fn kvm_api_once(
+    client: &reqwest::Client,
+    port: u16,
+    path: &str,
+    verb: &str,
+    body: Option<&Value>,
+) -> Value {
+    let url = format!("http://127.0.0.1:{port}{path}");
+    let mut req = match verb {
         "GET" => client.get(&url),
         "POST" => client.post(&url),
         "DELETE" => client.delete(&url),
-        other => return Err(format!("unsupported method {other}")),
+        _ => unreachable!("verb validated by kvm_api"),
     };
-    if let Some(b) = body {
-        req = req.json(&b);
+    if let Some(body) = body {
+        req = req.json(body);
     }
 
     let res = match req.send().await {
@@ -612,15 +685,19 @@ async fn kvm_api(
             let (kind, message) = if e.is_timeout() {
                 ("timeout", "the KVM didn't answer in time".to_string())
             } else if e.is_connect() {
-                ("connect", "couldn't reach the KVM's console tunnel".to_string())
+                (
+                    "connect",
+                    "couldn't reach the KVM's console tunnel".to_string(),
+                )
             } else {
                 ("other", format!("couldn't reach the KVM: {e}"))
             };
-            return Ok(json!({
+            return json!({
                 "status": 0,
                 "body": Value::Null,
                 "error": { "kind": kind, "message": message },
-            }));
+                "localPort": port,
+            });
         }
     };
 
@@ -628,11 +705,77 @@ async fn kvm_api(
     // Read the body even on a non-2xx: the device's own `{ code, msg }` is
     // usually more useful to show than the bare status.
     let text = res.text().await.unwrap_or_default();
-    Ok(json!({
+    json!({
         "status": status,
         "body": serde_json::from_str::<Value>(&text).ok(),
         "error": Value::Null,
-    }))
+        "localPort": port,
+    })
+}
+
+fn kvm_transport_failed(out: &Value) -> bool {
+    out.get("error").is_some_and(|error| !error.is_null())
+}
+
+fn should_repair_kvm_tunnel(verb: &str, out: &Value) -> bool {
+    verb == "GET" && kvm_transport_failed(out)
+}
+
+/// Find the shared node mapping behind `local_port`, tear down that one route,
+/// and recreate it. The node normally preserves the same loopback port; the
+/// returned value handles the legitimate case where the OS forces a new one.
+async fn remap_site_for_local_port(
+    node: &NodeClient,
+    local_port: u16,
+) -> Result<Option<u16>, String> {
+    let mappings = node
+        .request("site_mappings", json!({}))
+        .await
+        .map_err(|e| e.to_string())?;
+    let Some((peer, host_port)) = site_mapping_for_local_port(&mappings, local_port)? else {
+        return Ok(None);
+    };
+
+    node.request("site_unmap", json!({ "node": peer, "port": host_port }))
+        .await
+        .map_err(|e| e.to_string())?;
+    let mapped = node
+        .request("site_map", json!({ "node": peer, "port": host_port }))
+        .await
+        .map_err(|e| e.to_string())?;
+    let repaired_port = mapped
+        .get("localPort")
+        .and_then(Value::as_u64)
+        .and_then(|port| u16::try_from(port).ok())
+        .ok_or_else(|| "site_map returned no valid localPort".to_string())?;
+    tracing::info!("recreated stale KVM tunnel :{local_port} as :{repaired_port}");
+    Ok(Some(repaired_port))
+}
+
+fn site_mapping_for_local_port(
+    mappings: &Value,
+    local_port: u16,
+) -> Result<Option<(String, u16)>, String> {
+    let rows = mappings
+        .as_array()
+        .ok_or_else(|| "site_mappings returned a non-array result".to_string())?;
+    let Some(row) = rows
+        .iter()
+        .find(|row| row.get("localPort").and_then(Value::as_u64) == Some(u64::from(local_port)))
+    else {
+        return Ok(None);
+    };
+    let peer = row
+        .get("node")
+        .and_then(Value::as_str)
+        .filter(|node| !node.is_empty())
+        .ok_or_else(|| "site mapping has no node".to_string())?;
+    let host_port = row
+        .get("port")
+        .and_then(Value::as_u64)
+        .and_then(|port| u16::try_from(port).ok())
+        .ok_or_else(|| "site mapping has no valid host port".to_string())?;
+    Ok(Some((peer.to_string(), host_port)))
 }
 
 /// Open a KVM's own web UI in the system browser — its LAN address (the
@@ -661,7 +804,9 @@ async fn open_kvm_console(
         IpAddr::V4(v4) => v4.is_private() || v4.is_loopback() || v4.is_link_local(),
         // A KVM on IPv6 is reachable at a link-local or unique-local address.
         IpAddr::V6(v6) => {
-            v6.is_loopback() || (v6.segments()[0] & 0xffc0) == 0xfe80 || (v6.segments()[0] & 0xfe00) == 0xfc00
+            v6.is_loopback()
+                || (v6.segments()[0] & 0xffc0) == 0xfe80
+                || (v6.segments()[0] & 0xfe00) == 0xfc00
         }
     };
     if !local {
@@ -914,7 +1059,10 @@ fn set_login_item(app: &tauri::AppHandle, enable: bool) {
     }
     let r = if enable { mgr.enable() } else { mgr.disable() };
     if let Err(e) = r {
-        tracing::warn!("couldn't {} run-on-boot: {e}", if enable { "enable" } else { "disable" });
+        tracing::warn!(
+            "couldn't {} run-on-boot: {e}",
+            if enable { "enable" } else { "disable" }
+        );
     }
 }
 
@@ -1289,6 +1437,7 @@ fn run_gui() -> ExitCode {
             app.manage(AppState {
                 node: node.clone(),
                 node_child: Mutex::new(None),
+                kvm_tunnel_repair: tokio::sync::Mutex::new(()),
                 keep_background: std::sync::atomic::AtomicBool::new(settings.keep_background),
             });
 
@@ -1343,16 +1492,16 @@ fn run_gui() -> ExitCode {
             // which is precisely how an updater ends up looking like it never
             // runs at all.
             let update_handle = app.handle().clone();
-            tauri::async_runtime::spawn(cec_support_updater::tick_forever_notify(
-                move |outcome| match serde_json::to_value(outcome) {
+            tauri::async_runtime::spawn(cec_support_updater::tick_forever_notify(move |outcome| {
+                match serde_json::to_value(outcome) {
                     Ok(payload) => {
                         if let Err(e) = update_handle.emit("update://checked", payload) {
                             tracing::warn!("couldn't emit the self-update outcome: {e}");
                         }
                     }
                     Err(e) => tracing::warn!("couldn't serialise the self-update outcome: {e}"),
-                },
-            ));
+                }
+            }));
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -1413,7 +1562,10 @@ fn run_agent(_service: bool) -> ExitCode {
 
 /// `cec-support service <verb>` → the local service crate.
 fn run_service(args: &[String]) -> ExitCode {
-    let action = args.iter().map(String::as_str).find(|a| !a.starts_with('-'));
+    let action = args
+        .iter()
+        .map(String::as_str)
+        .find(|a| !a.starts_with('-'));
     let cmd = match action {
         Some("install") => cec_support_service::ServiceCmd::Install { log: None },
         Some("uninstall") | Some("remove") => cec_support_service::ServiceCmd::Uninstall,
@@ -1426,9 +1578,7 @@ fn run_service(args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
         None => {
-            eprintln!(
-                "Usage: cec-support service <install|uninstall|status|start|stop|restart>"
-            );
+            eprintln!("Usage: cec-support service <install|uninstall|status|start|stop|restart>");
             return ExitCode::FAILURE;
         }
     };
@@ -1625,5 +1775,40 @@ mod tests {
             Some(ServiceCmd::Uninstall)
         ));
         assert!(service_cmd("frobnicate").is_none());
+    }
+
+    #[test]
+    fn site_mapping_is_found_by_its_local_tunnel_port() {
+        let mappings = json!([
+            { "node": "other", "port": 443, "localPort": 47001 },
+            { "node": "kvm", "port": 80, "localPort": 47000 }
+        ]);
+        assert_eq!(
+            site_mapping_for_local_port(&mappings, 47000).unwrap(),
+            Some(("kvm".into(), 80))
+        );
+        assert_eq!(site_mapping_for_local_port(&mappings, 49999).unwrap(), None);
+    }
+
+    #[test]
+    fn malformed_site_mapping_is_not_used_for_repair() {
+        let mappings = json!([{ "node": "kvm", "port": 70000, "localPort": 47000 }]);
+        assert!(site_mapping_for_local_port(&mappings, 47000).is_err());
+        assert!(site_mapping_for_local_port(&json!({}), 47000).is_err());
+    }
+
+    #[test]
+    fn only_safe_get_transport_failures_trigger_tunnel_repair() {
+        let transport_failure = json!({
+            "status": 0,
+            "body": null,
+            "error": { "kind": "other", "message": "empty reply" }
+        });
+        let device_error = json!({ "status": 503, "body": null, "error": null });
+
+        assert!(should_repair_kvm_tunnel("GET", &transport_failure));
+        assert!(!should_repair_kvm_tunnel("POST", &transport_failure));
+        assert!(!should_repair_kvm_tunnel("DELETE", &transport_failure));
+        assert!(!should_repair_kvm_tunnel("GET", &device_error));
     }
 }

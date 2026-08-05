@@ -397,6 +397,10 @@ export interface KvmInfo {
  *  and every JSON POST died at a preflight, both as a bare "Failed to fetch"
  *  with no status. Rust has no origin, so the status and body survive. */
 export interface KvmApiCallResult {
+  /** The loopback port that actually carried this request. A stale-route
+   *  repair normally preserves the port, but may move when the OS has already
+   *  reused it; callers with a cached tunnel must adopt the returned value. */
+  localPort: number;
   /** The HTTP status, or 0 when the call never got a reply (see `error`). */
   status: number;
   /** The parsed JSON body, or null when the device didn't send JSON. */
