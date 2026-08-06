@@ -179,9 +179,15 @@ gui-check:
 # (tag = `.allmystuff-rev`), which only resolve once that tag is published, and
 # it needs the media/webview toolchain. Run it on a dev machine once the deps
 # land — the analog of AllMyStuff's `node-check`.
+[unix]
 [doc("fmt+clippy+test the Tauri backend (needs published AllMyStuff deps; not in CI).")]
 gui-backend:
     @cd gui/src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+
+[windows]
+[doc("fmt+clippy+test the Tauri backend (needs published AllMyStuff deps; not in CI).")]
+gui-backend:
+    @cd gui/src-tauri; cargo fmt --check; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; cargo clippy --all-targets -- -D warnings; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; cargo test
 
 # Everything CI runs: Rust fmt + clippy + test (the light service workspace),
 # then the GUI typecheck/build. (The Tauri backend isn't in CI — see
