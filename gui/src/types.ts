@@ -231,8 +231,6 @@ export interface MeshPeer {
   node: string;
   label?: string;
   hostname?: string;
-  /** Routable endpoints from the peer's AllMyStuff presence. */
-  capabilities?: DriveCapability[];
   /** Who owns it (its own presence advert), or null when unowned. */
   owner?: string | null;
   /** Whether it's currently offering itself for adoption. */
@@ -251,50 +249,7 @@ export interface SessionSnapshot {
   ready: boolean;
   me?: string;
   peers?: MeshPeer[];
-  routes?: SessionRoute[];
 }
-
-export interface DriveCapability {
-  id: string;
-  node: string;
-  label: string;
-  media: string;
-  flow: "source" | "sink" | "duplex";
-  origin: string;
-}
-
-export interface DriveScan {
-  node_id: string;
-  label: string;
-  capabilities: DriveCapability[];
-}
-
-export interface SessionRoute {
-  route: { id: string; from: string; to: string; media: string };
-  peer: string;
-  origin: "outbound" | "inbound";
-  state: { state: string; reason?: string };
-}
-
-export interface FileEntry {
-  name: string;
-  dir: boolean;
-  size: number;
-  modified?: number;
-  symlink?: boolean;
-}
-
-export type FileEvent =
-  | { kind: "list"; req: number; path: string }
-  | { kind: "read"; req: number; path: string }
-  | { kind: "write"; req: number; path: string; data: string; append: boolean; eof: boolean }
-  | { kind: "mkdir"; req: number; path: string }
-  | { kind: "rename"; req: number; from: string; to: string }
-  | { kind: "delete"; req: number; path: string }
-  | { kind: "entries"; req: number; path: string; home: string; entries: FileEntry[] }
-  | { kind: "chunk"; req: number; data: string; total: number; eof: boolean }
-  | { kind: "ok"; req: number }
-  | { kind: "err"; req: number; reason: string };
 
 /** One network the node is on (`mesh_networks`) — trimmed to the id we query
  *  live peers for. */
