@@ -84,6 +84,14 @@ works solo or side by side with AllMyStuff; per-session privacy comes from the
 shared area being Silent and hub-mediated plus the customer's per-frame consent,
 not from siloing the apps.
 
+Native drive mapping follows that same split. The technician starts it from
+the remote-control console in AllMyStuff; the authorized customer node supplies
+or receives the selected folder through the shared node engine, and Windows
+mounts it as a real drive letter. CEC Support deliberately has no second drive
+browser or fake in-app mount surface: consent and connection state stay in this
+customer UI, while the actual mapping lives in the node and the technician's
+active console.
+
 ## Install — a normal Windows app
 
 CEC Support installs like any other app: the customer downloads the **installer
