@@ -292,6 +292,12 @@ class CecStore {
    *  spinner must never outlive the possibility of an answer. */
   specsPending = $state(true);
   toast = $state<string | null>(null);
+  /** A release found by the real feed check. Unlike routine toasts this stays
+   *  until acted on or dismissed and carries the update actions inline. */
+  updateNotice = $state<{
+    message: string;
+    actions: Array<"apply" | "restart" | "settings">;
+  } | null>(null);
   busy = $state(false);
 
   /** Chat transcripts keyed by the technician's canonical device id. Filled
@@ -578,6 +584,9 @@ class CecStore {
       await onUpdateChecked((o) => this.applyUpdateChecked(o)),
     );
     void this.loadUpdateStatus();
+    // This is an immediate, forced release-feed check, not the delayed ticker
+    // and not a read of yesterday's cached updater state.
+    void this.checkUpdates();
 
     this.service = await serviceStatus();
     this.autostart = await autostartGet();
@@ -2240,29 +2249,39 @@ class CecStore {
   private applyUpdateChecked(o: CheckOutcome): void {
     this.updateOutcome = o;
     void this.loadUpdateStatus();
-    switch (o.outcome) {
-      case "staged":
-        this.notify(`Update ${o.version} is ready — restart CEC Support to use it`);
-        break;
-      case "manual_update_available":
-        this.notify(`Version ${o.latest} is available — reinstall to update`);
-        break;
-      case "policy_blocked":
-        this.notify(`Version ${o.latest} is available — see Settings to install it`);
-        break;
-      default:
-        break;
+    if (o.outcome === "staged") {
+      this.updateNotice = {
+        message: `CEC Support ${o.version} is downloaded and ready.`,
+        actions: ["apply", "restart"],
+      };
+      return;
+    }
+    if (o.outcome === "manual_update_available") {
+      this.updateNotice = {
+        message: `CEC Support ${o.latest} is available. Reinstall it the way this copy was installed.`,
+        actions: ["settings"],
+      };
+      return;
+    }
+    if (o.outcome === "policy_blocked") {
+      this.updateNotice = {
+        message: `CEC Support ${o.latest} is available and waiting for approval.`,
+        actions: ["settings"],
+      };
+      return;
     }
   }
-
   /** Check the release feed now and stage anything permitted. */
   async checkUpdates(): Promise<void> {
     if (this.demo) return;
     this.updateBusy = true;
     this.updateOutcome = null;
     try {
-      this.updateOutcome = await updateCheck();
+      const outcome = await updateCheck();
+      if (outcome) this.applyUpdateChecked(outcome);
       this.updateInfo = (await updateStatus()) ?? this.updateInfo;
+    } catch (e) {
+      this.notify(`Update check failed: ${String(e)}`);
     } finally {
       this.updateBusy = false;
     }
@@ -2283,6 +2302,38 @@ class CecStore {
     } finally {
       this.updateBusy = false;
     }
+  }
+
+  /** Apply the staged files but keep this session running until the user is
+   *  ready to restart. The persistent notice then collapses to Restart. */
+  async applyUpdateOnly(): Promise<void> {
+    if (this.demo) return;
+    this.updateBusy = true;
+    try {
+      const result = await updateApply();
+      const applied = result?.applied ?? this.updateInfo?.staged_version;
+      this.updateInfo = (await updateStatus()) ?? this.updateInfo;
+      if (applied) {
+        this.updateNotice = {
+          message: `CEC Support ${applied} is applied and ready to restart.`,
+          actions: ["restart"],
+        };
+      }
+    } catch (e) {
+      this.notify(`Couldn't apply the update: ${String(e)}`);
+    } finally {
+      this.updateBusy = false;
+    }
+  }
+
+  async runUpdateNoticeAction(action: "apply" | "restart" | "settings"): Promise<void> {
+    if (action === "apply") return this.applyUpdateOnly();
+    if (action === "restart") return this.applyUpdateAndRestart();
+    this.view = "settings";
+  }
+
+  dismissUpdateNotice(): void {
+    this.updateNotice = null;
   }
 
   /** Flip an updater preference (e.g. automatic updates on/off). */

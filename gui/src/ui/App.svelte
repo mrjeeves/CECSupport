@@ -106,8 +106,8 @@
       class="btn ghost small header-action"
       title="Look again for KVMs"
       aria-label="Look again for KVMs"
-      disabled={store.kvmRefreshing}
-      onclick={() => void store.refreshKvmsVisibly()}
+      disabled={store.kvmRefreshing || store.updateBusy}
+      onclick={() => void Promise.allSettled([store.refreshKvmsVisibly(), store.checkUpdates()])}
     >
       <svg class="ico" class:spin={store.kvmRefreshing} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" />
@@ -181,6 +181,23 @@
 
   {#if store.toast}
     <button class="toast" onclick={() => store.dismissToast()}>{store.toast}</button>
+  {/if}
+  {#if store.updateNotice}
+    <div class="toast update-toast" role="status" aria-live="polite">
+      <span>{store.updateNotice.message}</span>
+      <span class="update-actions">
+        {#each store.updateNotice.actions as action}
+          <button
+            class:primary={action === "restart"}
+            disabled={store.updateBusy}
+            onclick={() => void store.runUpdateNoticeAction(action)}
+          >
+            {action === "apply" ? "Apply" : action === "restart" ? "Restart & update" : "Update details"}
+          </button>
+        {/each}
+        <button class="notice-dismiss" aria-label="Dismiss" onclick={() => store.dismissUpdateNotice()}>x</button>
+      </span>
+    </div>
   {/if}
 </div>
 
@@ -334,5 +351,45 @@
     font-weight: 500;
     z-index: 60;
     animation: fade 0.14s ease;
+  }
+  .update-toast {
+    top: 4.6rem;
+    bottom: auto;
+    width: max-content;
+    max-width: min(42rem, calc(100vw - 2rem));
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    background: var(--surface-raised, var(--surface));
+    color: var(--ink);
+  }
+  .update-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+  .update-actions button {
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-pill);
+    background: transparent;
+    color: inherit;
+    padding: 0.36rem 0.62rem;
+    font: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .update-actions button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+  }
+  .update-actions button:disabled {
+    opacity: 0.55;
+    cursor: wait;
+  }
+  .update-actions .notice-dismiss {
+    border: 0;
+    color: var(--ink-faint);
+    padding-inline: 0.3rem;
   }
 </style>
