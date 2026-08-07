@@ -62,7 +62,15 @@ export type ToolboxAction =
   | "device_manager"
   | "services"
   | "system_information"
-  | "task_manager";
+  | "task_manager"
+  | "control_panel"
+  | "windows_settings"
+  | "registry_editor"
+  | "disk_management"
+  | "computer_management"
+  | "system_configuration"
+  | "windows_features"
+  | "resource_monitor";
 
 export interface ToolboxResult {
   ok: boolean;

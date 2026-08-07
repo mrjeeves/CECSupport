@@ -322,6 +322,38 @@ fn toolbox_spec(action: &str) -> Option<ToolboxSpec> {
             label: "Task Manager",
             kind: ToolboxKind::WindowsProgram("taskmgr.exe", &[]),
         },
+        "control_panel" => ToolboxSpec {
+            label: "Control Panel",
+            kind: ToolboxKind::WindowsProgram("control.exe", &[]),
+        },
+        "windows_settings" => ToolboxSpec {
+            label: "Windows Settings",
+            kind: ToolboxKind::WindowsProgram("explorer.exe", &["ms-settings:"]),
+        },
+        "registry_editor" => ToolboxSpec {
+            label: "Registry Editor",
+            kind: ToolboxKind::WindowsProgram("regedit.exe", &[]),
+        },
+        "disk_management" => ToolboxSpec {
+            label: "Disk Management",
+            kind: ToolboxKind::WindowsProgram("mmc.exe", &["diskmgmt.msc"]),
+        },
+        "computer_management" => ToolboxSpec {
+            label: "Computer Management",
+            kind: ToolboxKind::WindowsProgram("mmc.exe", &["compmgmt.msc"]),
+        },
+        "system_configuration" => ToolboxSpec {
+            label: "System Configuration",
+            kind: ToolboxKind::WindowsProgram("msconfig.exe", &[]),
+        },
+        "windows_features" => ToolboxSpec {
+            label: "Windows Features",
+            kind: ToolboxKind::WindowsProgram("optionalfeatures.exe", &[]),
+        },
+        "resource_monitor" => ToolboxSpec {
+            label: "Resource Monitor",
+            kind: ToolboxKind::WindowsProgram("resmon.exe", &[]),
+        },
         _ => return None,
     })
 }
@@ -1954,6 +1986,13 @@ mod tests {
             toolbox_spec("device_manager"),
             Some(ToolboxSpec {
                 kind: ToolboxKind::WindowsProgram("mmc.exe", _),
+                ..
+            })
+        ));
+        assert!(matches!(
+            toolbox_spec("registry_editor"),
+            Some(ToolboxSpec {
+                kind: ToolboxKind::WindowsProgram("regedit.exe", _),
                 ..
             })
         ));
