@@ -305,6 +305,24 @@ fn current_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct InstalledVersionMarker {
+    version: String,
+    sha256: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum InstalledVersionState {
+    /// A fresh/package install has no updater-owned marker. Its running build
+    /// is authoritative and must not trigger a redundant self-download.
+    Untracked,
+    /// The marker still describes the executable currently on disk.
+    Verified(String),
+    /// A marker exists but no longer describes the executable. Repair it even
+    /// when the release tag equals the running process's version.
+    Changed,
+}
+
 // ---------------------------------------------------------------------------
 // The artifact: CEC Support ships exactly one binary.
 // ---------------------------------------------------------------------------
@@ -468,9 +486,14 @@ fn apply_pending() -> Result<Option<String>> {
         return Ok(None);
     };
 
-    // Downgrade guard: only swap when the staged build is actually newer than
-    // what's running, so a stale marker can't roll the app back.
-    if compare_semver(&target_version, current_version()) != std::cmp::Ordering::Greater {
+    // A newer staged build is an ordinary update. An equal build is also
+    // allowed when the verified marker says the executable on disk changed —
+    // that is a repair, not a downgrade. Older builds are never applied.
+    if !staged_version_may_apply(
+        &target_version,
+        current_version(),
+        &installed_version_state(),
+    ) {
         let _ = std::fs::remove_file(&pending);
         return Ok(None);
     }
@@ -484,6 +507,7 @@ fn apply_pending() -> Result<Option<String>> {
         .ok_or_else(|| Error::msg("staged archive has no parent"))?;
     let binary = extract_binary(&archive, staged_dir, bin_name())?;
     atomic_replace(&binary, &target)?;
+    record_installed_version(&target_version);
 
     let _ = std::fs::remove_file(&pending);
     tracing::info!("self-update applied {target_version}");
@@ -500,6 +524,93 @@ fn apply_pending() -> Result<Option<String>> {
 fn installed_path() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     (!path_in_os_bundle(&exe)).then_some(exe)
+}
+
+fn installed_version_marker_path() -> Option<PathBuf> {
+    updates_dir().ok().map(|d| d.join("installed.version"))
+}
+
+fn installed_version_state() -> InstalledVersionState {
+    let Some(marker_path) = installed_version_marker_path() else {
+        return InstalledVersionState::Untracked;
+    };
+    if !marker_path.exists() {
+        return InstalledVersionState::Untracked;
+    }
+    let Some(binary) = installed_path() else {
+        return InstalledVersionState::Changed;
+    };
+    validated_marker_version(&marker_path, &binary)
+        .map(InstalledVersionState::Verified)
+        .unwrap_or(InstalledVersionState::Changed)
+}
+
+fn validated_marker_version(marker_path: &Path, binary: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(marker_path).ok()?;
+    let marker: InstalledVersionMarker = serde_json::from_str(&text).ok()?;
+    let actual = sha256_file(binary).ok()?;
+    (actual == marker.sha256).then_some(marker.version)
+}
+
+fn record_installed_version(version: &str) {
+    let Some(marker_path) = installed_version_marker_path() else {
+        return;
+    };
+    let Some(binary) = installed_path() else {
+        return;
+    };
+    let Ok(sha256) = sha256_file(&binary) else {
+        return;
+    };
+    let marker = InstalledVersionMarker {
+        version: version.to_string(),
+        sha256,
+    };
+    if let Ok(text) = serde_json::to_string(&marker) {
+        let _ = std::fs::write(marker_path, text);
+    }
+}
+
+fn sha256_file(path: &Path) -> std::io::Result<String> {
+    use std::io::Read as _;
+
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buf)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buf[..read]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+fn install_needs_update(latest: &str) -> bool {
+    version_state_needs_update(&installed_version_state(), current_version(), latest)
+}
+
+fn version_state_needs_update(state: &InstalledVersionState, running: &str, latest: &str) -> bool {
+    match state {
+        InstalledVersionState::Untracked => {
+            compare_semver(running, latest) == std::cmp::Ordering::Less
+        }
+        InstalledVersionState::Verified(version) => {
+            compare_semver(version, latest) == std::cmp::Ordering::Less
+        }
+        InstalledVersionState::Changed => {
+            compare_semver(running, latest) != std::cmp::Ordering::Greater
+        }
+    }
+}
+
+fn staged_version_may_apply(target: &str, running: &str, state: &InstalledVersionState) -> bool {
+    match compare_semver(target, running) {
+        std::cmp::Ordering::Greater => true,
+        std::cmp::Ordering::Equal => matches!(state, InstalledVersionState::Changed),
+        std::cmp::Ordering::Less => false,
+    }
 }
 
 fn path_in_os_bundle(path: &Path) -> bool {
@@ -623,15 +734,16 @@ pub async fn check_now(force: bool) -> Result<CheckOutcome> {
     // full `check_interval_hours` before the next attempt.
     stamp_check_now();
 
-    if compare_semver(&current, &latest) != std::cmp::Ordering::Less {
+    if !install_needs_update(&latest) {
         return Ok(CheckOutcome::UpToDate { current, latest });
     }
     if managed {
         return Ok(CheckOutcome::ManualUpdateAvailable { current, latest });
     }
 
+    let genuine_upgrade = compare_semver(&current, &latest) == std::cmp::Ordering::Less;
     let pol = ApplyPolicy::parse(&au.auto_apply).unwrap_or(ApplyPolicy::Patch);
-    if !policy_allows(pol, &current, &latest) {
+    if genuine_upgrade && !policy_allows(pol, &current, &latest) {
         return Ok(CheckOutcome::PolicyBlocked {
             current,
             latest,
@@ -736,7 +848,7 @@ pub async fn update_now() -> Result<UpdateNowOutcome> {
     let release = fetch_release(&au).await?;
     let latest = release_tag(&release)?;
     let current = current_version().to_string();
-    if compare_semver(&current, &latest) != std::cmp::Ordering::Less {
+    if !install_needs_update(&latest) {
         return Ok(UpdateNowOutcome::UpToDate { current, latest });
     }
     stage_release(&release, &latest).await?;
@@ -1118,6 +1230,77 @@ mod tests {
                 "cec-support"
             }
         );
+    }
+
+    #[test]
+    fn installed_marker_is_bound_to_the_binary_contents() {
+        let tmp = tempfile::tempdir().unwrap();
+        let binary = tmp.path().join(bin_name());
+        let marker_path = tmp.path().join("installed.version");
+        std::fs::write(&binary, b"cec support current").unwrap();
+        let marker = InstalledVersionMarker {
+            version: "0.2.39".into(),
+            sha256: sha256_file(&binary).unwrap(),
+        };
+        std::fs::write(&marker_path, serde_json::to_string(&marker).unwrap()).unwrap();
+
+        assert_eq!(
+            validated_marker_version(&marker_path, &binary).as_deref(),
+            Some("0.2.39")
+        );
+
+        std::fs::write(&binary, b"cec support rolled back").unwrap();
+        assert_eq!(validated_marker_version(&marker_path, &binary), None);
+
+        // A malformed or old bare-version marker cannot falsely certify an
+        // executable either.
+        std::fs::write(&marker_path, "0.2.39\n").unwrap();
+        assert_eq!(validated_marker_version(&marker_path, &binary), None);
+    }
+
+    #[test]
+    fn changed_install_repairs_equal_version_without_allowing_downgrade() {
+        assert!(!version_state_needs_update(
+            &InstalledVersionState::Untracked,
+            "0.2.39",
+            "0.2.39"
+        ));
+        assert!(version_state_needs_update(
+            &InstalledVersionState::Untracked,
+            "0.2.39",
+            "0.2.40"
+        ));
+        assert!(version_state_needs_update(
+            &InstalledVersionState::Verified("0.2.38".into()),
+            "0.2.39",
+            "0.2.39"
+        ));
+        assert!(version_state_needs_update(
+            &InstalledVersionState::Changed,
+            "0.2.39",
+            "0.2.39"
+        ));
+        assert!(!version_state_needs_update(
+            &InstalledVersionState::Changed,
+            "0.2.40",
+            "0.2.39"
+        ));
+
+        assert!(staged_version_may_apply(
+            "0.2.39",
+            "0.2.39",
+            &InstalledVersionState::Changed
+        ));
+        assert!(!staged_version_may_apply(
+            "0.2.39",
+            "0.2.39",
+            &InstalledVersionState::Untracked
+        ));
+        assert!(!staged_version_may_apply(
+            "0.2.38",
+            "0.2.39",
+            &InstalledVersionState::Changed
+        ));
     }
 
     #[test]
