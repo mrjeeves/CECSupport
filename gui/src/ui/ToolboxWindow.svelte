@@ -74,7 +74,6 @@
           </button>
         {/each}
       </div>
-      <p class="service-note">Administrator jobs stay attached and never open UAC. AllMyStuff Always On must be installed and running on this computer.</p>
     </section>
 
     <section aria-labelledby="console-title">
@@ -186,7 +185,6 @@
   .tool-copy strong { font-size: 0.9rem; }
   .tool-copy small { color: var(--ink-soft); line-height: 1.35; font-size: 0.72rem; }
   .run-label { color: var(--accent-ink); font-size: 0.74rem; font-weight: 700; }
-  .service-note { margin: 0 0.2rem; color: var(--ink-faint); font-size: 0.72rem; line-height: 1.45; }
   .status {
     position: sticky;
     bottom: 1rem;
