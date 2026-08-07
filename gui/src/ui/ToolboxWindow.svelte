@@ -22,7 +22,19 @@
     { id: "task_manager", title: "Task Manager", description: "Open process and performance diagnostics." },
   ];
 
+  const advancedTools: Tool[] = [
+    { id: "control_panel", title: "Control Panel", description: "Open the original Windows Control Panel." },
+    { id: "windows_settings", title: "Windows Settings", description: "Open the main Windows Settings app." },
+    { id: "registry_editor", title: "Registry Editor", description: "Inspect and edit the Windows registry." },
+    { id: "disk_management", title: "Disk Management", description: "Manage disks, partitions, and drive letters." },
+    { id: "computer_management", title: "Computer Management", description: "Open the combined Windows management console." },
+    { id: "system_configuration", title: "System Configuration", description: "Change boot and service troubleshooting options." },
+    { id: "windows_features", title: "Windows Features", description: "Turn optional Windows components on or off." },
+    { id: "resource_monitor", title: "Resource Monitor", description: "Inspect detailed CPU, memory, disk, and network activity." },
+  ];
+
   let running = $state<ToolboxAction | null>(null);
+  let advanced = $state(false);
   let message = $state("");
   let failed = $state(false);
 
@@ -57,6 +69,16 @@
   </header>
 
   <main>
+    <div class="mode-row">
+      <div class="mode-group" role="group" aria-label="Toolbox mode">
+        <button
+          class:active={advanced}
+          aria-pressed={advanced}
+          onclick={() => (advanced = !advanced)}
+        >{advanced ? "Hide Advanced" : "Show Advanced"}</button>
+      </div>
+    </div>
+
     <section aria-labelledby="repair-title">
       <div class="section-heading">
         <h2 id="repair-title">Check & repair</h2>
@@ -74,7 +96,6 @@
           </button>
         {/each}
       </div>
-      <p class="service-note">Administrator jobs stay attached and never open UAC. AllMyStuff Always On must be installed and running on this computer.</p>
     </section>
 
     <section aria-labelledby="console-title">
@@ -95,6 +116,27 @@
         {/each}
       </div>
     </section>
+
+    {#if advanced}
+      <section class="advanced" aria-labelledby="advanced-title">
+        <div class="section-heading">
+          <h2 id="advanced-title">Advanced Windows tools</h2>
+          <span>These tools can change system configuration</span>
+        </div>
+        <div class="grid">
+          {#each advancedTools as tool (tool.id)}
+            <button class="tool advanced-tool" disabled={running !== null} onclick={() => void run(tool)}>
+              <span class="tool-icon" aria-hidden="true">!</span>
+              <span class="tool-copy">
+                <strong>{tool.title}</strong>
+                <small>{tool.description}</small>
+              </span>
+              <span class="run-label">Open</span>
+            </button>
+          {/each}
+        </div>
+      </section>
+    {/if}
 
     {#if message}
       <div class:failed class="status" role="status" aria-live="polite">
@@ -142,6 +184,32 @@
     gap: 1.45rem;
   }
   section { display: grid; gap: 0.7rem; }
+  .mode-row { display: flex; justify-content: flex-end; }
+  .mode-group {
+    display: inline-flex;
+    padding: 0.22rem;
+    border: 1px solid var(--line);
+    border-radius: 0.72rem;
+    background: var(--surface);
+    box-shadow: var(--shadow-sm);
+  }
+  .mode-group button {
+    min-width: 8.3rem;
+    padding: 0.52rem 0.78rem;
+    border: 1px solid transparent;
+    border-radius: 0.52rem;
+    color: var(--ink-soft);
+    background: transparent;
+    font: inherit;
+    font-size: 0.78rem;
+    font-weight: 750;
+  }
+  .mode-group button:hover { color: var(--ink); background: var(--surface-2); }
+  .mode-group button.active {
+    color: var(--danger);
+    border-color: color-mix(in oklch, var(--danger) 35%, var(--line));
+    background: color-mix(in oklch, var(--danger) 10%, var(--surface));
+  }
   .section-heading {
     display: flex;
     align-items: baseline;
@@ -182,11 +250,15 @@
     font-weight: 800;
   }
   .repair .tool-icon { color: var(--ok); background: var(--ok-soft); }
+  .advanced { padding-top: 0.2rem; border-top: 1px solid var(--line); }
+  .advanced-tool .tool-icon {
+    color: var(--danger);
+    background: color-mix(in oklch, var(--danger) 12%, var(--surface-2));
+  }
   .tool-copy { min-width: 0; display: grid; gap: 0.18rem; }
   .tool-copy strong { font-size: 0.9rem; }
   .tool-copy small { color: var(--ink-soft); line-height: 1.35; font-size: 0.72rem; }
   .run-label { color: var(--accent-ink); font-size: 0.74rem; font-weight: 700; }
-  .service-note { margin: 0 0.2rem; color: var(--ink-faint); font-size: 0.72rem; line-height: 1.45; }
   .status {
     position: sticky;
     bottom: 1rem;
