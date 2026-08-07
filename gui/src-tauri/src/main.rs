@@ -374,8 +374,8 @@ async fn open_toolbox(app: tauri::AppHandle) -> Result<(), String> {
         tauri::WebviewUrl::App("index.html?toolbox=1".into()),
     )
     .title("CEC Support Toolbox")
-    .inner_size(860.0, 700.0)
-    .min_inner_size(620.0, 520.0)
+    .inner_size(1040.0, 760.0)
+    .min_inner_size(680.0, 520.0)
     .resizable(true)
     .center()
     .build()
@@ -386,31 +386,77 @@ async fn open_toolbox(app: tauri::AppHandle) -> Result<(), String> {
 /// Run one fixed Toolbox action. No arbitrary command crosses the webview
 /// boundary; administrator repairs use AMST's normal attached terminal route.
 #[tauri::command]
-async fn toolbox_run(app: tauri::AppHandle, action: String) -> Result<Value, String> {
+async fn toolbox_run(
+    app: tauri::AppHandle,
+    action: String,
+    run_id: String,
+) -> Result<Value, String> {
     let spec = toolbox_spec(&action).ok_or_else(|| format!("unknown Toolbox action: {action}"))?;
-    toolbox_run_spec(app, spec).await
+    if !toolbox_run_id_valid(&run_id) {
+        return Err("invalid Toolbox run id".into());
+    }
+    toolbox_run_spec(app, spec, &run_id).await
 }
 
 #[cfg(windows)]
-async fn toolbox_run_spec(app: tauri::AppHandle, spec: ToolboxSpec) -> Result<Value, String> {
+async fn toolbox_run_spec(
+    app: tauri::AppHandle,
+    spec: ToolboxSpec,
+    run_id: &str,
+) -> Result<Value, String> {
     match spec.kind {
         ToolboxKind::AdminTerminal(command) => {
+            use tauri_plugin_shell::process::CommandEvent;
             use tauri_plugin_shell::ShellExt as _;
 
-            let output = app
+            let (mut events, _child) = app
                 .shell()
                 .sidecar("amst")
                 .map_err(|e| format!("finding the bundled AMST terminal: {e}"))?
                 .args(["--admin", "--run", command])
-                .output()
-                .await
+                .spawn()
                 .map_err(|e| format!("starting {}: {e}", spec.label))?;
-            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            if !output.status.success() {
+
+            let mut stdout = String::new();
+            let mut stderr = String::new();
+            let mut exit_code = None;
+            let mut event_error = None;
+            while let Some(event) = events.recv().await {
+                match event {
+                    CommandEvent::Stdout(bytes) => {
+                        let line = clean_toolbox_output(&bytes);
+                        append_toolbox_line(&mut stdout, &line);
+                        emit_toolbox_progress(&app, run_id, "stdout", &line);
+                    }
+                    CommandEvent::Stderr(bytes) => {
+                        let line = clean_toolbox_output(&bytes);
+                        append_toolbox_line(&mut stderr, &line);
+                        emit_toolbox_progress(&app, run_id, "stderr", &line);
+                    }
+                    CommandEvent::Error(error) => {
+                        emit_toolbox_progress(&app, run_id, "stderr", &error);
+                        event_error = Some(error);
+                    }
+                    CommandEvent::Terminated(payload) => exit_code = payload.code,
+                    _ => {}
+                }
+            }
+
+            if let Some(error) = event_error {
+                return Err(format!("{} failed: {error}", spec.label));
+            }
+            let stdout = stdout.trim().to_string();
+            let stderr = stderr.trim().to_string();
+            if exit_code != Some(0) {
                 let detail = if stderr.is_empty() { stdout } else { stderr };
                 return Err(if detail.is_empty() {
-                    format!("{} failed", spec.label)
+                    format!(
+                        "{} failed{}",
+                        spec.label,
+                        exit_code
+                            .map(|code| format!(" (exit {code})"))
+                            .unwrap_or_default()
+                    )
                 } else {
                     format!("{} failed: {detail}", spec.label)
                 });
@@ -438,8 +484,81 @@ async fn toolbox_run_spec(app: tauri::AppHandle, spec: ToolboxSpec) -> Result<Va
 }
 
 #[cfg(not(windows))]
-async fn toolbox_run_spec(_app: tauri::AppHandle, _spec: ToolboxSpec) -> Result<Value, String> {
+async fn toolbox_run_spec(
+    _app: tauri::AppHandle,
+    _spec: ToolboxSpec,
+    _run_id: &str,
+) -> Result<Value, String> {
     Err("The repair Toolbox is currently available on Windows.".into())
+}
+
+fn toolbox_run_id_valid(run_id: &str) -> bool {
+    !run_id.is_empty()
+        && run_id.len() <= 96
+        && run_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
+fn append_toolbox_line(output: &mut String, line: &str) {
+    if !output.is_empty() && !output.ends_with('\n') {
+        output.push('\n');
+    }
+    output.push_str(line.trim_end_matches(['\r', '\n']));
+}
+
+/// AMST carries a real PTY, so its output can contain terminal title and color
+/// sequences. Keep the useful text/progress while preventing raw escape codes
+/// from leaking into the Toolbox progress cards.
+fn clean_toolbox_output(input: &[u8]) -> String {
+    let mut clean = Vec::with_capacity(input.len());
+    let mut index = 0;
+    while index < input.len() {
+        match input[index] {
+            0x1b if input.get(index + 1) == Some(&b'[') => {
+                index += 2;
+                while index < input.len() {
+                    let byte = input[index];
+                    index += 1;
+                    if (0x40..=0x7e).contains(&byte) {
+                        break;
+                    }
+                }
+            }
+            0x1b if input.get(index + 1) == Some(&b']') => {
+                index += 2;
+                while index < input.len() {
+                    if input[index] == 0x07 {
+                        index += 1;
+                        break;
+                    }
+                    if input[index] == 0x1b && input.get(index + 1) == Some(&b'\\') {
+                        index += 2;
+                        break;
+                    }
+                    index += 1;
+                }
+            }
+            0x1b => index = (index + 2).min(input.len()),
+            byte if byte == b'\t' || byte >= 0x20 => {
+                clean.push(byte);
+                index += 1;
+            }
+            _ => index += 1,
+        }
+    }
+    String::from_utf8_lossy(&clean).into_owned()
+}
+
+fn emit_toolbox_progress(app: &tauri::AppHandle, run_id: &str, stream: &str, line: &str) {
+    let chunk = line.trim_end_matches(['\r', '\n']);
+    if chunk.is_empty() {
+        return;
+    }
+    let _ = app.emit(
+        "toolbox://progress",
+        json!({ "runId": run_id, "stream": stream, "chunk": chunk }),
+    );
 }
 
 /// Temps alone — the sensor read without the full scan, cheap enough for the
@@ -1997,6 +2116,32 @@ mod tests {
             })
         ));
         assert_eq!(toolbox_spec("powershell -Command whatever"), None);
+    }
+
+    #[test]
+    fn toolbox_progress_run_ids_are_bounded_and_inert() {
+        assert!(toolbox_run_id_valid("sfc-1786123456789-1"));
+        assert!(toolbox_run_id_valid("disk_management_2"));
+        assert!(!toolbox_run_id_valid(""));
+        assert!(!toolbox_run_id_valid("sfc/../../other"));
+        assert!(!toolbox_run_id_valid(&"x".repeat(97)));
+    }
+
+    #[test]
+    fn toolbox_progress_lines_are_preserved_in_order() {
+        let mut output = String::new();
+        append_toolbox_line(&mut output, "Verification 10%\r");
+        append_toolbox_line(&mut output, "Verification 20%\n");
+        assert_eq!(output, "Verification 10%\nVerification 20%");
+    }
+
+    #[test]
+    fn toolbox_progress_strips_terminal_escape_sequences() {
+        assert_eq!(
+            clean_toolbox_output(b"\x1b[32mVerification 42%\x1b[0m"),
+            "Verification 42%"
+        );
+        assert_eq!(clean_toolbox_output(b"\x1b]0;PowerShell\x07Ready"), "Ready");
     }
 
     #[test]

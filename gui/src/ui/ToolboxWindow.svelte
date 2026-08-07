@@ -1,10 +1,25 @@
 <script lang="ts">
-  import { runToolboxAction, type ToolboxAction } from "../tauri";
+  import { onMount } from "svelte";
+  import {
+    onToolboxProgress,
+    runToolboxAction,
+    type ToolboxAction,
+    type ToolboxProgress,
+  } from "../tauri";
 
   type Tool = {
     id: ToolboxAction;
     title: string;
     description: string;
+  };
+
+  type Job = {
+    id: string;
+    action: ToolboxAction;
+    title: string;
+    output: string;
+    started: number;
+    status: "running" | "complete" | "failed";
   };
 
   const repairs: Tool[] = [
@@ -33,24 +48,89 @@
     { id: "resource_monitor", title: "Resource Monitor", description: "Inspect detailed CPU, memory, disk, and network activity." },
   ];
 
-  let running = $state<ToolboxAction | null>(null);
   let advanced = $state(false);
-  let message = $state("");
-  let failed = $state(false);
+  let jobs = $state<Job[]>([]);
+  let now = $state(Date.now());
+  let runSequence = 0;
+  let progressReady: Promise<void> = Promise.resolve();
+  const MAX_PROGRESS_CHARS = 24_000;
+
+  function running(action: ToolboxAction): boolean {
+    return jobs.some((job) => job.action === action && job.status === "running");
+  }
+
+  function appendOutput(current: string, chunk: string): string {
+    const combined = current ? `${current}\n${chunk}` : chunk;
+    if (combined.length <= MAX_PROGRESS_CHARS) return combined;
+    return `... earlier output trimmed ...\n${combined.slice(-MAX_PROGRESS_CHARS)}`;
+  }
+
+  function updateJob(id: string, update: (job: Job) => Job): void {
+    jobs = jobs.map((job) => (job.id === id ? update(job) : job));
+  }
+
+  function receiveProgress(progress: ToolboxProgress): void {
+    updateJob(progress.runId, (job) => ({
+      ...job,
+      output: appendOutput(
+        job.output,
+        progress.stream === "stderr" ? `Warning: ${progress.chunk}` : progress.chunk,
+      ),
+    }));
+  }
+
+  function elapsed(job: Job): string {
+    const seconds = Math.max(0, Math.floor((now - job.started) / 1000));
+    if (seconds < 60) return `${seconds}s`;
+    return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  }
+
+  onMount(() => {
+    let disposed = false;
+    let stopProgress: (() => void) | null = null;
+    progressReady = onToolboxProgress(receiveProgress)
+      .then((stop) => {
+        if (disposed) stop();
+        else stopProgress = stop;
+      })
+      .catch(() => {});
+    const ticker = window.setInterval(() => (now = Date.now()), 1000);
+    return () => {
+      disposed = true;
+      stopProgress?.();
+      window.clearInterval(ticker);
+    };
+  });
 
   async function run(tool: Tool): Promise<void> {
-    if (running) return;
-    running = tool.id;
-    failed = false;
-    message = `${tool.title} is starting…`;
+    if (running(tool.id)) return;
+    const runId = `${tool.id}-${Date.now()}-${++runSequence}`;
+    jobs = [
+      {
+        id: runId,
+        action: tool.id,
+        title: tool.title,
+        output: "",
+        started: Date.now(),
+        status: "running",
+      },
+      ...jobs,
+    ];
+    await progressReady;
     try {
-      const result = await runToolboxAction(tool.id);
-      message = result.output || `${tool.title} completed.`;
+      const result = await runToolboxAction(tool.id, runId);
+      updateJob(runId, (job) => ({
+        ...job,
+        status: "complete",
+        output: job.output || result.output || `${tool.title} completed.`,
+      }));
     } catch (error) {
-      failed = true;
-      message = error instanceof Error ? error.message : String(error);
-    } finally {
-      running = null;
+      const detail = error instanceof Error ? error.message : String(error);
+      updateJob(runId, (job) => ({
+        ...job,
+        status: "failed",
+        output: job.output || detail,
+      }));
     }
   }
 </script>
@@ -69,16 +149,6 @@
   </header>
 
   <main>
-    <div class="mode-row">
-      <div class="mode-group" role="group" aria-label="Toolbox mode">
-        <button
-          class:active={advanced}
-          aria-pressed={advanced}
-          onclick={() => (advanced = !advanced)}
-        >{advanced ? "Hide Advanced" : "Show Advanced"}</button>
-      </div>
-    </div>
-
     <section aria-labelledby="repair-title">
       <div class="section-heading">
         <h2 id="repair-title">Check & repair</h2>
@@ -86,13 +156,13 @@
       </div>
       <div class="grid">
         {#each repairs as tool (tool.id)}
-          <button class="tool repair" disabled={running !== null} onclick={() => void run(tool)}>
-            <span class="tool-icon" aria-hidden="true">✓</span>
+          <button class="tool repair" disabled={running(tool.id)} onclick={() => void run(tool)}>
+            <span class="tool-icon" aria-hidden="true">&#10003;</span>
             <span class="tool-copy">
               <strong>{tool.title}</strong>
               <small>{tool.description}</small>
             </span>
-            <span class="run-label">{running === tool.id ? "Running…" : "Run"}</span>
+            <span class="run-label">{running(tool.id) ? "Running…" : "Run"}</span>
           </button>
         {/each}
       </div>
@@ -105,8 +175,8 @@
       </div>
       <div class="grid">
         {#each consoles as tool (tool.id)}
-          <button class="tool" disabled={running !== null} onclick={() => void run(tool)}>
-            <span class="tool-icon" aria-hidden="true">↗</span>
+          <button class="tool" disabled={running(tool.id)} onclick={() => void run(tool)}>
+            <span class="tool-icon" aria-hidden="true">&#8599;</span>
             <span class="tool-copy">
               <strong>{tool.title}</strong>
               <small>{tool.description}</small>
@@ -125,7 +195,7 @@
         </div>
         <div class="grid">
           {#each advancedTools as tool (tool.id)}
-            <button class="tool advanced-tool" disabled={running !== null} onclick={() => void run(tool)}>
+            <button class="tool advanced-tool" disabled={running(tool.id)} onclick={() => void run(tool)}>
               <span class="tool-icon" aria-hidden="true">!</span>
               <span class="tool-copy">
                 <strong>{tool.title}</strong>
@@ -138,19 +208,45 @@
       </section>
     {/if}
 
-    {#if message}
-      <div class:failed class="status" role="status" aria-live="polite">
-        <span class="status-dot" aria-hidden="true"></span>
-        <pre>{message}</pre>
-        <button aria-label="Dismiss status" onclick={() => (message = "")}>×</button>
+    {#if jobs.length}
+      <div class="progress-list" aria-label="Toolbox task progress" aria-live="polite">
+        {#each jobs as job (job.id)}
+          <article class="status" class:running={job.status === "running"} class:failed={job.status === "failed"}>
+            <span class="status-dot" aria-hidden="true"></span>
+            <div class="status-body">
+              <div class="status-head">
+                <strong>{job.title}</strong>
+                <span>{job.status === "running" ? `Running · ${elapsed(job)}` : job.status === "failed" ? "Failed" : "Complete"}</span>
+              </div>
+              <pre>{job.output || `${job.title} is starting…`}</pre>
+            </div>
+            {#if job.status !== "running"}
+              <button aria-label="Dismiss {job.title} progress" onclick={() => (jobs = jobs.filter((item) => item.id !== job.id))}>&times;</button>
+            {/if}
+          </article>
+        {/each}
       </div>
     {/if}
+
+    <div class="mode-row">
+      <div class="mode-group" role="group" aria-label="Toolbox mode">
+        <button
+          class:active={advanced}
+          aria-pressed={advanced}
+          onclick={() => (advanced = !advanced)}
+        >{advanced ? "Hide Advanced" : "Show Advanced"}</button>
+      </div>
+    </div>
   </main>
 </div>
 
 <style>
   .toolbox-shell {
-    min-height: 100vh;
+    height: 100vh;
+    height: 100dvh;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
     background:
       radial-gradient(circle at 12% -8%, color-mix(in oklch, var(--accent) 12%, transparent), transparent 30rem),
       var(--bg);
@@ -158,33 +254,43 @@
   header {
     display: flex;
     align-items: center;
-    gap: 0.9rem;
-    padding: 1rem 1.35rem;
+    gap: 0.72rem;
+    padding: 0.72rem 1rem;
     border-bottom: 1px solid var(--line);
     background: color-mix(in oklch, var(--surface) 94%, transparent);
   }
   .header-mark {
-    width: 2.75rem;
-    height: 2.75rem;
+    width: 2.35rem;
+    height: 2.35rem;
     display: grid;
     place-items: center;
-    border-radius: 0.9rem;
+    border-radius: 0.8rem;
     color: var(--accent-ink);
     background: var(--accent-soft);
     border: 1px solid color-mix(in oklch, var(--accent) 40%, var(--line));
   }
-  .header-mark svg { width: 1.5rem; height: 1.5rem; }
-  h1 { margin: 0; font-size: 1.25rem; }
-  header p { margin: 0.16rem 0 0; color: var(--ink-soft); font-size: 0.84rem; }
+  .header-mark svg { width: 1.3rem; height: 1.3rem; }
+  h1 { margin: 0; font-size: 1.15rem; }
+  header p { margin: 0.1rem 0 0; color: var(--ink-soft); font-size: 0.78rem; }
   main {
-    width: min(100%, 68rem);
+    width: min(100%, 76rem);
+    height: 100%;
+    box-sizing: border-box;
     margin: 0 auto;
-    padding: 1.25rem;
+    padding: 0.85rem 1rem;
     display: grid;
-    gap: 1.45rem;
+    align-content: start;
+    gap: 0.9rem;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
-  section { display: grid; gap: 0.7rem; }
-  .mode-row { display: flex; justify-content: flex-end; }
+  section { display: grid; gap: 0.48rem; }
+  .mode-row {
+    display: flex;
+    justify-content: flex-end;
+    padding-top: 0.55rem;
+    border-top: 1px solid var(--line);
+  }
   .mode-group {
     display: inline-flex;
     padding: 0.22rem;
@@ -195,13 +301,13 @@
   }
   .mode-group button {
     min-width: 8.3rem;
-    padding: 0.52rem 0.78rem;
+    padding: 0.48rem 0.74rem;
     border: 1px solid transparent;
     border-radius: 0.52rem;
     color: var(--ink-soft);
     background: transparent;
     font: inherit;
-    font-size: 0.78rem;
+    font-size: 0.76rem;
     font-weight: 750;
   }
   .mode-group button:hover { color: var(--ink); background: var(--surface-2); }
@@ -217,17 +323,17 @@
     gap: 1rem;
     padding: 0 0.15rem;
   }
-  h2 { margin: 0; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.055em; }
-  .section-heading span { color: var(--ink-faint); font-size: 0.74rem; }
-  .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.7rem; }
+  h2 { margin: 0; font-size: 0.88rem; text-transform: uppercase; letter-spacing: 0.055em; }
+  .section-heading span { color: var(--ink-faint); font-size: 0.7rem; }
+  .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.52rem; }
   .tool {
     min-width: 0;
-    min-height: 5.2rem;
-    padding: 0.85rem;
+    min-height: 4.35rem;
+    padding: 0.65rem;
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
-    gap: 0.75rem;
+    gap: 0.58rem;
     text-align: left;
     color: var(--ink);
     background: var(--surface);
@@ -240,11 +346,11 @@
   .tool:active:not(:disabled) { transform: translateY(1px); }
   .tool:disabled { cursor: default; opacity: 0.58; }
   .tool-icon {
-    width: 2rem;
-    height: 2rem;
+    width: 1.8rem;
+    height: 1.8rem;
     display: grid;
     place-items: center;
-    border-radius: 0.65rem;
+    border-radius: 0.6rem;
     background: var(--surface-2);
     color: var(--ink-soft);
     font-weight: 800;
@@ -255,18 +361,17 @@
     color: var(--danger);
     background: color-mix(in oklch, var(--danger) 12%, var(--surface-2));
   }
-  .tool-copy { min-width: 0; display: grid; gap: 0.18rem; }
-  .tool-copy strong { font-size: 0.9rem; }
-  .tool-copy small { color: var(--ink-soft); line-height: 1.35; font-size: 0.72rem; }
-  .run-label { color: var(--accent-ink); font-size: 0.74rem; font-weight: 700; }
+  .tool-copy { min-width: 0; display: grid; gap: 0.14rem; }
+  .tool-copy strong { font-size: 0.84rem; }
+  .tool-copy small { color: var(--ink-soft); line-height: 1.28; font-size: 0.68rem; }
+  .run-label { color: var(--accent-ink); font-size: 0.7rem; font-weight: 700; }
+  .progress-list { display: grid; gap: 0.5rem; }
   .status {
-    position: sticky;
-    bottom: 1rem;
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: start;
     gap: 0.7rem;
-    padding: 0.85rem 0.95rem;
+    padding: 0.68rem 0.8rem;
     border: 1px solid color-mix(in oklch, var(--ok) 45%, var(--line));
     border-radius: var(--r-md);
     background: color-mix(in oklch, var(--surface) 96%, var(--ok));
@@ -274,10 +379,18 @@
   }
   .status.failed { border-color: color-mix(in oklch, var(--danger) 48%, var(--line)); }
   .status-dot { width: 0.55rem; height: 0.55rem; margin-top: 0.35rem; border-radius: 50%; background: var(--ok); }
+  .status.running .status-dot { background: var(--accent); animation: progress-pulse 1.1s ease-in-out infinite; }
   .failed .status-dot { background: var(--danger); }
-  pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 10rem; overflow: auto; font: 0.74rem/1.5 var(--mono); color: var(--ink-soft); }
+  .status-body { min-width: 0; display: grid; gap: 0.3rem; }
+  .status-head { display: flex; justify-content: space-between; gap: 0.8rem; font-size: 0.77rem; }
+  .status-head span { color: var(--ink-faint); font-size: 0.7rem; white-space: nowrap; }
+  pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 7rem; overflow: auto; font: 0.72rem/1.42 var(--mono); color: var(--ink-soft); }
   .status button { border: 0; background: transparent; color: var(--ink-faint); font-size: 1.2rem; padding: 0 0.2rem; }
-  @media (max-width: 700px) {
+  @keyframes progress-pulse { 50% { opacity: 0.38; transform: scale(0.78); } }
+  @media (max-width: 850px) {
+    .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 620px) {
     .grid { grid-template-columns: 1fr; }
     .section-heading { align-items: flex-start; flex-direction: column; gap: 0.2rem; }
   }

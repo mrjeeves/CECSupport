@@ -78,11 +78,17 @@ export interface ToolboxResult {
   output: string;
 }
 
+export interface ToolboxProgress {
+  runId: string;
+  stream: "stdout" | "stderr";
+  chunk: string;
+}
+
 /** Open the dedicated Toolbox window. In browser preview mode, open the same
  * query-routed Svelte surface in a normal popup. */
 export async function openToolbox(): Promise<void> {
   if (!isTauri()) {
-    window.open("?toolbox=1", "cec-toolbox", "popup,width=860,height=700");
+    window.open("?toolbox=1", "cec-toolbox", "popup,width=1040,height=760");
     return;
   }
   await rawInvoke<void>("open_toolbox");
@@ -90,12 +96,21 @@ export async function openToolbox(): Promise<void> {
 
 /** Run one backend-allowlisted maintenance action. Errors deliberately reach
  * the Toolbox so a failed repair never looks like success. */
-export async function runToolboxAction(action: ToolboxAction): Promise<ToolboxResult> {
+export async function runToolboxAction(action: ToolboxAction, runId: string): Promise<ToolboxResult> {
   if (!isTauri()) {
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await new Promise((resolve) => setTimeout(resolve, 1200));
     return { ok: true, label: action, output: "Preview mode: action not run." };
   }
-  return rawInvoke<ToolboxResult>("toolbox_run", { action });
+  return rawInvoke<ToolboxResult>("toolbox_run", { action, runId });
+}
+
+/** Stream stdout/stderr from independently running Toolbox repairs. */
+export async function onToolboxProgress(
+  cb: (progress: ToolboxProgress) => void,
+): Promise<() => void> {
+  if (!isTauri()) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<ToolboxProgress>("toolbox://progress", (event) => cb(event.payload));
 }
 
 async function rawInvoke<T>(
