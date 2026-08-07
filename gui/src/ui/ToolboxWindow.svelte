@@ -35,11 +35,12 @@
     { id: "services", title: "Services", description: "Inspect Windows background services." },
     { id: "system_information", title: "System Information", description: "Open the detailed hardware and OS summary." },
     { id: "task_manager", title: "Task Manager", description: "Open process and performance diagnostics." },
+    { id: "windows_settings", title: "Windows Settings", description: "Open the main Windows Settings app." },
   ];
 
   const advancedTools: Tool[] = [
     { id: "control_panel", title: "Control Panel", description: "Open the original Windows Control Panel." },
-    { id: "windows_settings", title: "Windows Settings", description: "Open the main Windows Settings app." },
+    { id: "crucible_tests", title: "Crucible Tests", description: "Open the interactive administrator stress-test console." },
     { id: "registry_editor", title: "Registry Editor", description: "Inspect and edit the Windows registry." },
     { id: "disk_management", title: "Disk Management", description: "Manage disks, partitions, and drive letters." },
     { id: "computer_management", title: "Computer Management", description: "Open the combined Windows management console." },

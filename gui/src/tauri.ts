@@ -65,6 +65,7 @@ export type ToolboxAction =
   | "task_manager"
   | "control_panel"
   | "windows_settings"
+  | "crucible_tests"
   | "registry_editor"
   | "disk_management"
   | "computer_management"

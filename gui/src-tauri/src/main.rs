@@ -276,6 +276,7 @@ async fn open_kvm_store(app: tauri::AppHandle) -> Result<(), String> {
 enum ToolboxKind {
     AdminTerminal(&'static str),
     WindowsProgram(&'static str, &'static [&'static str]),
+    ElevatedSidecar(&'static str),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -329,6 +330,10 @@ fn toolbox_spec(action: &str) -> Option<ToolboxSpec> {
         "windows_settings" => ToolboxSpec {
             label: "Windows Settings",
             kind: ToolboxKind::WindowsProgram("explorer.exe", &["ms-settings:"]),
+        },
+        "crucible_tests" => ToolboxSpec {
+            label: "Crucible Tests",
+            kind: ToolboxKind::ElevatedSidecar("cec-crucible"),
         },
         "registry_editor" => ToolboxSpec {
             label: "Registry Editor",
@@ -480,7 +485,69 @@ async fn toolbox_run_spec(
                 json!({ "ok": true, "label": spec.label, "output": format!("{} opened.", spec.label) }),
             )
         }
+        ToolboxKind::ElevatedSidecar(base) => {
+            launch_elevated_sidecar(base)?;
+            Ok(json!({
+                "ok": true,
+                "label": spec.label,
+                "output": format!("{} opened in an administrator terminal.", spec.label),
+            }))
+        }
     }
+}
+
+#[cfg(windows)]
+fn launch_elevated_sidecar(base: &str) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt as _;
+    use std::ptr::{null, null_mut};
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    fn wide(value: &std::ffi::OsStr) -> Vec<u16> {
+        value.encode_wide().chain(std::iter::once(0)).collect()
+    }
+
+    let app_exe = std::env::current_exe()
+        .map_err(|e| format!("finding the CEC Support installation: {e}"))?;
+    let install_dir = app_exe
+        .parent()
+        .ok_or_else(|| "CEC Support installation has no parent directory".to_string())?;
+    let sidecar = install_dir.join(format!("{base}.exe"));
+    if !sidecar.is_file() {
+        return Err(format!(
+            "the bundled Crucible executable is missing from {}",
+            sidecar.display()
+        ));
+    }
+
+    let work_dir = std::env::var_os("PROGRAMDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| install_dir.to_path_buf())
+        .join("Critical Error Computing")
+        .join("Crucible");
+    std::fs::create_dir_all(&work_dir)
+        .map_err(|e| format!("creating the Crucible report folder: {e}"))?;
+
+    let verb = wide(std::ffi::OsStr::new("runas"));
+    let file = wide(sidecar.as_os_str());
+    let directory = wide(work_dir.as_os_str());
+    let result = unsafe {
+        ShellExecuteW(
+            null_mut(),
+            verb.as_ptr(),
+            file.as_ptr(),
+            null(),
+            directory.as_ptr(),
+            SW_SHOWNORMAL,
+        )
+    };
+    if result as isize <= 32 {
+        return Err(format!(
+            "Windows could not open Crucible as administrator (ShellExecute code {})",
+            result as isize
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(not(windows))]
@@ -2112,6 +2179,13 @@ mod tests {
             toolbox_spec("registry_editor"),
             Some(ToolboxSpec {
                 kind: ToolboxKind::WindowsProgram("regedit.exe", _),
+                ..
+            })
+        ));
+        assert!(matches!(
+            toolbox_spec("crucible_tests"),
+            Some(ToolboxSpec {
+                kind: ToolboxKind::ElevatedSidecar("cec-crucible"),
                 ..
             })
         ));

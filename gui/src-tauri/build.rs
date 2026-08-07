@@ -7,7 +7,10 @@
 //!     pinned in `.allmystuff-rev`, fetched from AllMyStuff's GitHub Releases.
 //!
 //! `amst` is bundled from the same AllMyStuff release for attached Toolbox
-//! repairs. All three sidecars are dropped at
+//! repairs. `cec-crucible` and its colocated `PresentMon` helper are bundled
+//! from the release pinned by `.crucible-rev`; that upstream release has no
+//! checksum asset, so its GitHub digest is pinned in `.crucible-sha256`.
+//! Sidecars are dropped at
 //! `binaries/<base>-<target-triple>{.exe}`;
 //! `tauri.conf.json`'s `externalBin` then ships them *inside* the app bundle
 //! (the NSIS `setup.exe` / `.msi`). Resolution order for each, mirroring
@@ -46,6 +49,18 @@ struct Sidecar {
     /// Sub-path from the sibling repo root to its cargo `target/` dir
     /// (`""` for MyOwnMesh, `"node"` for AllMyStuff's node workspace).
     sibling_target_sub: &'static str,
+    /// Release archive naming/layout convention.
+    asset_style: AssetStyle,
+    /// Optional repo-root SHA-256 pin (for upstreams without checksum assets).
+    sha256_file: Option<&'static str>,
+    /// Files extracted beside the main binary and their `externalBin` bases.
+    companions: &'static [(&'static str, &'static str)],
+}
+
+#[derive(Clone, Copy)]
+enum AssetStyle {
+    Standard,
+    CrucibleWindows,
 }
 
 const SIDECARS: &[Sidecar] = &[
@@ -56,6 +71,9 @@ const SIDECARS: &[Sidecar] = &[
         bin_env: "MYOWNMESH_BIN",
         sibling_repo: "MyOwnMesh",
         sibling_target_sub: "",
+        asset_style: AssetStyle::Standard,
+        sha256_file: None,
+        companions: &[],
     },
     Sidecar {
         base: "allmystuff-serve",
@@ -64,6 +82,9 @@ const SIDECARS: &[Sidecar] = &[
         bin_env: "ALLMYSTUFF_SERVE_BIN",
         sibling_repo: "AllMyStuff",
         sibling_target_sub: "node",
+        asset_style: AssetStyle::Standard,
+        sha256_file: None,
+        companions: &[],
     },
     // Toolbox runs repairs through the same attached AllMyStuff terminal that
     // a technician uses, so there is one authorization and privilege path.
@@ -74,6 +95,20 @@ const SIDECARS: &[Sidecar] = &[
         bin_env: "AMST_BIN",
         sibling_repo: "AllMyStuff",
         sibling_target_sub: "",
+        asset_style: AssetStyle::Standard,
+        sha256_file: None,
+        companions: &[],
+    },
+    Sidecar {
+        base: "cec-crucible",
+        repo: "https://github.com/nathanfraske/cec-crucible",
+        rev_file: ".crucible-rev",
+        bin_env: "CEC_CRUCIBLE_BIN",
+        sibling_repo: "cec-crucible",
+        sibling_target_sub: "",
+        asset_style: AssetStyle::CrucibleWindows,
+        sha256_file: Some(".crucible-sha256"),
+        companions: &[("PresentMon.exe", "PresentMon")],
     },
 ];
 
@@ -100,6 +135,12 @@ fn main() {
 
     for sc in SIDECARS {
         println!("cargo:rerun-if-changed={}", rev_file(sc).display());
+        if let Some(file) = sc.sha256_file {
+            println!(
+                "cargo:rerun-if-changed={}",
+                repo_root().join(file).display()
+            );
+        }
         println!("cargo:rerun-if-env-changed={}", sc.bin_env);
         if let Err(e) = bundle_sidecar(sc) {
             if require {
@@ -245,7 +286,11 @@ fn binaries_dir() -> PathBuf {
 
 /// The `externalBin` slot for this sidecar: `binaries/<base>-<triple>{.exe}`.
 fn slot_path(sc: &Sidecar) -> PathBuf {
-    binaries_dir().join(format!("{}-{}{}", sc.base, target_triple(), exe_suffix()))
+    slot_path_for(sc.base)
+}
+
+fn slot_path_for(base: &str) -> PathBuf {
+    binaries_dir().join(format!("{}-{}{}", base, target_triple(), exe_suffix()))
 }
 
 /// The repo root — two parents up from `gui/src-tauri`.
@@ -296,9 +341,10 @@ fn bundle_sidecar(sc: &Sidecar) -> Result<(), String> {
         let p = PathBuf::from(p);
         if nonempty_file(&p) {
             let sig = format!("bin:{}:{}", p.display(), file_mtime(&p));
-            let fresh = !staged_matches(&slot, &sentinel, &sig);
+            let fresh = !sidecar_staged_matches(sc, &slot, &sentinel, &sig);
             if fresh {
                 stage(&p, &slot)?;
+                stage_companions_from_dir(sc, p.parent().unwrap_or_else(|| Path::new(".")))?;
             }
             verify_slot(sc, &slot, pin, false)?;
             if fresh {
@@ -319,9 +365,10 @@ fn bundle_sidecar(sc: &Sidecar) -> Result<(), String> {
             println!("cargo:rerun-if-changed={}", p.display());
             if sibling_is_current(sc, &p) {
                 let sig = format!("sib:{}:{}", p.display(), file_mtime(&p));
-                let fresh = !staged_matches(&slot, &sentinel, &sig);
+                let fresh = !sidecar_staged_matches(sc, &slot, &sentinel, &sig);
                 if fresh {
                     stage(&p, &slot)?;
+                    stage_companions_from_dir(sc, p.parent().unwrap_or_else(|| Path::new(".")))?;
                 }
                 verify_slot(sc, &slot, pin, false)?;
                 if fresh {
@@ -354,7 +401,7 @@ fn bundle_sidecar(sc: &Sidecar) -> Result<(), String> {
         .filter(|s| !s.is_empty())
         .ok_or_else(|| format!("no {} pin and no override/sibling binary", sc.rev_file))?;
     let sig = format!("rev:{rev}");
-    if staged_matches(&slot, &sentinel, &sig) {
+    if sidecar_staged_matches(sc, &slot, &sentinel, &sig) {
         verify_slot(sc, &slot, pin, true)?;
         return Ok(());
     }
@@ -364,6 +411,7 @@ fn bundle_sidecar(sc: &Sidecar) -> Result<(), String> {
 
     let staged_bin = download_release_asset(sc, &rev, &staging)?;
     stage(&staged_bin, &slot)?;
+    stage_companions_from_dir(sc, &staging)?;
     verify_slot(sc, &slot, pin, true)?;
     let _ = fs::write(&sentinel, &sig);
     println!(
@@ -417,6 +465,14 @@ fn staged_matches(slot: &Path, sentinel: &Path, sig: &str) -> bool {
         && fs::read_to_string(sentinel)
             .map(|s| s.trim() == sig)
             .unwrap_or(false)
+}
+
+fn sidecar_staged_matches(sc: &Sidecar, slot: &Path, sentinel: &Path, sig: &str) -> bool {
+    staged_matches(slot, sentinel, sig)
+        && sc
+            .companions
+            .iter()
+            .all(|(_, base)| nonempty_file(&slot_path_for(base)))
 }
 
 fn file_mtime(p: &Path) -> u64 {
@@ -629,27 +685,43 @@ fn run_bounded(cmd: &mut Command, what: &str, secs: u64) -> Result<std::process:
 /// Verify a downloaded archive against the `<asset>.sha256` its release
 /// publishes. Fails closed: no readable checksum, no bundle — a release
 /// asset without its checksum is as suspect as a mismatch.
-fn verify_archive_sha256(archive: &Path, url: &str) -> Result<(), String> {
-    let sha_url = format!("{url}.sha256");
-    let out = run_bounded(
-        Command::new("curl").args([
-            "-fSL",
-            "--connect-timeout",
-            "15",
-            "--max-time",
-            "30",
-            &sha_url,
-        ]),
-        "sha256 fetch",
-        45,
-    )?;
-    if !out.status.success() {
-        return Err(format!("couldn't fetch {sha_url} to verify the download"));
-    }
-    let text = String::from_utf8_lossy(&out.stdout);
-    let want = text.split_whitespace().next().unwrap_or("").to_lowercase();
+fn verify_archive_sha256(sc: &Sidecar, archive: &Path, url: &str) -> Result<(), String> {
+    let (want, source) = if let Some(file) = sc.sha256_file {
+        let path = repo_root().join(file);
+        let text = fs::read_to_string(&path)
+            .map_err(|e| format!("couldn't read pinned checksum {}: {e}", path.display()))?;
+        (
+            text.split_whitespace().next().unwrap_or("").to_lowercase(),
+            path.display().to_string(),
+        )
+    } else {
+        let sha_url = format!("{url}.sha256");
+        let out = run_bounded(
+            Command::new("curl").args([
+                "-fSL",
+                "--connect-timeout",
+                "15",
+                "--max-time",
+                "30",
+                &sha_url,
+            ]),
+            "sha256 fetch",
+            45,
+        )?;
+        if !out.status.success() {
+            return Err(format!("couldn't fetch {sha_url} to verify the download"));
+        }
+        (
+            String::from_utf8_lossy(&out.stdout)
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_lowercase(),
+            sha_url,
+        )
+    };
     if want.len() != 64 || !want.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(format!("{sha_url} didn't contain a sha256"));
+        return Err(format!("{source} didn't contain a sha256"));
     }
     let bytes = fs::read(archive).map_err(|e| e.to_string())?;
     let got = {
@@ -669,10 +741,23 @@ fn verify_archive_sha256(archive: &Path, url: &str) -> Result<(), String> {
 
 fn download_release_asset(sc: &Sidecar, tag: &str, staging: &Path) -> Result<PathBuf, String> {
     let triple = target_triple();
-    let platform = release_platform_name(&triple)?;
     let windows = triple.contains("windows");
-    let archive_ext = if windows { "zip" } else { "tar.gz" };
-    let asset = format!("{}-{platform}.{archive_ext}", sc.base);
+    let asset = match sc.asset_style {
+        AssetStyle::Standard => {
+            let platform = release_platform_name(&triple)?;
+            let archive_ext = if windows { "zip" } else { "tar.gz" };
+            format!("{}-{platform}.{archive_ext}", sc.base)
+        }
+        AssetStyle::CrucibleWindows => {
+            if !windows || !triple.contains("x86_64") {
+                return Err("Crucible currently publishes only a Windows x64 sidecar".into());
+            }
+            format!(
+                "cec-crucible-{}-win-x64.zip",
+                tag.strip_prefix('v').unwrap_or(tag)
+            )
+        }
+    };
     let url = format!("{}/releases/download/{tag}/{asset}", sc.repo);
     let archive = staging.join(&asset);
     let _ = fs::remove_file(&archive);
@@ -713,7 +798,7 @@ fn download_release_asset(sc: &Sidecar, tag: &str, staging: &Path) -> Result<Pat
     // The release publishes `<asset>.sha256` — verify before trusting the
     // bytes. A proxy error page or truncated download must never become the
     // bundled mesh engine.
-    verify_archive_sha256(&archive, &url)?;
+    verify_archive_sha256(sc, &archive, &url)?;
 
     if windows {
         let out = run_bounded(
@@ -759,6 +844,9 @@ fn download_release_asset(sc: &Sidecar, tag: &str, staging: &Path) -> Result<Pat
         ));
     }
     validate_binary(&bin)?;
+    for (filename, _) in sc.companions {
+        validate_binary(&staging.join(filename))?;
+    }
     Ok(bin)
 }
 
@@ -784,6 +872,21 @@ fn stage(src: &Path, dst: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn stage_companions_from_dir(sc: &Sidecar, source_dir: &Path) -> Result<(), String> {
+    for (filename, slot_base) in sc.companions {
+        let source = source_dir.join(filename);
+        if !nonempty_file(&source) {
+            return Err(format!(
+                "{} requires companion {} beside its main executable",
+                sc.base, filename
+            ));
+        }
+        validate_binary(&source)?;
+        stage(&source, &slot_path_for(slot_base))?;
+    }
+    Ok(())
+}
+
 /// Zero-byte placeholder so `tauri_build`'s `externalBin` existence check passes
 /// when no real binary could be staged. The runtime ignores zero-byte stubs.
 fn write_stub(sc: &Sidecar) -> Result<(), String> {
@@ -793,6 +896,13 @@ fn write_stub(sc: &Sidecar) -> Result<(), String> {
     if !p.exists() {
         fs::write(&p, b"").map_err(|e| e.to_string())?;
         make_executable(&p);
+    }
+    for (_, base) in sc.companions {
+        let companion = slot_path_for(base);
+        if !companion.exists() {
+            fs::write(&companion, b"").map_err(|e| e.to_string())?;
+            make_executable(&companion);
+        }
     }
     Ok(())
 }
