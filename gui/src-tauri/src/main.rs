@@ -268,6 +268,148 @@ async fn open_kvm_store(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+// ---------------------------------------------------------------------------
+// Toolbox
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ToolboxKind {
+    AdminTerminal(&'static str),
+    WindowsProgram(&'static str, &'static [&'static str]),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ToolboxSpec {
+    label: &'static str,
+    kind: ToolboxKind,
+}
+
+fn toolbox_spec(action: &str) -> Option<ToolboxSpec> {
+    Some(match action {
+        "sfc" => ToolboxSpec {
+            label: "System File Checker",
+            kind: ToolboxKind::AdminTerminal("sfc.exe /scannow"),
+        },
+        "dism" => ToolboxSpec {
+            label: "Windows image repair",
+            kind: ToolboxKind::AdminTerminal("DISM.exe /Online /Cleanup-Image /RestoreHealth"),
+        },
+        "chkdsk" => ToolboxSpec {
+            label: "Online disk scan",
+            kind: ToolboxKind::AdminTerminal("chkdsk.exe /scan"),
+        },
+        "flush_dns" => ToolboxSpec {
+            label: "Flush DNS cache",
+            kind: ToolboxKind::AdminTerminal("ipconfig.exe /flushdns"),
+        },
+        "event_viewer" => ToolboxSpec {
+            label: "Event Viewer",
+            kind: ToolboxKind::WindowsProgram("mmc.exe", &["eventvwr.msc"]),
+        },
+        "device_manager" => ToolboxSpec {
+            label: "Device Manager",
+            kind: ToolboxKind::WindowsProgram("mmc.exe", &["devmgmt.msc"]),
+        },
+        "services" => ToolboxSpec {
+            label: "Services",
+            kind: ToolboxKind::WindowsProgram("mmc.exe", &["services.msc"]),
+        },
+        "system_information" => ToolboxSpec {
+            label: "System Information",
+            kind: ToolboxKind::WindowsProgram("msinfo32.exe", &[]),
+        },
+        "task_manager" => ToolboxSpec {
+            label: "Task Manager",
+            kind: ToolboxKind::WindowsProgram("taskmgr.exe", &[]),
+        },
+        _ => return None,
+    })
+}
+
+/// Open (or foreground) the dedicated Toolbox webview. Rust owns window
+/// creation so the main webview never gets a create-any-window capability.
+#[tauri::command]
+async fn open_toolbox(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("toolbox") {
+        let _ = window.unminimize();
+        window.show().map_err(|e| e.to_string())?;
+        return window.set_focus().map_err(|e| e.to_string());
+    }
+
+    tauri::WebviewWindowBuilder::new(
+        &app,
+        "toolbox",
+        tauri::WebviewUrl::App("index.html?toolbox=1".into()),
+    )
+    .title("CEC Support Toolbox")
+    .inner_size(860.0, 700.0)
+    .min_inner_size(620.0, 520.0)
+    .resizable(true)
+    .center()
+    .build()
+    .map(|_| ())
+    .map_err(|e| e.to_string())
+}
+
+/// Run one fixed Toolbox action. No arbitrary command crosses the webview
+/// boundary; administrator repairs use AMST's normal attached terminal route.
+#[tauri::command]
+async fn toolbox_run(app: tauri::AppHandle, action: String) -> Result<Value, String> {
+    let spec = toolbox_spec(&action).ok_or_else(|| format!("unknown Toolbox action: {action}"))?;
+    toolbox_run_spec(app, spec).await
+}
+
+#[cfg(windows)]
+async fn toolbox_run_spec(app: tauri::AppHandle, spec: ToolboxSpec) -> Result<Value, String> {
+    match spec.kind {
+        ToolboxKind::AdminTerminal(command) => {
+            use tauri_plugin_shell::ShellExt as _;
+
+            let output = app
+                .shell()
+                .sidecar("amst")
+                .map_err(|e| format!("finding the bundled AMST terminal: {e}"))?
+                .args(["--admin", "--run", command])
+                .output()
+                .await
+                .map_err(|e| format!("starting {}: {e}", spec.label))?;
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            if !output.status.success() {
+                let detail = if stderr.is_empty() { stdout } else { stderr };
+                return Err(if detail.is_empty() {
+                    format!("{} failed", spec.label)
+                } else {
+                    format!("{} failed: {detail}", spec.label)
+                });
+            }
+            Ok(json!({
+                "ok": true,
+                "label": spec.label,
+                "output": if stdout.is_empty() { format!("{} completed.", spec.label) } else { stdout },
+            }))
+        }
+        ToolboxKind::WindowsProgram(program, args) => {
+            use std::os::windows::process::CommandExt as _;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+            std::process::Command::new(program)
+                .args(args)
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn()
+                .map_err(|e| format!("opening {}: {e}", spec.label))?;
+            Ok(
+                json!({ "ok": true, "label": spec.label, "output": format!("{} opened.", spec.label) }),
+            )
+        }
+    }
+}
+
+#[cfg(not(windows))]
+async fn toolbox_run_spec(_app: tauri::AppHandle, _spec: ToolboxSpec) -> Result<Value, String> {
+    Err("The repair Toolbox is currently available on Windows.".into())
+}
+
 /// Temps alone — the sensor read without the full scan, cheap enough for the
 /// spec card to poll so its one moving number actually moves.
 #[tauri::command]
@@ -1362,6 +1504,8 @@ fn run_gui() -> ExitCode {
             open_tiktok,
             open_allmystuff_works,
             open_kvm_store,
+            open_toolbox,
+            toolbox_run,
             cec_pending,
             cec_approve,
             cec_deny,
@@ -1401,17 +1545,19 @@ fn run_gui() -> ExitCode {
             update_set_prefs,
         ])
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // Close means close — quitting is the default. Only the
-                // explicit "keep running in the background" option turns the
-                // close into a hide-to-tray (Quit then lives in the tray menu).
-                let keep = window
-                    .state::<AppState>()
-                    .keep_background
-                    .load(std::sync::atomic::Ordering::Relaxed);
-                if keep {
-                    api.prevent_close();
-                    let _ = window.hide();
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    // Close means close — quitting is the default. Only the
+                    // explicit "keep running in the background" option turns the
+                    // close into a hide-to-tray (Quit then lives in the tray menu).
+                    let keep = window
+                        .state::<AppState>()
+                        .keep_background
+                        .load(std::sync::atomic::Ordering::Relaxed);
+                    if keep {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    }
                 }
             }
         })
@@ -1793,6 +1939,25 @@ mod tests {
             Some(ServiceCmd::Uninstall)
         ));
         assert!(service_cmd("frobnicate").is_none());
+    }
+
+    #[test]
+    fn toolbox_is_a_fixed_allowlist() {
+        assert_eq!(
+            toolbox_spec("sfc"),
+            Some(ToolboxSpec {
+                label: "System File Checker",
+                kind: ToolboxKind::AdminTerminal("sfc.exe /scannow"),
+            })
+        );
+        assert!(matches!(
+            toolbox_spec("device_manager"),
+            Some(ToolboxSpec {
+                kind: ToolboxKind::WindowsProgram("mmc.exe", _),
+                ..
+            })
+        ));
+        assert_eq!(toolbox_spec("powershell -Command whatever"), None);
     }
 
     #[test]

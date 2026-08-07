@@ -1,4 +1,4 @@
-//! Build-time bundling of the two sidecars the CEC Support client ships beside
+//! Build-time bundling of the sidecars the CEC Support client ships beside
 //! itself, so a customer installs one file and never has to fetch anything:
 //!
 //!   * `myownmesh`        — the MyOwnMesh peer-to-peer daemon the node runs on,
@@ -6,7 +6,9 @@
 //!   * `allmystuff-serve` — the AllMyStuff node binary, run in CEC client mode,
 //!     pinned in `.allmystuff-rev`, fetched from AllMyStuff's GitHub Releases.
 //!
-//! Both are dropped at `binaries/<base>-<target-triple>{.exe}`;
+//! `amst` is bundled from the same AllMyStuff release for attached Toolbox
+//! repairs. All three sidecars are dropped at
+//! `binaries/<base>-<target-triple>{.exe}`;
 //! `tauri.conf.json`'s `externalBin` then ships them *inside* the app bundle
 //! (the NSIS `setup.exe` / `.msi`). Resolution order for each, mirroring
 //! AllMyStuff's own sidecar build script:
@@ -62,6 +64,16 @@ const SIDECARS: &[Sidecar] = &[
         bin_env: "ALLMYSTUFF_SERVE_BIN",
         sibling_repo: "AllMyStuff",
         sibling_target_sub: "node",
+    },
+    // Toolbox runs repairs through the same attached AllMyStuff terminal that
+    // a technician uses, so there is one authorization and privilege path.
+    Sidecar {
+        base: "amst",
+        repo: "https://github.com/mrjeeves/AllMyStuff",
+        rev_file: ".allmystuff-rev",
+        bin_env: "AMST_BIN",
+        sibling_repo: "AllMyStuff",
+        sibling_target_sub: "",
     },
 ];
 

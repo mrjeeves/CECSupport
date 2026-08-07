@@ -719,7 +719,7 @@ dependencies = [
 
 [[package]]
 name = "cec-support"
-version = "0.2.38"
+version = "0.2.39"
 dependencies = [
  "allmystuff-cec-consent",
  "allmystuff-cec-protocol",
@@ -746,7 +746,7 @@ dependencies = [
 
 [[package]]
 name = "cec-support-service"
-version = "0.2.38"
+version = "0.2.39"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
@@ -757,7 +757,7 @@ dependencies = [
 
 [[package]]
 name = "cec-support-updater"
-version = "0.2.38"
+version = "0.2.39"
 dependencies = [
  "dirs 5.0.1",
  "flate2",
@@ -776,7 +776,7 @@ dependencies = [
 
 [[package]]
 name = "cec-support-wifi"
-version = "0.2.38"
+version = "0.2.39"
 dependencies = [
  "serde",
 ]

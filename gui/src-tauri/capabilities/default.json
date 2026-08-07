@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/capabilities/2",
   "identifier": "default",
-  "description": "Default capabilities for the CEC Support client's single main window.",
-  "windows": ["main"],
+  "description": "Default capabilities for the CEC Support main and Toolbox windows.",
+  "windows": ["main", "toolbox"],
   "permissions": [
     "core:default",
     "core:window:allow-set-title",

@@ -10,6 +10,7 @@
   import KvmClaimCard from "./KvmClaimCard.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import SettingsPanel from "./SettingsPanel.svelte";
+  import ToolboxCard from "./ToolboxCard.svelte";
   import cecLogo from "../assets/cec-logo.png";
 
   let contentEl = $state<HTMLElement | null>(null);
@@ -163,6 +164,7 @@
         </div>
         <aside class="col">
           <ContactCard />
+          <ToolboxCard />
           <SpecSheet />
           {#if store.engaged}
             <KvmClaimCard />
