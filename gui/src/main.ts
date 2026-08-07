@@ -1,5 +1,6 @@
 import { mount } from "svelte";
 import App from "./ui/App.svelte";
+import ToolboxWindow from "./ui/ToolboxWindow.svelte";
 import "./app.css";
 
 // Surface uncaught errors *in the window itself*. A blank webview otherwise
@@ -29,7 +30,10 @@ window.addEventListener("unhandledrejection", (e) =>
 
 let app: ReturnType<typeof mount> | undefined;
 try {
-  app = mount(App, { target: document.getElementById("app")! });
+  const Root = new URLSearchParams(window.location.search).has("toolbox")
+    ? ToolboxWindow
+    : App;
+  app = mount(Root, { target: document.getElementById("app")! });
 } catch (e) {
   showFatal("App mount failed", e);
   throw e;

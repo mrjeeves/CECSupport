@@ -53,6 +53,43 @@ export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+export type ToolboxAction =
+  | "sfc"
+  | "dism"
+  | "chkdsk"
+  | "flush_dns"
+  | "event_viewer"
+  | "device_manager"
+  | "services"
+  | "system_information"
+  | "task_manager";
+
+export interface ToolboxResult {
+  ok: boolean;
+  label: string;
+  output: string;
+}
+
+/** Open the dedicated Toolbox window. In browser preview mode, open the same
+ * query-routed Svelte surface in a normal popup. */
+export async function openToolbox(): Promise<void> {
+  if (!isTauri()) {
+    window.open("?toolbox=1", "cec-toolbox", "popup,width=860,height=700");
+    return;
+  }
+  await rawInvoke<void>("open_toolbox");
+}
+
+/** Run one backend-allowlisted maintenance action. Errors deliberately reach
+ * the Toolbox so a failed repair never looks like success. */
+export async function runToolboxAction(action: ToolboxAction): Promise<ToolboxResult> {
+  if (!isTauri()) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    return { ok: true, label: action, output: "Preview mode: action not run." };
+  }
+  return rawInvoke<ToolboxResult>("toolbox_run", { action });
+}
+
 async function rawInvoke<T>(
   cmd: string,
   args?: Record<string, unknown>,
