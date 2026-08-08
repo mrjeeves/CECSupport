@@ -2014,7 +2014,7 @@ fn run_agent(service: bool) -> ExitCode {
 mod winsvc {
     use std::ffi::OsString;
     use std::process::ExitCode;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use windows_service::define_windows_service;
     use windows_service::service::{
@@ -2074,20 +2074,45 @@ mod winsvc {
             }
         };
         let mut agent: Option<allmystuff_node::win_privilege::ConsoleAgent> = None;
+        let mut agent_started: Option<Instant> = None;
+        let mut short_failures = 0u32;
+        let mut next_launch = Instant::now();
         loop {
             match rx.recv_timeout(Duration::from_secs(1)) {
                 Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             }
-            if agent
-                .as_ref()
-                .is_some_and(|child| !child.alive() || child.session_moved())
-            {
+            let session_moved = agent.as_ref().is_some_and(|child| child.session_moved());
+            let exited = agent.as_ref().is_some_and(|child| !child.alive());
+            if session_moved || exited {
                 if let Some(child) = agent.take() {
-                    child.stop();
+                    if !exited {
+                        child.stop();
+                    }
+                }
+                if session_moved {
+                    short_failures = 0;
+                    next_launch = Instant::now();
+                } else {
+                    let ran_for = agent_started
+                        .take()
+                        .map(|at| at.elapsed())
+                        .unwrap_or_default();
+                    short_failures = if ran_for >= Duration::from_secs(30) {
+                        1
+                    } else {
+                        short_failures.saturating_add(1)
+                    };
+                    let delay = restart_delay(short_failures);
+                    next_launch = Instant::now() + delay;
+                    tracing::warn!(
+                        ?delay,
+                        short_failures,
+                        "privileged CEC agent exited; delaying restart"
+                    );
                 }
             }
-            if agent.is_none() {
+            if agent.is_none() && Instant::now() >= next_launch {
                 match allmystuff_node::win_privilege::ConsoleAgent::launch(
                     &exe,
                     &["run", "--session-agent"],
@@ -2097,9 +2122,16 @@ mod winsvc {
                             "privileged CEC agent launched in the active console session"
                         );
                         agent = Some(child);
+                        agent_started = Some(Instant::now());
                     }
                     Err(error) => {
-                        tracing::debug!("waiting for an interactive console session: {error}")
+                        short_failures = short_failures.saturating_add(1);
+                        let delay = restart_delay(short_failures);
+                        next_launch = Instant::now() + delay;
+                        tracing::debug!(
+                            ?delay,
+                            "waiting for an interactive console session: {error}"
+                        );
                     }
                 }
             }
@@ -2117,6 +2149,23 @@ mod winsvc {
             process_id: None,
         })?;
         Ok(())
+    }
+
+    fn restart_delay(short_failures: u32) -> Duration {
+        Duration::from_secs(1u64 << short_failures.min(6))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn rapid_agent_failures_back_off_and_cap() {
+            assert_eq!(restart_delay(1), Duration::from_secs(2));
+            assert_eq!(restart_delay(2), Duration::from_secs(4));
+            assert_eq!(restart_delay(6), Duration::from_secs(64));
+            assert_eq!(restart_delay(100), Duration::from_secs(64));
+        }
     }
 }
 
