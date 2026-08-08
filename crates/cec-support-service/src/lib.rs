@@ -236,20 +236,29 @@ pub fn windows_bin_path(
         value.push_str(&windows_quote(sid));
     }
     value.push_str(" --serve-bin ");
-    value.push_str(&windows_quote(
-        &exec
-            .with_file_name("allmystuff-serve.exe")
-            .to_string_lossy(),
-    ));
+    value.push_str(&windows_quote(&windows_sibling_path(
+        exec,
+        "allmystuff-serve.exe",
+    )));
     value.push_str(" --mesh-bin ");
-    value.push_str(&windows_quote(
-        &exec.with_file_name("myownmesh.exe").to_string_lossy(),
-    ));
+    value.push_str(&windows_quote(&windows_sibling_path(exec, "myownmesh.exe")));
     value
 }
 
 fn windows_quote(value: &str) -> String {
     format!("\"{}\"", value.replace('"', ""))
+}
+
+/// Resolve a sibling using Windows separators even when this pure renderer is
+/// unit-tested on Unix. `std::path::Path` follows the *host* OS, so on Linux or
+/// macOS it treats the backslashes in `C:\Program Files\...` as ordinary
+/// filename characters and `with_file_name` incorrectly drops the directory.
+fn windows_sibling_path(exec: &Path, sibling: &str) -> String {
+    let exec = exec.to_string_lossy();
+    match exec.rfind(['\\', '/']) {
+        Some(index) => format!("{}\\{sibling}", &exec[..index]),
+        None => sibling.to_string(),
+    }
 }
 
 // ---------------------------------------------------------------------------
