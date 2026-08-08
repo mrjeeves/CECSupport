@@ -19,8 +19,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-bridge"
-version = "0.2.60"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.60#09905442495e2142689309b6539efa48d3e867f3"
+version = "0.2.61"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.61#f5347535349db16659fd26b3be5e7e3a183fbf76"
 dependencies = [
  "allmystuff-graph",
  "allmystuff-inventory",
@@ -29,8 +29,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-cec-consent"
-version = "0.2.60"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.60#09905442495e2142689309b6539efa48d3e867f3"
+version = "0.2.61"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.61#f5347535349db16659fd26b3be5e7e3a183fbf76"
 dependencies = [
  "allmystuff-cec-protocol",
  "serde",
@@ -40,8 +40,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-cec-protocol"
-version = "0.2.60"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.60#09905442495e2142689309b6539efa48d3e867f3"
+version = "0.2.61"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.61#f5347535349db16659fd26b3be5e7e3a183fbf76"
 dependencies = [
  "serde",
  "serde_json",
@@ -50,8 +50,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-graph"
-version = "0.2.60"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.60#09905442495e2142689309b6539efa48d3e867f3"
+version = "0.2.61"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.61#f5347535349db16659fd26b3be5e7e3a183fbf76"
 dependencies = [
  "serde",
  "serde_json",
@@ -60,8 +60,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-inventory"
-version = "0.2.60"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.60#09905442495e2142689309b6539efa48d3e867f3"
+version = "0.2.61"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.61#f5347535349db16659fd26b3be5e7e3a183fbf76"
 dependencies = [
  "serde",
  "serde_json",
@@ -70,8 +70,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-node"
-version = "0.2.60"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.60#09905442495e2142689309b6539efa48d3e867f3"
+version = "0.2.61"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.61#f5347535349db16659fd26b3be5e7e3a183fbf76"
 dependencies = [
  "allmystuff-bridge",
  "allmystuff-cec-consent",
@@ -106,7 +106,6 @@ dependencies = [
  "parking_lot",
  "pipewire",
  "plist",
- "portable-pty",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -120,28 +119,30 @@ dependencies = [
  "windows-sys 0.60.2",
  "xcap",
  "xcb",
+ "xpty",
  "zbus",
 ]
 
 [[package]]
 name = "allmystuff-pixels"
 version = "0.1.0"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.60#09905442495e2142689309b6539efa48d3e867f3"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.61#f5347535349db16659fd26b3be5e7e3a183fbf76"
 
 [[package]]
 name = "allmystuff-protocol"
-version = "0.2.60"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.60#09905442495e2142689309b6539efa48d3e867f3"
+version = "0.2.61"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.61#f5347535349db16659fd26b3be5e7e3a183fbf76"
 dependencies = [
  "allmystuff-graph",
+ "dirs 5.0.1",
  "serde",
  "serde_json",
 ]
 
 [[package]]
 name = "allmystuff-session"
-version = "0.2.60"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.60#09905442495e2142689309b6539efa48d3e867f3"
+version = "0.2.61"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.61#f5347535349db16659fd26b3be5e7e3a183fbf76"
 dependencies = [
  "allmystuff-graph",
  "allmystuff-protocol",
@@ -152,8 +153,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-updater"
-version = "0.2.60"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.60#09905442495e2142689309b6539efa48d3e867f3"
+version = "0.2.61"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.61#f5347535349db16659fd26b3be5e7e3a183fbf76"
 dependencies = [
  "dirs 5.0.1",
  "flate2",
@@ -720,7 +721,7 @@ dependencies = [
 
 [[package]]
 name = "cec-support"
-version = "0.2.42"
+version = "0.2.43"
 dependencies = [
  "allmystuff-cec-consent",
  "allmystuff-cec-protocol",
@@ -748,7 +749,7 @@ dependencies = [
 
 [[package]]
 name = "cec-support-service"
-version = "0.2.42"
+version = "0.2.43"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
@@ -759,7 +760,7 @@ dependencies = [
 
 [[package]]
 name = "cec-support-updater"
-version = "0.2.42"
+version = "0.2.43"
 dependencies = [
  "dirs 5.0.1",
  "flate2",
@@ -778,7 +779,7 @@ dependencies = [
 
 [[package]]
 name = "cec-support-wifi"
-version = "0.2.42"
+version = "0.2.43"
 dependencies = [
  "serde",
 ]
@@ -840,12 +841,6 @@ name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
-
-[[package]]
-name = "cfg_aliases"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd16c4719339c4530435d38e511904438d07cce7950afa3718a84ac36c10e89e"
 
 [[package]]
 name = "cfg_aliases"
@@ -1510,6 +1505,12 @@ name = "downcast-rs"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
+
+[[package]]
+name = "downcast-rs"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "117240f60069e65410b3ae1bb213295bd828f707b5bec6596a1afc8793ce0cbc"
 
 [[package]]
 name = "dpi"
@@ -3342,13 +3343,13 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nix"
-version = "0.28.0"
+version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab2156c4fce2f8df6c499cc1c763e4394b7482525bf2a9701c9d79d215f519e4"
+checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
 dependencies = [
  "bitflags 2.13.0",
  "cfg-if 1.0.4",
- "cfg_aliases 0.1.1",
+ "cfg_aliases",
  "libc",
 ]
 
@@ -3360,7 +3361,7 @@ checksum = "74523f3a35e05aba87a1d978330aef40f67b0304ac79c1c00b294c9830543db6"
 dependencies = [
  "bitflags 2.13.0",
  "cfg-if 1.0.4",
- "cfg_aliases 0.2.1",
+ "cfg_aliases",
  "libc",
 ]
 
@@ -4200,27 +4201,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "portable-pty"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4a596a2b3d2752d94f51fac2d4a96737b8705dddd311a32b9af47211f08671e"
-dependencies = [
- "anyhow",
- "bitflags 1.3.2",
- "downcast-rs",
- "filedescriptor",
- "lazy_static",
- "libc",
- "log",
- "nix 0.28.0",
- "serial2",
- "shared_library",
- "shell-words",
- "winapi",
- "winreg 0.10.1",
-]
-
-[[package]]
 name = "potential_utf"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4368,7 +4348,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c1a41e437b6bbd489372cd4971de128e85c855f56c57f283d20ff016cf7c0a8"
 dependencies = [
  "bytes",
- "cfg_aliases 0.2.1",
+ "cfg_aliases",
  "pin-project-lite",
  "quinn-proto",
  "quinn-udp",
@@ -4409,7 +4389,7 @@ version = "0.5.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35a133f956daabe89a61a685c2649f13d82d5aa4bd5d12d1277e1072a21c0694"
 dependencies = [
- "cfg_aliases 0.2.1",
+ "cfg_aliases",
  "libc",
  "once_cell",
  "socket2",
@@ -5028,17 +5008,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serial2"
-version = "0.2.37"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9eb6ea5562eeaed6936b8b54e086aa0f88b9e5b1bef45beb038e2519fa1185b1"
-dependencies = [
- "cfg-if 1.0.4",
- "libc",
- "windows-sys 0.61.2",
-]
-
-[[package]]
 name = "serialize-to-javascript"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5109,16 +5078,6 @@ dependencies = [
  "libc",
  "sigchld",
  "windows-sys 0.60.2",
-]
-
-[[package]]
-name = "shared_library"
-version = "0.1.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a9e7e0f2bfae24d8a5b5a66c5b257a83c7412304311512a0c054cd5e619da11"
-dependencies = [
- "lazy_static",
- "libc",
 ]
 
 [[package]]
@@ -6509,7 +6468,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2857dd20b54e916ec7253b3d6b4d5c4d7d4ca2c33c2e11c6c76a99bd8744755d"
 dependencies = [
  "cc",
- "downcast-rs",
+ "downcast-rs 1.2.1",
  "rustix 1.1.4",
  "scoped-tls",
  "smallvec",
@@ -6571,7 +6530,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cc1846eb04c49182e04f4a099e2a830a2b745610bbc1d61246e206f29c7000a0"
 dependencies = [
  "bitflags 2.13.0",
- "downcast-rs",
+ "downcast-rs 1.2.1",
  "rustix 1.1.4",
  "wayland-backend",
  "wayland-scanner",
@@ -7622,6 +7581,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cbc04313cab124e498ab1724e739720807b6dc405b9ed0edc5860164d2e4ff70"
 dependencies = [
  "xml",
+]
+
+[[package]]
+name = "xpty"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7fc9437ba9250278ca5b0906d77a0a42d2a769e2e53dc4a41406ae628a98bc96"
+dependencies = [
+ "downcast-rs 2.0.2",
+ "filedescriptor",
+ "libc",
+ "libloading 0.8.9",
+ "log",
+ "nix 0.29.0",
+ "shell-words",
+ "thiserror 2.0.18",
+ "windows-sys 0.59.0",
+ "winreg 0.55.0",
 ]
 
 [[package]]
