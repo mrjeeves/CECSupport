@@ -124,7 +124,10 @@ jobs:
           releaseName: ${{ inputs.tag || github.ref_name }}
           releaseDraft: false
           prerelease: false
-          args: --target x86_64-pc-windows-msvc
+          # NSIS carries the privileged-host install/uninstall hooks. Publishing
+          # a second MSI would offer a clean-install path that silently omits
+          # the host and recreates the Toolbox elevation failure.
+          args: --target x86_64-pc-windows-msvc --bundles nsis
 
       # Package the portable `cec-support.exe` so the SELF-UPDATER has something
       # to fetch. The installers above (`*-setup.exe` / `.msi`) are for first

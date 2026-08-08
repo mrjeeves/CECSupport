@@ -719,7 +719,7 @@ dependencies = [
 
 [[package]]
 name = "cec-support"
-version = "0.2.40"
+version = "0.2.41"
 dependencies = [
  "allmystuff-cec-consent",
  "allmystuff-cec-protocol",
@@ -742,12 +742,12 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "windows-sys 0.60.2",
+ "windows-service",
 ]
 
 [[package]]
 name = "cec-support-service"
-version = "0.2.40"
+version = "0.2.41"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
@@ -758,7 +758,7 @@ dependencies = [
 
 [[package]]
 name = "cec-support-updater"
-version = "0.2.40"
+version = "0.2.41"
 dependencies = [
  "dirs 5.0.1",
  "flate2",
@@ -777,7 +777,7 @@ dependencies = [
 
 [[package]]
 name = "cec-support-wifi"
-version = "0.2.40"
+version = "0.2.41"
 dependencies = [
  "serde",
 ]

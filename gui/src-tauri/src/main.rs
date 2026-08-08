@@ -309,11 +309,11 @@ fn toolbox_spec(action: &str) -> Option<ToolboxSpec> {
         },
         "device_manager" => ToolboxSpec {
             label: "Device Manager",
-            kind: ToolboxKind::WindowsProgram("mmc.exe", &["devmgmt.msc"]),
+            kind: ToolboxKind::AdminTerminal("Start-Process mmc.exe -ArgumentList 'devmgmt.msc'"),
         },
         "services" => ToolboxSpec {
             label: "Services",
-            kind: ToolboxKind::WindowsProgram("mmc.exe", &["services.msc"]),
+            kind: ToolboxKind::AdminTerminal("Start-Process mmc.exe -ArgumentList 'services.msc'"),
         },
         "system_information" => ToolboxSpec {
             label: "System Information",
@@ -337,23 +337,23 @@ fn toolbox_spec(action: &str) -> Option<ToolboxSpec> {
         },
         "registry_editor" => ToolboxSpec {
             label: "Registry Editor",
-            kind: ToolboxKind::WindowsProgram("regedit.exe", &[]),
+            kind: ToolboxKind::AdminTerminal("Start-Process regedit.exe"),
         },
         "disk_management" => ToolboxSpec {
             label: "Disk Management",
-            kind: ToolboxKind::WindowsProgram("mmc.exe", &["diskmgmt.msc"]),
+            kind: ToolboxKind::AdminTerminal("Start-Process mmc.exe -ArgumentList 'diskmgmt.msc'"),
         },
         "computer_management" => ToolboxSpec {
             label: "Computer Management",
-            kind: ToolboxKind::WindowsProgram("mmc.exe", &["compmgmt.msc"]),
+            kind: ToolboxKind::AdminTerminal("Start-Process mmc.exe -ArgumentList 'compmgmt.msc'"),
         },
         "system_configuration" => ToolboxSpec {
             label: "System Configuration",
-            kind: ToolboxKind::WindowsProgram("msconfig.exe", &[]),
+            kind: ToolboxKind::AdminTerminal("Start-Process msconfig.exe"),
         },
         "windows_features" => ToolboxSpec {
             label: "Windows Features",
-            kind: ToolboxKind::WindowsProgram("optionalfeatures.exe", &[]),
+            kind: ToolboxKind::AdminTerminal("Start-Process optionalfeatures.exe"),
         },
         "resource_monitor" => ToolboxSpec {
             label: "Resource Monitor",
@@ -410,68 +410,7 @@ async fn toolbox_run_spec(
     run_id: &str,
 ) -> Result<Value, String> {
     match spec.kind {
-        ToolboxKind::AdminTerminal(command) => {
-            use tauri_plugin_shell::process::CommandEvent;
-            use tauri_plugin_shell::ShellExt as _;
-
-            let (mut events, _child) = app
-                .shell()
-                .sidecar("amst")
-                .map_err(|e| format!("finding the bundled AMST terminal: {e}"))?
-                .args(["--admin", "--run", command])
-                .spawn()
-                .map_err(|e| format!("starting {}: {e}", spec.label))?;
-
-            let mut stdout = String::new();
-            let mut stderr = String::new();
-            let mut exit_code = None;
-            let mut event_error = None;
-            while let Some(event) = events.recv().await {
-                match event {
-                    CommandEvent::Stdout(bytes) => {
-                        let line = clean_toolbox_output(&bytes);
-                        append_toolbox_line(&mut stdout, &line);
-                        emit_toolbox_progress(&app, run_id, "stdout", &line);
-                    }
-                    CommandEvent::Stderr(bytes) => {
-                        let line = clean_toolbox_output(&bytes);
-                        append_toolbox_line(&mut stderr, &line);
-                        emit_toolbox_progress(&app, run_id, "stderr", &line);
-                    }
-                    CommandEvent::Error(error) => {
-                        emit_toolbox_progress(&app, run_id, "stderr", &error);
-                        event_error = Some(error);
-                    }
-                    CommandEvent::Terminated(payload) => exit_code = payload.code,
-                    _ => {}
-                }
-            }
-
-            if let Some(error) = event_error {
-                return Err(format!("{} failed: {error}", spec.label));
-            }
-            let stdout = stdout.trim().to_string();
-            let stderr = stderr.trim().to_string();
-            if exit_code != Some(0) {
-                let detail = if stderr.is_empty() { stdout } else { stderr };
-                return Err(if detail.is_empty() {
-                    format!(
-                        "{} failed{}",
-                        spec.label,
-                        exit_code
-                            .map(|code| format!(" (exit {code})"))
-                            .unwrap_or_default()
-                    )
-                } else {
-                    format!("{} failed: {detail}", spec.label)
-                });
-            }
-            Ok(json!({
-                "ok": true,
-                "label": spec.label,
-                "output": if stdout.is_empty() { format!("{} completed.", spec.label) } else { stdout },
-            }))
-        }
+        ToolboxKind::AdminTerminal(command) => run_admin_toolbox(&app, spec, run_id, command).await,
         ToolboxKind::WindowsProgram(program, args) => {
             use std::os::windows::process::CommandExt as _;
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -486,27 +425,83 @@ async fn toolbox_run_spec(
             )
         }
         ToolboxKind::ElevatedSidecar(base) => {
-            launch_elevated_sidecar(base)?;
-            Ok(json!({
-                "ok": true,
-                "label": spec.label,
-                "output": format!("{} opened in an administrator terminal.", spec.label),
-            }))
+            let command = admin_sidecar_command(base)?;
+            run_admin_toolbox(&app, spec, run_id, &command).await
         }
     }
 }
 
 #[cfg(windows)]
-fn launch_elevated_sidecar(base: &str) -> Result<(), String> {
-    use std::os::windows::ffi::OsStrExt as _;
-    use std::ptr::{null, null_mut};
-    use windows_sys::Win32::UI::Shell::ShellExecuteW;
-    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+async fn run_admin_toolbox(
+    app: &tauri::AppHandle,
+    spec: ToolboxSpec,
+    run_id: &str,
+    command: &str,
+) -> Result<Value, String> {
+    use tauri_plugin_shell::process::CommandEvent;
+    use tauri_plugin_shell::ShellExt as _;
 
-    fn wide(value: &std::ffi::OsStr) -> Vec<u16> {
-        value.encode_wide().chain(std::iter::once(0)).collect()
+    let (mut events, _child) = app
+        .shell()
+        .sidecar("amst")
+        .map_err(|e| format!("finding the bundled AMST terminal: {e}"))?
+        .args(["--admin", "--run", command])
+        .spawn()
+        .map_err(|e| format!("starting {}: {e}", spec.label))?;
+
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let mut exit_code = None;
+    let mut event_error = None;
+    while let Some(event) = events.recv().await {
+        match event {
+            CommandEvent::Stdout(bytes) => {
+                let line = clean_toolbox_output(&bytes);
+                append_toolbox_line(&mut stdout, &line);
+                emit_toolbox_progress(&app, run_id, "stdout", &line);
+            }
+            CommandEvent::Stderr(bytes) => {
+                let line = clean_toolbox_output(&bytes);
+                append_toolbox_line(&mut stderr, &line);
+                emit_toolbox_progress(&app, run_id, "stderr", &line);
+            }
+            CommandEvent::Error(error) => {
+                emit_toolbox_progress(&app, run_id, "stderr", &error);
+                event_error = Some(error);
+            }
+            CommandEvent::Terminated(payload) => exit_code = payload.code,
+            _ => {}
+        }
     }
 
+    if let Some(error) = event_error {
+        return Err(format!("{} failed: {error}", spec.label));
+    }
+    let stdout = stdout.trim().to_string();
+    let stderr = stderr.trim().to_string();
+    if exit_code != Some(0) {
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        return Err(if detail.is_empty() {
+            format!(
+                "{} failed{}",
+                spec.label,
+                exit_code
+                    .map(|code| format!(" (exit {code})"))
+                    .unwrap_or_default()
+            )
+        } else {
+            format!("{} failed: {detail}", spec.label)
+        });
+    }
+    Ok(json!({
+        "ok": true,
+        "label": spec.label,
+        "output": if stdout.is_empty() { format!("{} completed.", spec.label) } else { stdout },
+    }))
+}
+
+#[cfg(windows)]
+fn admin_sidecar_command(base: &str) -> Result<String, String> {
     let app_exe = std::env::current_exe()
         .map_err(|e| format!("finding the CEC Support installation: {e}"))?;
     let install_dir = app_exe
@@ -528,26 +523,11 @@ fn launch_elevated_sidecar(base: &str) -> Result<(), String> {
     std::fs::create_dir_all(&work_dir)
         .map_err(|e| format!("creating the Crucible report folder: {e}"))?;
 
-    let verb = wide(std::ffi::OsStr::new("runas"));
-    let file = wide(sidecar.as_os_str());
-    let directory = wide(work_dir.as_os_str());
-    let result = unsafe {
-        ShellExecuteW(
-            null_mut(),
-            verb.as_ptr(),
-            file.as_ptr(),
-            null(),
-            directory.as_ptr(),
-            SW_SHOWNORMAL,
-        )
-    };
-    if result as isize <= 32 {
-        return Err(format!(
-            "Windows could not open Crucible as administrator (ShellExecute code {})",
-            result as isize
-        ));
-    }
-    Ok(())
+    let sidecar = sidecar.to_string_lossy().replace('\'', "''");
+    let work_dir = work_dir.to_string_lossy().replace('\'', "''");
+    Ok(format!(
+        "Start-Process -FilePath '{sidecar}' -WorkingDirectory '{work_dir}'"
+    ))
 }
 
 #[cfg(not(windows))]
@@ -1280,6 +1260,31 @@ fn service_do_verb() -> Option<String> {
     args.get(i + 1).cloned()
 }
 
+fn configure_service_environment() {
+    if let Some(profile) = process_arg_value("--profile-home") {
+        std::env::set_var("MYOWNMESH_HOME", &profile);
+        std::env::set_var("ALLMYSTUFF_USER_HOME", &profile);
+    }
+    if let Some(cec_home) = process_arg_value("--cec-home") {
+        std::env::set_var(allmystuff_cec_protocol::CEC_HOME_ENV, cec_home);
+    }
+    if let Some(sid) = process_arg_value("--client-sid") {
+        std::env::set_var("ALLMYSTUFF_CLIENT_SID", sid);
+    }
+    if let Some(serve_bin) = process_arg_value("--serve-bin") {
+        std::env::set_var("ALLMYSTUFF_SERVE_BIN", serve_bin);
+    }
+    if let Some(mesh_bin) = process_arg_value("--mesh-bin") {
+        std::env::set_var("MYOWNMESH_BIN", mesh_bin);
+    }
+}
+
+fn process_arg_value(flag: &str) -> Option<String> {
+    let args: Vec<String> = std::env::args().collect();
+    let index = args.iter().position(|arg| arg == flag)?;
+    args.get(index + 1).cloned()
+}
+
 async fn service_mutate(verb: &'static str) -> Result<Value, String> {
     tokio::task::spawn_blocking(move || service_mutate_blocking(verb))
         .await
@@ -1302,8 +1307,18 @@ fn service_mutate_blocking(verb: &str) -> Result<Value, String> {
 fn service_mutate_blocking(verb: &str) -> Result<Value, String> {
     let exe = std::env::current_exe().map_err(|e| format!("locating CEC Support: {e}"))?;
     let exe = exe.to_string_lossy().replace('\'', "''");
+    let profile = dirs::home_dir()
+        .ok_or_else(|| "couldn't resolve the current Windows profile".to_string())?
+        .to_string_lossy()
+        .replace('\'', "''");
+    let cec_home = default_cec_home().to_string_lossy().replace('\'', "''");
+    let sid = current_windows_user_sid()?.replace('\'', "''");
+    let elevated_args = format!(
+        "--service-do {verb} --service-profile \"{profile}\" --service-home \"{cec_home}\" --service-sid {sid}"
+    )
+    .replace('\'', "''");
     let ps = format!(
-        "try {{ $p = Start-Process -FilePath '{exe}' -ArgumentList '--service-do','{verb}' \
+        "try {{ $p = Start-Process -FilePath '{exe}' -ArgumentList '{elevated_args}' \
          -Verb RunAs -Wait -PassThru -WindowStyle Hidden; exit $p.ExitCode }} \
          catch {{ exit 1223 }}"
     );
@@ -1327,9 +1342,29 @@ fn service_mutate_blocking(verb: &str) -> Result<Value, String> {
     }))
 }
 
+#[cfg(windows)]
+fn current_windows_user_sid() -> Result<String, String> {
+    use std::os::windows::process::CommandExt as _;
+    let output = std::process::Command::new("whoami")
+        .args(["/user", "/fo", "csv", "/nh"])
+        .creation_flags(0x0800_0000)
+        .output()
+        .map_err(|e| format!("reading the current Windows account SID: {e}"))?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    text.split([',', '"', '\r', '\n'])
+        .map(str::trim)
+        .find(|part| part.starts_with("S-1-"))
+        .map(str::to_string)
+        .ok_or_else(|| "Windows returned no account SID".to_string())
+}
+
 #[tauri::command]
-async fn service_install() -> Result<Value, String> {
-    service_mutate("install").await
+async fn service_install(state: State<'_, AppState>) -> Result<Value, String> {
+    let result = service_mutate("install").await?;
+    if result.get("ok").and_then(Value::as_bool) == Some(true) {
+        state.node_child.lock().take();
+    }
+    Ok(result)
 }
 #[tauri::command]
 async fn service_uninstall() -> Result<Value, String> {
@@ -1823,6 +1858,34 @@ fn run_gui() -> ExitCode {
                 keep_background: std::sync::atomic::AtomicBool::new(settings.keep_background),
             });
 
+            // New NSIS installs are provisioned by the installer hook. Existing
+            // machines can arrive through the portable self-updater, so replace
+            // the old Session-0 service once when its ImagePath lacks the
+            // interactive-host state arguments. Never prompt in development.
+            #[cfg(all(windows, not(debug_assertions)))]
+            {
+                let status = cec_support_service::status_value(false).unwrap_or_default();
+                if status
+                    .get("privileged_host_current")
+                    .and_then(Value::as_bool)
+                    != Some(true)
+                {
+                    let migration_handle = app.handle().clone();
+                    std::thread::spawn(move || match service_mutate_blocking("install") {
+                        Ok(value) if value.get("ok").and_then(Value::as_bool) == Some(true) => {
+                            migration_handle
+                                .state::<AppState>()
+                                .node_child
+                                .lock()
+                                .take();
+                            tracing::info!("installed the privileged interactive CEC host");
+                        }
+                        Ok(_) => tracing::warn!("privileged CEC host setup did not complete"),
+                        Err(error) => tracing::warn!("privileged CEC host setup failed: {error}"),
+                    });
+                }
+            }
+
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 // One node per machine, shared with AllMyStuff: reuse whatever
@@ -1906,7 +1969,12 @@ fn run_gui() -> ExitCode {
 /// reuses) the CEC node, joins the shared support area, and waits. This is what
 /// the OS service's `ExecStart`/`binPath` runs (`run --service`), so a repair
 /// can reconnect across reboots without the GUI open.
-fn run_agent(_service: bool) -> ExitCode {
+fn run_agent(service: bool) -> ExitCode {
+    #[cfg(windows)]
+    if service {
+        return winsvc::dispatch();
+    }
+    let _ = service;
     let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(e) => {
@@ -1940,6 +2008,116 @@ fn run_agent(_service: bool) -> ExitCode {
         let _ = tokio::signal::ctrl_c().await;
         ExitCode::SUCCESS
     })
+}
+
+#[cfg(windows)]
+mod winsvc {
+    use std::ffi::OsString;
+    use std::process::ExitCode;
+    use std::time::Duration;
+
+    use windows_service::define_windows_service;
+    use windows_service::service::{
+        ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
+        ServiceType,
+    };
+    use windows_service::service_control_handler::{self, ServiceControlHandlerResult};
+    use windows_service::service_dispatcher;
+
+    const SERVICE_NAME: &str = "CECSupport";
+    const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
+
+    define_windows_service!(ffi_service_main, service_main);
+
+    pub fn dispatch() -> ExitCode {
+        match service_dispatcher::start(SERVICE_NAME, ffi_service_main) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                tracing::error!("CEC Support service dispatcher failed: {error}");
+                ExitCode::FAILURE
+            }
+        }
+    }
+
+    fn service_main(_args: Vec<OsString>) {
+        if let Err(error) = run_service() {
+            tracing::error!("CEC Support service stopped with error: {error}");
+        }
+    }
+
+    fn run_service() -> windows_service::Result<()> {
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        let handler = move |control| match control {
+            ServiceControl::Stop | ServiceControl::Shutdown => {
+                let _ = tx.send(());
+                ServiceControlHandlerResult::NoError
+            }
+            ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
+            _ => ServiceControlHandlerResult::NotImplemented,
+        };
+        let status = service_control_handler::register(SERVICE_NAME, handler)?;
+        status.set_service_status(ServiceStatus {
+            service_type: SERVICE_TYPE,
+            current_state: ServiceState::Running,
+            controls_accepted: ServiceControlAccept::STOP | ServiceControlAccept::SHUTDOWN,
+            exit_code: ServiceExitCode::Win32(0),
+            checkpoint: 0,
+            wait_hint: Duration::default(),
+            process_id: None,
+        })?;
+
+        let exe = match std::env::current_exe() {
+            Ok(exe) => exe,
+            Err(error) => {
+                tracing::error!("couldn't locate the CEC Support service executable: {error}");
+                return Ok(());
+            }
+        };
+        let mut agent: Option<allmystuff_node::win_privilege::ConsoleAgent> = None;
+        loop {
+            match rx.recv_timeout(Duration::from_secs(1)) {
+                Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            }
+            if agent
+                .as_ref()
+                .is_some_and(|child| !child.alive() || child.session_moved())
+            {
+                if let Some(child) = agent.take() {
+                    child.stop();
+                }
+            }
+            if agent.is_none() {
+                match allmystuff_node::win_privilege::ConsoleAgent::launch(
+                    &exe,
+                    &["run", "--session-agent"],
+                ) {
+                    Ok(child) => {
+                        tracing::info!(
+                            "privileged CEC agent launched in the active console session"
+                        );
+                        agent = Some(child);
+                    }
+                    Err(error) => {
+                        tracing::debug!("waiting for an interactive console session: {error}")
+                    }
+                }
+            }
+        }
+        if let Some(child) = agent.take() {
+            child.stop();
+        }
+        status.set_service_status(ServiceStatus {
+            service_type: SERVICE_TYPE,
+            current_state: ServiceState::Stopped,
+            controls_accepted: ServiceControlAccept::empty(),
+            exit_code: ServiceExitCode::Win32(0),
+            checkpoint: 0,
+            wait_hint: Duration::default(),
+            process_id: None,
+        })?;
+        Ok(())
+    }
 }
 
 /// `cec-support service <verb>` → the local service crate.
@@ -2038,6 +2216,7 @@ COMMANDS:
 }
 
 fn main() -> ExitCode {
+    configure_service_environment();
     // Every path resolves the CEC app home + clears any stray app-id override
     // before the shared node socket is addressed.
     apply_cec_env();
@@ -2049,9 +2228,33 @@ fn main() -> ExitCode {
     // logs and leaves the marker for the launch after this one.
     cec_support_updater::apply_pending_if_any();
 
+    #[cfg(windows)]
+    if std::env::args().any(|arg| arg == "--service-bootstrap") {
+        let verb = process_arg_value("--service-bootstrap").unwrap_or_else(|| "install".into());
+        return match service_mutate_blocking(&verb) {
+            Ok(value) if value.get("ok").and_then(Value::as_bool) == Some(true) => {
+                ExitCode::SUCCESS
+            }
+            Ok(_) => ExitCode::FAILURE,
+            Err(error) => {
+                eprintln!("CEC Support privileged host setup failed: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+
     // Elevated Windows service action: `<exe> --service-do <verb>` — run the
     // verb in-process and exit, no webview. (Unix calls the crate directly.)
     if let Some(verb) = service_do_verb() {
+        if let Some(profile) = process_arg_value("--service-profile") {
+            std::env::set_var("CEC_SUPPORT_SERVICE_PROFILE", profile);
+        }
+        if let Some(home) = process_arg_value("--service-home") {
+            std::env::set_var("CEC_SUPPORT_SERVICE_HOME", home);
+        }
+        if let Some(sid) = process_arg_value("--service-sid") {
+            std::env::set_var("CEC_SUPPORT_SERVICE_CLIENT_SID", sid);
+        }
         let code = match service_cmd(&verb) {
             Some(cmd) => match cec_support_service::run(false, cmd) {
                 Ok(()) => 0,
@@ -2171,14 +2374,14 @@ mod tests {
         assert!(matches!(
             toolbox_spec("device_manager"),
             Some(ToolboxSpec {
-                kind: ToolboxKind::WindowsProgram("mmc.exe", _),
+                kind: ToolboxKind::AdminTerminal(_),
                 ..
             })
         ));
         assert!(matches!(
             toolbox_spec("registry_editor"),
             Some(ToolboxSpec {
-                kind: ToolboxKind::WindowsProgram("regedit.exe", _),
+                kind: ToolboxKind::AdminTerminal(_),
                 ..
             })
         ));
