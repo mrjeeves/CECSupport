@@ -39,4 +39,29 @@
       ${EndIf}
     ${EndIf}
   ${EndIf}
+
+  ; The app itself stays at ordinary integrity. This one install-time approval
+  ; provisions its protected LocalSystem supervisor, which launches the node
+  ; into the active desktop session. Repairs then need no per-command UAC.
+  DetailPrint "Installing the CEC Support privileged desktop host..."
+  StrCpy $4 "$INSTDIR\cec-support.exe"
+  ${IfNot} ${FileExists} "$4"
+    StrCpy $4 "$INSTDIR\CEC Support.exe"
+  ${EndIf}
+  ${If} ${FileExists} "$4"
+    ExecWait '"$4" --service-bootstrap install' $5
+    ${If} $5 != 0
+      MessageBox MB_ICONEXCLAMATION|MB_OK "CEC Support was installed, but its privileged desktop host could not be enabled. Open CEC Support to try again."
+    ${EndIf}
+  ${EndIf}
+!macroend
+
+!macro NSIS_HOOK_PREUNINSTALL
+  StrCpy $4 "$INSTDIR\cec-support.exe"
+  ${IfNot} ${FileExists} "$4"
+    StrCpy $4 "$INSTDIR\CEC Support.exe"
+  ${EndIf}
+  ${If} ${FileExists} "$4"
+    ExecWait '"$4" --service-bootstrap uninstall' $5
+  ${EndIf}
 !macroend

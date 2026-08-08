@@ -143,6 +143,8 @@ pub fn status_value(system: bool) -> Result<serde_json::Value> {
         Some(Manager::Windows) => windows::is_installed(),
         None => false,
     };
+    let privileged_host_current =
+        manager == Some(Manager::Windows) && installed && windows::is_privileged_host_current();
     Ok(serde_json::json!({
         "platform": std::env::consts::OS,
         "supported": manager.is_some(),
@@ -150,6 +152,7 @@ pub fn status_value(system: bool) -> Result<serde_json::Value> {
         "scope": format!("{scope:?}").to_lowercase(),
         "service_name": SERVICE_NAME,
         "installed": installed,
+        "privileged_host_current": privileged_host_current,
     }))
 }
 
@@ -216,8 +219,37 @@ pub fn render_launchd_plist(exec: &Path, log_path: &Path) -> String {
 }
 
 /// The Windows SCM `binPath=` value: the quoted exe plus `run --service`.
-pub fn windows_bin_path(exec: &Path) -> String {
-    format!("\"{}\" run --service", exec.display())
+pub fn windows_bin_path(
+    exec: &Path,
+    profile_home: &Path,
+    cec_home: &Path,
+    client_sid: Option<&str>,
+) -> String {
+    let mut value = format!(
+        "\"{}\" run --service --profile-home {} --cec-home {}",
+        exec.display(),
+        windows_quote(&profile_home.to_string_lossy()),
+        windows_quote(&cec_home.to_string_lossy()),
+    );
+    if let Some(sid) = client_sid {
+        value.push_str(" --client-sid ");
+        value.push_str(&windows_quote(sid));
+    }
+    value.push_str(" --serve-bin ");
+    value.push_str(&windows_quote(
+        &exec
+            .with_file_name("allmystuff-serve.exe")
+            .to_string_lossy(),
+    ));
+    value.push_str(" --mesh-bin ");
+    value.push_str(&windows_quote(
+        &exec.with_file_name("myownmesh.exe").to_string_lossy(),
+    ));
+    value
+}
+
+fn windows_quote(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', ""))
 }
 
 // ---------------------------------------------------------------------------
@@ -403,20 +435,70 @@ mod windows {
             .unwrap_or(false)
     }
 
+    pub(super) fn is_privileged_host_current() -> bool {
+        std::process::Command::new("sc")
+            .args(["qc", WINDOWS_SERVICE_NAME])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map(|output| {
+                output.status.success()
+                    && String::from_utf8_lossy(&output.stdout).contains("--profile-home")
+            })
+            .unwrap_or(false)
+    }
+
     pub(super) fn run(exe: &Path, cmd: ServiceCmd) -> Result<()> {
         match cmd {
             ServiceCmd::Install { .. } => {
                 // Replace cleanly if it already exists.
                 let _ = sc(&["stop", WINDOWS_SERVICE_NAME]);
+                wait_stopped();
                 let _ = sc(&["delete", WINDOWS_SERVICE_NAME]);
-                let bin = windows_bin_path(exe);
+                let service_dir = std::env::var_os("ProgramData")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
+                    .join("Critical Error Computing")
+                    .join("CEC Support")
+                    .join("service");
+                std::fs::create_dir_all(&service_dir)
+                    .with_context(|| format!("creating {}", service_dir.display()))?;
+                let staged_exe = service_dir.join("cec-support.exe");
+                std::fs::copy(exe, &staged_exe).with_context(|| {
+                    format!("staging {} as {}", exe.display(), staged_exe.display())
+                })?;
+                let source_dir = exe.parent().unwrap_or_else(|| Path::new("."));
+                for sidecar in ["allmystuff-serve.exe", "myownmesh.exe"] {
+                    let source = source_dir.join(sidecar);
+                    if !source.is_file() {
+                        bail!(
+                            "required bundled service sidecar is missing: {}",
+                            source.display()
+                        );
+                    }
+                    std::fs::copy(&source, service_dir.join(sidecar))
+                        .with_context(|| format!("staging {}", source.display()))?;
+                }
+                harden_service_dir(&service_dir)?;
+                let profile = std::env::var_os("CEC_SUPPORT_SERVICE_PROFILE")
+                    .map(PathBuf::from)
+                    .or_else(dirs::home_dir)
+                    .context("resolving the installing user's profile")?;
+                let cec_home = std::env::var_os("CEC_SUPPORT_SERVICE_HOME")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| profile.join("AppData/Roaming/CEC Support"));
+                let sid = std::env::var("CEC_SUPPORT_SERVICE_CLIENT_SID").ok();
+                let bin = windows_bin_path(&staged_exe, &profile, &cec_home, sid.as_deref());
                 sc(&[
                     "create",
                     WINDOWS_SERVICE_NAME,
-                    &format!("binPath= {bin}"),
-                    "start= auto",
-                    "obj= LocalSystem",
-                    &format!("DisplayName= {SERVICE_NAME}"),
+                    "binPath=",
+                    &bin,
+                    "start=",
+                    "auto",
+                    "obj=",
+                    "LocalSystem",
+                    "DisplayName=",
+                    SERVICE_NAME,
                 ])?;
                 let _ = sc(&[
                     "description",
@@ -427,8 +509,10 @@ mod windows {
                 let _ = sc(&[
                     "failure",
                     WINDOWS_SERVICE_NAME,
-                    "reset= 86400",
-                    "actions= restart/5000/restart/5000/restart/5000",
+                    "reset=",
+                    "86400",
+                    "actions=",
+                    "restart/5000/restart/5000/restart/5000",
                 ]);
                 sc(&["start", WINDOWS_SERVICE_NAME])?;
                 println!("Installed and started the {SERVICE_NAME} service.");
@@ -436,7 +520,15 @@ mod windows {
             }
             ServiceCmd::Uninstall => {
                 let _ = sc(&["stop", WINDOWS_SERVICE_NAME]);
+                wait_stopped();
                 sc(&["delete", WINDOWS_SERVICE_NAME])?;
+                let service_dir = std::env::var_os("ProgramData")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
+                    .join("Critical Error Computing")
+                    .join("CEC Support")
+                    .join("service");
+                let _ = std::fs::remove_dir_all(service_dir);
                 println!("Removed the {SERVICE_NAME} service.");
                 Ok(())
             }
@@ -461,6 +553,43 @@ mod windows {
         }
         Ok(())
     }
+
+    fn harden_service_dir(path: &Path) -> Result<()> {
+        let status = std::process::Command::new("icacls")
+            .arg(path)
+            .args([
+                "/inheritance:r",
+                "/grant:r",
+                "SYSTEM:(OI)(CI)F",
+                "Administrators:(OI)(CI)F",
+                "Users:(OI)(CI)RX",
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status()
+            .context("hardening the CEC Support service directory")?;
+        if !status.success() {
+            bail!("couldn't protect the CEC Support service directory");
+        }
+        Ok(())
+    }
+
+    fn wait_stopped() {
+        for _ in 0..40 {
+            let stopped = std::process::Command::new("sc")
+                .args(["query", WINDOWS_SERVICE_NAME])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output()
+                .map(|output| {
+                    !output.status.success()
+                        || String::from_utf8_lossy(&output.stdout).contains("STOPPED")
+                })
+                .unwrap_or(true);
+            if stopped {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+    }
 }
 
 #[cfg(not(windows))]
@@ -468,6 +597,10 @@ mod windows {
     use super::*;
 
     pub(super) fn is_installed() -> bool {
+        false
+    }
+
+    pub(super) fn is_privileged_host_current() -> bool {
         false
     }
 
@@ -541,10 +674,15 @@ mod tests {
 
     #[test]
     fn windows_bin_path_is_quoted() {
-        let bp = windows_bin_path(Path::new(r"C:\Program Files\CEC Support\cec-support.exe"));
+        let bp = windows_bin_path(
+            Path::new(r"C:\Program Files\CEC Support\cec-support.exe"),
+            Path::new(r"C:\Users\Chris Paul"),
+            Path::new(r"C:\Users\Chris Paul\AppData\Roaming\CEC Support"),
+            Some("S-1-5-21-1000"),
+        );
         assert_eq!(
             bp,
-            r#""C:\Program Files\CEC Support\cec-support.exe" run --service"#
+            r#""C:\Program Files\CEC Support\cec-support.exe" run --service --profile-home "C:\Users\Chris Paul" --cec-home "C:\Users\Chris Paul\AppData\Roaming\CEC Support" --client-sid "S-1-5-21-1000" --serve-bin "C:\Program Files\CEC Support\allmystuff-serve.exe" --mesh-bin "C:\Program Files\CEC Support\myownmesh.exe""#
         );
     }
 

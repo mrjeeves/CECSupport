@@ -102,11 +102,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.60", features = [
-  "Win32_Foundation",
-  "Win32_UI_Shell",
-  "Win32_UI_WindowsAndMessaging",
-] }
+windows-service = "0.7"
 
 [profile.release]
 panic = "abort"
