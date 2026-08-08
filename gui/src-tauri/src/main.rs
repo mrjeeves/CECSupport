@@ -438,49 +438,72 @@ async fn run_admin_toolbox(
     run_id: &str,
     command: &str,
 ) -> Result<Value, String> {
-    use tauri_plugin_shell::process::CommandEvent;
-    use tauri_plugin_shell::ShellExt as _;
+    use std::os::windows::process::CommandExt as _;
+    const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
 
-    let (mut events, _child) = app
-        .shell()
-        .sidecar("amst")
-        .map_err(|e| format!("finding the bundled AMST terminal: {e}"))?
-        .args(["--admin", "--run", command])
+    let app_exe = std::env::current_exe()
+        .map_err(|e| format!("finding the CEC Support installation: {e}"))?;
+    let install_dir = app_exe
+        .parent()
+        .ok_or_else(|| "CEC Support installation has no parent directory".to_string())?;
+    let amst = install_dir.join("amst.exe");
+    if !amst.is_file() {
+        return Err(format!(
+            "the bundled AMST terminal is missing from {}",
+            amst.display()
+        ));
+    }
+
+    let progress_dir = std::env::temp_dir().join("cec-support-toolbox");
+    std::fs::create_dir_all(&progress_dir)
+        .map_err(|e| format!("creating the Toolbox progress folder: {e}"))?;
+    let progress_file = progress_dir.join(format!("{run_id}.log"));
+    let _ = std::fs::remove_file(&progress_file);
+
+    // Run AMST in a real console so the person at the machine can follow the
+    // repair. The PowerShell wrapper mirrors each line to a UTF-8 transcript;
+    // we tail that file below so the Toolbox window remains useful too.
+    let ps_quote = |value: &str| value.replace('\'', "''");
+    let amst = ps_quote(&amst.to_string_lossy());
+    let command = ps_quote(command);
+    let progress_file_ps = ps_quote(&progress_file.to_string_lossy());
+    let script = format!(
+        "$ErrorActionPreference='Continue'; \
+         $utf8 = New-Object System.Text.UTF8Encoding($false); \
+         [Console]::OutputEncoding = $utf8; $OutputEncoding = $utf8; \
+         & '{amst}' --admin --run '{command}' 2>&1 | ForEach-Object {{ \
+             $line = [string]$_; Write-Host $line; \
+             [IO.File]::AppendAllText('{progress_file_ps}', $line + [Environment]::NewLine, $utf8) \
+         }}; \
+         $cecExit = if ($null -eq $LASTEXITCODE) {{ 0 }} else {{ $LASTEXITCODE }}; \
+         if ($cecExit -eq 0) {{ Write-Host ''; Write-Host 'CEC Support task completed.' -ForegroundColor Green }} \
+         else {{ Write-Host ''; Write-Host \"CEC Support task failed (exit $cecExit).\" -ForegroundColor Red }}; \
+         Start-Sleep -Seconds 2; exit $cecExit"
+    );
+    let mut child = std::process::Command::new("powershell.exe")
+        .args(["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
+        .creation_flags(CREATE_NEW_CONSOLE)
         .spawn()
-        .map_err(|e| format!("starting {}: {e}", spec.label))?;
+        .map_err(|e| format!("starting {} in an AMST terminal: {e}", spec.label))?;
 
-    let mut stdout = String::new();
-    let mut stderr = String::new();
-    let mut exit_code = None;
-    let mut event_error = None;
-    while let Some(event) = events.recv().await {
-        match event {
-            CommandEvent::Stdout(bytes) => {
-                let line = clean_toolbox_output(&bytes);
-                append_toolbox_line(&mut stdout, &line);
-                emit_toolbox_progress(&app, run_id, "stdout", &line);
-            }
-            CommandEvent::Stderr(bytes) => {
-                let line = clean_toolbox_output(&bytes);
-                append_toolbox_line(&mut stderr, &line);
-                emit_toolbox_progress(&app, run_id, "stderr", &line);
-            }
-            CommandEvent::Error(error) => {
-                emit_toolbox_progress(&app, run_id, "stderr", &error);
-                event_error = Some(error);
-            }
-            CommandEvent::Terminated(payload) => exit_code = payload.code,
-            _ => {}
+    let mut output = String::new();
+    let mut bytes_seen = 0usize;
+    let exit_code = loop {
+        tail_toolbox_progress(app, run_id, &progress_file, &mut bytes_seen, &mut output);
+        match child
+            .try_wait()
+            .map_err(|e| format!("waiting for {}: {e}", spec.label))?
+        {
+            Some(status) => break status.code(),
+            None => tokio::time::sleep(Duration::from_millis(150)).await,
         }
-    }
+    };
+    tail_toolbox_progress(app, run_id, &progress_file, &mut bytes_seen, &mut output);
+    let _ = std::fs::remove_file(&progress_file);
 
-    if let Some(error) = event_error {
-        return Err(format!("{} failed: {error}", spec.label));
-    }
-    let stdout = stdout.trim().to_string();
-    let stderr = stderr.trim().to_string();
+    let output = output.trim().to_string();
     if exit_code != Some(0) {
-        let detail = if stderr.is_empty() { stdout } else { stderr };
+        let detail = output;
         return Err(if detail.is_empty() {
             format!(
                 "{} failed{}",
@@ -496,8 +519,34 @@ async fn run_admin_toolbox(
     Ok(json!({
         "ok": true,
         "label": spec.label,
-        "output": if stdout.is_empty() { format!("{} completed.", spec.label) } else { stdout },
+        "output": if output.is_empty() { format!("{} completed.", spec.label) } else { output },
     }))
+}
+
+#[cfg(windows)]
+fn tail_toolbox_progress(
+    app: &tauri::AppHandle,
+    run_id: &str,
+    path: &std::path::Path,
+    bytes_seen: &mut usize,
+    output: &mut String,
+) {
+    let Ok(bytes) = std::fs::read(path) else {
+        return;
+    };
+    if bytes.len() < *bytes_seen {
+        *bytes_seen = 0;
+    }
+    let fresh = &bytes[*bytes_seen..];
+    *bytes_seen = bytes.len();
+    for raw_line in fresh.split(|byte| matches!(byte, b'\r' | b'\n')) {
+        if raw_line.is_empty() {
+            continue;
+        }
+        let line = clean_toolbox_output(raw_line);
+        append_toolbox_line(output, &line);
+        emit_toolbox_progress(app, run_id, "stdout", &line);
+    }
 }
 
 #[cfg(windows)]
@@ -1360,11 +1409,25 @@ fn current_windows_user_sid() -> Result<String, String> {
 
 #[tauri::command]
 async fn service_install(state: State<'_, AppState>) -> Result<Value, String> {
-    let result = service_mutate("install").await?;
-    if result.get("ok").and_then(Value::as_bool) == Some(true) {
-        state.node_child.lock().take();
+    // An upgraded install may still have a GUI-owned node on the pipe. Release
+    // it before the elevated installer starts the replacement service; doing
+    // this afterwards lets both processes race to become the machine node.
+    state.node_child.lock().take();
+    let result = service_mutate("install").await;
+    let installed = result
+        .as_ref()
+        .ok()
+        .and_then(|value| value.get("ok"))
+        .and_then(Value::as_bool)
+        == Some(true);
+    if !installed {
+        // UAC cancellation or a failed replacement must not strand a machine
+        // that was working through the temporary GUI-owned node.
+        if let Ok(Some(child)) = ensure_node_running_pinned(ALLMYSTUFF_PIN).await {
+            state.node_child.lock().replace(child);
+        }
     }
-    Ok(result)
+    result
 }
 #[tauri::command]
 async fn service_uninstall() -> Result<Value, String> {
@@ -1863,31 +1926,39 @@ fn run_gui() -> ExitCode {
             // the old Session-0 service once when its ImagePath lacks the
             // interactive-host state arguments. Never prompt in development.
             #[cfg(all(windows, not(debug_assertions)))]
-            {
+            let migrate_privileged_host = {
                 let status = cec_support_service::status_value(false).unwrap_or_default();
-                if status
+                status
                     .get("privileged_host_current")
                     .and_then(Value::as_bool)
                     != Some(true)
-                {
-                    let migration_handle = app.handle().clone();
-                    std::thread::spawn(move || match service_mutate_blocking("install") {
-                        Ok(value) if value.get("ok").and_then(Value::as_bool) == Some(true) => {
-                            migration_handle
-                                .state::<AppState>()
-                                .node_child
-                                .lock()
-                                .take();
-                            tracing::info!("installed the privileged interactive CEC host");
-                        }
-                        Ok(_) => tracing::warn!("privileged CEC host setup did not complete"),
-                        Err(error) => tracing::warn!("privileged CEC host setup failed: {error}"),
-                    });
-                }
-            }
+            };
+            #[cfg(not(all(windows, not(debug_assertions))))]
+            let migrate_privileged_host = false;
 
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
+                // Upgrade the old service *before* bringing up a temporary GUI
+                // node. Older builds previously did these concurrently, so the
+                // old service, new service, and GUI could fight over one pipe.
+                if migrate_privileged_host {
+                    match tokio::task::spawn_blocking(|| service_mutate_blocking("install")).await {
+                        Ok(Ok(value))
+                            if value.get("ok").and_then(Value::as_bool) == Some(true) =>
+                        {
+                            tracing::info!("installed the privileged interactive CEC host");
+                        }
+                        Ok(Ok(_)) => {
+                            tracing::warn!("privileged CEC host setup did not complete")
+                        }
+                        Ok(Err(error)) => {
+                            tracing::warn!("privileged CEC host setup failed: {error}")
+                        }
+                        Err(error) => {
+                            tracing::warn!("privileged CEC host setup task failed: {error}")
+                        }
+                    }
+                }
                 // One node per machine, shared with AllMyStuff: reuse whatever
                 // is already serving the control socket (an AllMyStuff GUI's
                 // node, a service node), else spawn a transient one tied to
