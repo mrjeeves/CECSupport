@@ -1420,9 +1420,13 @@ async fn service_install(state: State<'_, AppState>) -> Result<Value, String> {
         .and_then(|value| value.get("ok"))
         .and_then(Value::as_bool)
         == Some(true);
-    if !installed {
+    if installed && !wait_for_node().await {
+        tracing::warn!("installed CEC host did not become ready within the startup grace window");
+    }
+    if !installed || !NodeClient::probe().await {
         // UAC cancellation or a failed replacement must not strand a machine
-        // that was working through the temporary GUI-owned node.
+        // that was working through the temporary GUI-owned node. The same
+        // fallback covers a service that installs but never becomes ready.
         if let Ok(Some(child)) = ensure_node_running_pinned(ALLMYSTUFF_PIN).await {
             state.node_child.lock().replace(child);
         }
@@ -1789,13 +1793,14 @@ async fn run_event_pump(app: tauri::AppHandle, node: Arc<NodeClient>) {
 }
 
 /// Wait (briefly) for a node to answer the control socket after a spawn.
-async fn wait_for_node() {
+async fn wait_for_node() -> bool {
     for _ in 0..50 {
         if NodeClient::probe().await {
-            return;
+            return true;
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
+    false
 }
 
 fn run_gui() -> ExitCode {
@@ -1942,21 +1947,34 @@ fn run_gui() -> ExitCode {
                 // node. Older builds previously did these concurrently, so the
                 // old service, new service, and GUI could fight over one pipe.
                 if migrate_privileged_host {
-                    match tokio::task::spawn_blocking(|| service_mutate_blocking("install")).await {
+                    let migrated = match tokio::task::spawn_blocking(|| {
+                        service_mutate_blocking("install")
+                    })
+                    .await
+                    {
                         Ok(Ok(value))
                             if value.get("ok").and_then(Value::as_bool) == Some(true) =>
                         {
                             tracing::info!("installed the privileged interactive CEC host");
+                            true
                         }
                         Ok(Ok(_)) => {
-                            tracing::warn!("privileged CEC host setup did not complete")
+                            tracing::warn!("privileged CEC host setup did not complete");
+                            false
                         }
                         Ok(Err(error)) => {
-                            tracing::warn!("privileged CEC host setup failed: {error}")
+                            tracing::warn!("privileged CEC host setup failed: {error}");
+                            false
                         }
                         Err(error) => {
-                            tracing::warn!("privileged CEC host setup task failed: {error}")
+                            tracing::warn!("privileged CEC host setup task failed: {error}");
+                            false
                         }
+                    };
+                    if migrated && !wait_for_node().await {
+                        tracing::warn!(
+                            "migrated CEC host did not become ready; starting the GUI fallback"
+                        );
                     }
                 }
                 // One node per machine, shared with AllMyStuff: reuse whatever
