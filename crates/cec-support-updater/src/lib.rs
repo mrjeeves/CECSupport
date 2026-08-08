@@ -20,14 +20,16 @@
 //!
 //! # Shape
 //!
-//! One artifact — the `cec-support` binary. A check fetches the release feed,
-//! compares tags, and *stages* a verified download under the CEC home; the swap
-//! happens on the next launch ([`apply_pending_if_any`]), because a running
-//! executable can't reliably replace itself in place. Verification is
+//! One verified artifact containing `cec-support` and its required runtime
+//! companions (currently `amst.exe` on Windows). A check fetches the release
+//! feed, compares tags, and *stages* that payload under the CEC home; the swap
+//! happens on the next launch ([`apply_pending_if_any`]), because running
+//! executables can't reliably replace themselves in place. Verification is
 //! fail-closed: a published SHA-256 sidecar is mandatory, and when a release
 //! signing key is baked in at build time a valid detached minisign signature is
 //! required too.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -309,6 +311,10 @@ fn current_version() -> &'static str {
 struct InstalledVersionMarker {
     version: String,
     sha256: String,
+    /// Hashes of companion executables installed beside the GUI. Older
+    /// markers lack this map, so upgraded installs repair their companions.
+    #[serde(default)]
+    companions: BTreeMap<String, String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -324,7 +330,7 @@ enum InstalledVersionState {
 }
 
 // ---------------------------------------------------------------------------
-// The artifact: CEC Support ships exactly one binary.
+// The artifact: CEC Support plus the companions it needs at runtime.
 // ---------------------------------------------------------------------------
 
 /// Release-asset stem — `cec-support-<platform>.<ext>`, matching the
@@ -338,6 +344,17 @@ fn bin_name() -> &'static str {
         "cec-support.exe"
     } else {
         "cec-support"
+    }
+}
+
+fn required_companion_names() -> &'static [&'static str] {
+    #[cfg(windows)]
+    {
+        &["amst.exe"]
+    }
+    #[cfg(not(windows))]
+    {
+        &[]
     }
 }
 
@@ -464,13 +481,24 @@ pub fn apply_pending_if_any() {
     if let Err(e) = apply_pending() {
         tracing::warn!("self-update apply skipped: {e}");
     }
+    // An older updater knows only about cec-support.exe. It leaves the verified
+    // archive cached after swapping in a newer GUI, so the new GUI can recover
+    // AMST from that same payload on its very first launch.
+    if let Err(e) = repair_companions_from_cached_archive() {
+        tracing::warn!("self-update companion repair skipped: {e}");
+    }
 }
 
 /// Apply a staged update now, surfacing the applied version (the swap is on
 /// disk; it takes effect on next start), or `None` if nothing was pending.
 pub fn apply_now() -> Result<Option<String>> {
     cleanup_old_replaced_binary();
-    apply_pending()
+    let applied = apply_pending()?;
+    if applied.is_some() {
+        return Ok(applied);
+    }
+    repair_companions_from_cached_archive()
+        .map(|repaired| repaired.then(|| current_version().to_string()))
 }
 
 fn apply_pending() -> Result<Option<String>> {
@@ -506,6 +534,10 @@ fn apply_pending() -> Result<Option<String>> {
         .parent()
         .ok_or_else(|| Error::msg("staged archive has no parent"))?;
     let binary = extract_binary(&archive, staged_dir, bin_name())?;
+    // Install companions first. If the GUI swap then fails, the old GUI can
+    // still use the newer AMST and the pending marker remains for a retry. The
+    // opposite order could leave a new GUI without the companion it requires.
+    install_companions_from_archive(&archive, &target)?;
     atomic_replace(&binary, &target)?;
     record_installed_version(&target_version);
 
@@ -526,6 +558,35 @@ fn installed_path() -> Option<PathBuf> {
     (!path_in_os_bundle(&exe)).then_some(exe)
 }
 
+fn companion_target(installed_binary: &Path, name: &str) -> Result<PathBuf> {
+    installed_binary
+        .parent()
+        .map(|dir| dir.join(name))
+        .ok_or_else(|| Error::msg("installed binary has no parent directory"))
+}
+
+fn required_companions_present(installed_binary: &Path) -> bool {
+    required_companion_names().iter().all(|name| {
+        companion_target(installed_binary, name)
+            .map(|path| path.is_file())
+            .unwrap_or(false)
+    })
+}
+
+fn install_companions_from_archive(archive: &Path, installed_binary: &Path) -> Result<()> {
+    let staged_dir = archive
+        .parent()
+        .ok_or_else(|| Error::msg("update archive has no parent"))?;
+    let companions = required_companion_names()
+        .iter()
+        .map(|name| extract_binary(archive, staged_dir, name).map(|path| (*name, path)))
+        .collect::<Result<Vec<_>>>()?;
+    for (name, staged) in companions {
+        atomic_replace(&staged, &companion_target(installed_binary, name)?)?;
+    }
+    Ok(())
+}
+
 fn installed_version_marker_path() -> Option<PathBuf> {
     updates_dir().ok().map(|d| d.join("installed.version"))
 }
@@ -535,7 +596,10 @@ fn installed_version_state() -> InstalledVersionState {
         return InstalledVersionState::Untracked;
     };
     if !marker_path.exists() {
-        return InstalledVersionState::Untracked;
+        return installed_path()
+            .filter(|binary| !required_companions_present(binary))
+            .map(|_| InstalledVersionState::Changed)
+            .unwrap_or(InstalledVersionState::Untracked);
     }
     let Some(binary) = installed_path() else {
         return InstalledVersionState::Changed;
@@ -549,7 +613,17 @@ fn validated_marker_version(marker_path: &Path, binary: &Path) -> Option<String>
     let text = std::fs::read_to_string(marker_path).ok()?;
     let marker: InstalledVersionMarker = serde_json::from_str(&text).ok()?;
     let actual = sha256_file(binary).ok()?;
-    (actual == marker.sha256).then_some(marker.version)
+    if actual != marker.sha256 {
+        return None;
+    }
+    for name in required_companion_names() {
+        let expected = marker.companions.get(*name)?;
+        let actual = sha256_file(&companion_target(binary, name).ok()?).ok()?;
+        if &actual != expected {
+            return None;
+        }
+    }
+    Some(marker.version)
 }
 
 fn record_installed_version(version: &str) {
@@ -562,9 +636,20 @@ fn record_installed_version(version: &str) {
     let Ok(sha256) = sha256_file(&binary) else {
         return;
     };
+    let mut companions = BTreeMap::new();
+    for name in required_companion_names() {
+        let Ok(target) = companion_target(&binary, name) else {
+            return;
+        };
+        let Ok(hash) = sha256_file(&target) else {
+            return;
+        };
+        companions.insert((*name).to_string(), hash);
+    }
     let marker = InstalledVersionMarker {
         version: version.to_string(),
         sha256,
+        companions,
     };
     if let Ok(text) = serde_json::to_string(&marker) {
         let _ = std::fs::write(marker_path, text);
@@ -689,11 +774,47 @@ fn old_binary_path(target: &Path) -> PathBuf {
 fn cleanup_old_replaced_binary() {
     #[cfg(windows)]
     if let Some(p) = installed_path() {
-        let old = old_binary_path(&p);
-        if old.exists() {
-            let _ = std::fs::remove_file(&old);
+        let mut targets = vec![p.clone()];
+        for name in required_companion_names() {
+            if let Ok(target) = companion_target(&p, name) {
+                targets.push(target);
+            }
+        }
+        for target in targets {
+            let old = old_binary_path(&target);
+            if old.exists() {
+                let _ = std::fs::remove_file(&old);
+            }
         }
     }
+}
+
+/// Finish a multi-file update that was downloaded by an older updater. That
+/// updater extracts only the GUI but keeps the verified archive in the version
+/// cache, allowing this version to install AMST without another download or a
+/// manual setup run.
+fn repair_companions_from_cached_archive() -> Result<bool> {
+    if required_companion_names().is_empty()
+        || matches!(
+            installed_version_state(),
+            InstalledVersionState::Verified(_)
+        )
+    {
+        return Ok(false);
+    }
+    let Some(target) = installed_path() else {
+        return Ok(false);
+    };
+    let archive = updates_dir()?
+        .join(current_version())
+        .join(platform_asset());
+    if !archive.is_file() {
+        return Ok(false);
+    }
+    install_companions_from_archive(&archive, &target)?;
+    record_installed_version(current_version());
+    tracing::info!("self-update repaired runtime companions from the cached payload");
+    Ok(true)
 }
 
 #[cfg(unix)]
@@ -1238,9 +1359,16 @@ mod tests {
         let binary = tmp.path().join(bin_name());
         let marker_path = tmp.path().join("installed.version");
         std::fs::write(&binary, b"cec support current").unwrap();
+        let mut companions = BTreeMap::new();
+        for name in required_companion_names() {
+            let companion = tmp.path().join(name);
+            std::fs::write(&companion, b"companion current").unwrap();
+            companions.insert((*name).to_string(), sha256_file(&companion).unwrap());
+        }
         let marker = InstalledVersionMarker {
             version: "0.2.39".into(),
             sha256: sha256_file(&binary).unwrap(),
+            companions,
         };
         std::fs::write(&marker_path, serde_json::to_string(&marker).unwrap()).unwrap();
 
@@ -1251,6 +1379,27 @@ mod tests {
 
         std::fs::write(&binary, b"cec support rolled back").unwrap();
         assert_eq!(validated_marker_version(&marker_path, &binary), None);
+
+        // The GUI hash alone cannot certify a payload whose AMST companion was
+        // removed or rolled back.
+        std::fs::write(&binary, b"cec support current").unwrap();
+        if let Some(name) = required_companion_names().first() {
+            std::fs::write(tmp.path().join(name), b"companion rolled back").unwrap();
+            assert_eq!(validated_marker_version(&marker_path, &binary), None);
+
+            // Markers written by the previous GUI-only updater deserialize but
+            // cannot certify AMST, forcing the cached-payload repair path.
+            std::fs::write(
+                &marker_path,
+                serde_json::json!({
+                    "version": "0.2.39",
+                    "sha256": sha256_file(&binary).unwrap(),
+                })
+                .to_string(),
+            )
+            .unwrap();
+            assert_eq!(validated_marker_version(&marker_path, &binary), None);
+        }
 
         // A malformed or old bare-version marker cannot falsely certify an
         // executable either.
@@ -1416,6 +1565,72 @@ mod tests {
         assert!(bin.exists());
         let s = std::fs::read_to_string(&bin).unwrap();
         assert!(s.contains("echo hi"));
+    }
+
+    #[test]
+    fn self_update_zip_carries_gui_and_amst() {
+        use std::io::Write as _;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("cec-support-windows-x86_64.zip");
+        {
+            let file = std::fs::File::create(&archive).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let options = zip::write::SimpleFileOptions::default();
+            zip.start_file("cec-support.exe", options).unwrap();
+            zip.write_all(b"new gui").unwrap();
+            zip.start_file("amst.exe", options).unwrap();
+            zip.write_all(b"new amst").unwrap();
+            zip.finish().unwrap();
+        }
+        let out = tmp.path().join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        assert_eq!(
+            std::fs::read(extract_binary(&archive, &out, "cec-support.exe").unwrap()).unwrap(),
+            b"new gui"
+        );
+        assert_eq!(
+            std::fs::read(extract_binary(&archive, &out, "amst.exe").unwrap()).unwrap(),
+            b"new amst"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn companion_install_repairs_an_old_or_missing_amst() {
+        use std::io::Write as _;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let install = tmp.path().join("install");
+        let stage = tmp.path().join("stage");
+        std::fs::create_dir_all(&install).unwrap();
+        std::fs::create_dir_all(&stage).unwrap();
+        let installed_gui = install.join("cec-support.exe");
+        std::fs::write(&installed_gui, b"running gui").unwrap();
+        std::fs::write(install.join("amst.exe"), b"old amst").unwrap();
+        let archive = stage.join("cec-support-windows-x86_64.zip");
+        {
+            let file = std::fs::File::create(&archive).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let options = zip::write::SimpleFileOptions::default();
+            zip.start_file("cec-support.exe", options).unwrap();
+            zip.write_all(b"new gui").unwrap();
+            zip.start_file("amst.exe", options).unwrap();
+            zip.write_all(b"new amst").unwrap();
+            zip.finish().unwrap();
+        }
+
+        install_companions_from_archive(&archive, &installed_gui).unwrap();
+        assert_eq!(
+            std::fs::read(install.join("amst.exe")).unwrap(),
+            b"new amst"
+        );
+        std::fs::remove_file(install.join("amst.exe")).unwrap();
+        install_companions_from_archive(&archive, &installed_gui).unwrap();
+        assert_eq!(
+            std::fs::read(install.join("amst.exe")).unwrap(),
+            b"new amst"
+        );
     }
 
     #[test]
