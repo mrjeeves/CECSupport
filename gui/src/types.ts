@@ -480,6 +480,18 @@ export interface UpdateStatus {
   release_url_overridden: boolean;
 }
 
+export interface ComponentVersionRow {
+  id: string;
+  label: string;
+  current: string | null;
+  pinned: string | null;
+  detail: string;
+}
+
+export interface ComponentStatus {
+  rows: ComponentVersionRow[];
+}
+
 /** What a check decided (from `update_check`, and the `update://checked`
  *  event the background ticker emits). Tagged on `outcome`. */
 export interface CheckOutcome {

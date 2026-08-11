@@ -19,8 +19,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-bridge"
-version = "0.2.66"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.66#f3a8243eb21da042515e5abf0cf4b3a25f0a61cc"
+version = "0.2.67"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.67#8d49c381b022dc7b0e674232cbbf00beff8fc3d5"
 dependencies = [
  "allmystuff-graph",
  "allmystuff-inventory",
@@ -29,8 +29,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-cec-consent"
-version = "0.2.66"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.66#f3a8243eb21da042515e5abf0cf4b3a25f0a61cc"
+version = "0.2.67"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.67#8d49c381b022dc7b0e674232cbbf00beff8fc3d5"
 dependencies = [
  "allmystuff-cec-protocol",
  "serde",
@@ -40,8 +40,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-cec-protocol"
-version = "0.2.66"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.66#f3a8243eb21da042515e5abf0cf4b3a25f0a61cc"
+version = "0.2.67"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.67#8d49c381b022dc7b0e674232cbbf00beff8fc3d5"
 dependencies = [
  "serde",
  "serde_json",
@@ -50,8 +50,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-graph"
-version = "0.2.66"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.66#f3a8243eb21da042515e5abf0cf4b3a25f0a61cc"
+version = "0.2.67"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.67#8d49c381b022dc7b0e674232cbbf00beff8fc3d5"
 dependencies = [
  "serde",
  "serde_json",
@@ -60,8 +60,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-inventory"
-version = "0.2.66"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.66#f3a8243eb21da042515e5abf0cf4b3a25f0a61cc"
+version = "0.2.67"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.67#8d49c381b022dc7b0e674232cbbf00beff8fc3d5"
 dependencies = [
  "serde",
  "serde_json",
@@ -70,8 +70,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-node"
-version = "0.2.66"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.66#f3a8243eb21da042515e5abf0cf4b3a25f0a61cc"
+version = "0.2.67"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.67#8d49c381b022dc7b0e674232cbbf00beff8fc3d5"
 dependencies = [
  "allmystuff-bridge",
  "allmystuff-cec-consent",
@@ -126,12 +126,12 @@ dependencies = [
 [[package]]
 name = "allmystuff-pixels"
 version = "0.1.0"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.66#f3a8243eb21da042515e5abf0cf4b3a25f0a61cc"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.67#8d49c381b022dc7b0e674232cbbf00beff8fc3d5"
 
 [[package]]
 name = "allmystuff-protocol"
-version = "0.2.66"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.66#f3a8243eb21da042515e5abf0cf4b3a25f0a61cc"
+version = "0.2.67"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.67#8d49c381b022dc7b0e674232cbbf00beff8fc3d5"
 dependencies = [
  "allmystuff-graph",
  "dirs 5.0.1",
@@ -141,8 +141,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-session"
-version = "0.2.66"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.66#f3a8243eb21da042515e5abf0cf4b3a25f0a61cc"
+version = "0.2.67"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.67#8d49c381b022dc7b0e674232cbbf00beff8fc3d5"
 dependencies = [
  "allmystuff-graph",
  "allmystuff-protocol",
@@ -153,8 +153,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-updater"
-version = "0.2.66"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.66#f3a8243eb21da042515e5abf0cf4b3a25f0a61cc"
+version = "0.2.67"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.67#8d49c381b022dc7b0e674232cbbf00beff8fc3d5"
 dependencies = [
  "dirs 5.0.1",
  "flate2",
@@ -721,7 +721,7 @@ dependencies = [
 
 [[package]]
 name = "cec-support"
-version = "0.2.45"
+version = "0.2.46"
 dependencies = [
  "allmystuff-cec-consent",
  "allmystuff-cec-protocol",
@@ -745,11 +745,12 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "windows-service",
+ "zip",
 ]
 
 [[package]]
 name = "cec-support-service"
-version = "0.2.45"
+version = "0.2.46"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
@@ -760,7 +761,7 @@ dependencies = [
 
 [[package]]
 name = "cec-support-updater"
-version = "0.2.45"
+version = "0.2.46"
 dependencies = [
  "dirs 5.0.1",
  "flate2",
@@ -779,7 +780,7 @@ dependencies = [
 
 [[package]]
 name = "cec-support-wifi"
-version = "0.2.45"
+version = "0.2.46"
 dependencies = [
  "serde",
 ]

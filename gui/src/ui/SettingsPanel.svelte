@@ -34,9 +34,35 @@
       ? new Date(update.last_check_at * 1000).toLocaleString()
       : "not yet",
   );
+
+  type SettingsTab = "general" | "startup" | "updates";
+  let tab = $state<SettingsTab>("general");
+
+  function cleanVersion(v: string | null | undefined): string {
+    return v?.replace(/^v/, "") || "Unknown";
+  }
+
+  function behind(current: string | null, pinned: string | null): boolean {
+    if (!current || !pinned) return true;
+    const have = cleanVersion(current).split(/[.-]/).slice(0, 3).map(Number);
+    const want = cleanVersion(pinned).split(/[.-]/).slice(0, 3).map(Number);
+    for (let i = 0; i < 3; i += 1) {
+      if ((have[i] || 0) < (want[i] || 0)) return true;
+      if ((have[i] || 0) > (want[i] || 0)) return false;
+    }
+    return false;
+  }
 </script>
 
-<div class="settings">
+<div class="settings-shell">
+  <nav class="tabs" aria-label="Settings sections">
+    <button class:active={tab === "general"} onclick={() => (tab = "general")}>General</button>
+    <button class:active={tab === "startup"} onclick={() => (tab = "startup")}>Startup</button>
+    <button class:active={tab === "updates"} onclick={() => { tab = "updates"; void store.loadUpdateStatus(); }}>Updates</button>
+  </nav>
+
+  <div class="settings">
+  {#if tab === "general"}
   <section class="card block">
     <h3>This computer's name</h3>
     <p class="desc">A friendly name your technician will see, so they know it's you.</p>
@@ -80,6 +106,8 @@
     {/if}
   </section>
   {/if}
+
+  {:else if tab === "startup"}
 
   <section class="card block">
     <h3>Startup</h3>
@@ -144,6 +172,8 @@
     </label>
   </section>
 
+  {:else if tab === "updates"}
+
   <section class="card block">
     <h3>Updates</h3>
     <p class="desc">
@@ -166,6 +196,28 @@
       {#if checkResult && !store.updateBusy}
         <p class="muted">{checkResult}</p>
       {/if}
+
+      <div class="component-list">
+        {#if store.componentVersions.length === 0}
+          <p class="muted">Reading component versions…</p>
+        {:else}
+          {#each store.componentVersions as row (row.id)}
+            <div class="component-row" class:stale={behind(row.current, row.pinned)}>
+              <div class="component-copy">
+                <b>{row.label}</b>
+                <span>{row.detail}</span>
+              </div>
+              <div class="versions">
+                <span><small>Current</small><b>{cleanVersion(row.current)}</b></span>
+                <span><small>Pinned</small><b>{cleanVersion(row.pinned)}</b></span>
+              </div>
+              <button class="btn repair" disabled={store.componentBusy !== null} onclick={() => void store.repairComponent(row.id)}>
+                {store.componentBusy === row.id ? "Working…" : behind(row.current, row.pinned) ? "Update" : "Repair"}
+              </button>
+            </div>
+          {/each}
+        {/if}
+      </div>
 
       {#if update.staged_version}
         <!-- Something is downloaded and verified, waiting on a restart. This is
@@ -208,12 +260,44 @@
     CEC Support{store.version ? ` v${store.version}` : ""}
     · by Critical Error Computing
   </footer>
+  {/if}
+  </div>
 </div>
 
 <style>
+  .settings-shell {
+    width: 100%;
+    max-width: 38rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+  }
+  .tabs {
+    display: flex;
+    gap: 0.25rem;
+    padding: 0.25rem;
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--surface-2);
+    align-self: center;
+  }
+  .tabs button {
+    border: 0;
+    border-radius: calc(var(--r-md) - 0.18rem);
+    padding: 0.5rem 0.9rem;
+    background: transparent;
+    color: var(--ink-soft);
+    font: inherit;
+    font-weight: 650;
+    cursor: pointer;
+  }
+  .tabs button.active {
+    color: var(--ink);
+    background: var(--surface);
+    box-shadow: var(--shadow-sm);
+  }
   .settings {
     width: 100%;
-    max-width: 30rem;
     display: flex;
     flex-direction: column;
     gap: 1rem;
@@ -252,6 +336,29 @@
     gap: 0.5rem;
     flex-wrap: wrap;
   }
+  .component-list {
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    overflow: hidden;
+  }
+  .component-row {
+    display: grid;
+    grid-template-columns: minmax(9rem, 1fr) auto auto;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 0.65rem 0.7rem;
+    border-top: 1px solid var(--line);
+  }
+  .component-row:first-child { border-top: 0; }
+  .component-row.stale { background: color-mix(in srgb, var(--danger-soft) 45%, transparent); }
+  .component-copy { display: flex; flex-direction: column; min-width: 0; }
+  .component-copy b { font-size: 0.84rem; }
+  .component-copy span { color: var(--ink-faint); font-size: 0.7rem; }
+  .versions { display: flex; gap: 0.6rem; }
+  .versions span { min-width: 3.8rem; display: flex; flex-direction: column; }
+  .versions small { color: var(--ink-faint); text-transform: uppercase; font-size: 0.6rem; letter-spacing: 0.04em; }
+  .versions b { font-size: 0.76rem; }
+  .repair { min-width: 4.2rem; }
   .input {
     flex: 1 1 auto;
     font-family: inherit;
@@ -336,5 +443,10 @@
     color: var(--ink-faint);
     font-size: 0.82rem;
     padding: 0.5rem 0 1rem;
+  }
+  @media (max-width: 560px) {
+    .component-row { grid-template-columns: 1fr auto; }
+    .versions { grid-column: 1; }
+    .repair { grid-column: 2; grid-row: 1 / span 2; }
   }
 </style>

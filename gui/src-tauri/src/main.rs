@@ -481,7 +481,14 @@ async fn run_admin_toolbox(
          Start-Sleep -Seconds 2; exit $cecExit"
     );
     let mut child = std::process::Command::new("powershell.exe")
-        .args(["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &script,
+        ])
         .creation_flags(CREATE_NEW_CONSOLE)
         .spawn()
         .map_err(|e| format!("starting {} in an AMST terminal: {e}", spec.label))?;
@@ -556,7 +563,11 @@ fn admin_sidecar_command(base: &str) -> Result<String, String> {
     let install_dir = app_exe
         .parent()
         .ok_or_else(|| "CEC Support installation has no parent directory".to_string())?;
-    let sidecar = install_dir.join(format!("{base}.exe"));
+    let sidecar = if base == "cec-crucible" {
+        ensure_crucible_payload()?
+    } else {
+        install_dir.join(format!("{base}.exe"))
+    };
     if !sidecar.is_file() {
         return Err(format!(
             "the bundled Crucible executable is missing from {}",
@@ -1595,6 +1606,366 @@ async fn update_status() -> Result<Value, String> {
         .map_err(|e| e.to_string())
 }
 
+fn bundled_sidecar(base: &str) -> Option<PathBuf> {
+    let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+    let ext = if cfg!(windows) { ".exe" } else { "" };
+    [
+        dir.join(format!("{base}{ext}")),
+        dir.join(format!("{base}-{}{ext}", env!("DAEMON_SIDECAR_TRIPLE"))),
+    ]
+    .into_iter()
+    .find(|path| {
+        path.metadata()
+            .map(|m| m.is_file() && m.len() > 0)
+            .unwrap_or(false)
+    })
+}
+
+async fn binary_version(bin: PathBuf) -> Option<String> {
+    let mut command = tokio::process::Command::new(bin);
+    command.arg("--version");
+    #[cfg(windows)]
+    {
+        command.creation_flags(0x0800_0000);
+    }
+    let output = tokio::time::timeout(Duration::from_secs(8), command.output())
+        .await
+        .ok()?
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .next()?
+        .split_whitespace()
+        .last()
+        .map(str::to_string)
+}
+
+async fn bundled_version(base: &str) -> Option<String> {
+    binary_version(bundled_sidecar(base)?).await
+}
+
+#[cfg(windows)]
+static CRUCIBLE_PAYLOAD_LOCK: Mutex<()> = Mutex::new(());
+
+#[cfg(windows)]
+fn crucible_archive_path() -> Result<PathBuf, String> {
+    let install_dir = std::env::current_exe()
+        .map_err(|e| format!("finding the CEC Support installation: {e}"))?
+        .parent()
+        .map(PathBuf::from)
+        .ok_or_else(|| "CEC Support installation has no parent directory".to_string())?;
+    let mut candidates = vec![
+        install_dir.join("cec-crucible-portable.zip"),
+        install_dir
+            .join("resources")
+            .join("cec-crucible-portable.zip"),
+    ];
+    #[cfg(debug_assertions)]
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join("cec-crucible-portable.zip"),
+    );
+    candidates
+        .into_iter()
+        .find(|path| path.metadata().map(|m| m.len() > 0).unwrap_or(false))
+        .ok_or_else(|| "the bundled Crucible portable payload is missing".to_string())
+}
+
+#[cfg(windows)]
+fn file_sha256(path: &std::path::Path) -> Result<String, String> {
+    use sha2::{Digest as _, Sha256};
+    use std::io::Read as _;
+
+    let mut file = std::fs::File::open(path)
+        .map_err(|e| format!("opening {} for verification: {e}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|e| format!("reading {} for verification: {e}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+#[cfg(windows)]
+fn extract_crucible_archive(
+    archive: &std::path::Path,
+    destination: &std::path::Path,
+) -> Result<PathBuf, String> {
+    let file = std::fs::File::open(archive)
+        .map_err(|e| format!("opening bundled Crucible payload: {e}"))?;
+    let mut zip =
+        zip::ZipArchive::new(file).map_err(|e| format!("reading bundled Crucible payload: {e}"))?;
+    for index in 0..zip.len() {
+        let mut entry = zip
+            .by_index(index)
+            .map_err(|e| format!("reading Crucible archive entry {index}: {e}"))?;
+        let relative = entry
+            .enclosed_name()
+            .ok_or_else(|| format!("Crucible archive contains an unsafe path: {}", entry.name()))?
+            .to_path_buf();
+        let output_path = destination.join(relative);
+        if entry.is_dir() {
+            std::fs::create_dir_all(&output_path)
+                .map_err(|e| format!("creating {}: {e}", output_path.display()))?;
+            continue;
+        }
+        if let Some(parent) = output_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("creating {}: {e}", parent.display()))?;
+        }
+        let mut output = std::fs::File::create(&output_path)
+            .map_err(|e| format!("creating {}: {e}", output_path.display()))?;
+        std::io::copy(&mut entry, &mut output)
+            .map_err(|e| format!("extracting {}: {e}", output_path.display()))?;
+    }
+
+    let executable = destination.join("cec-crucible.exe");
+    if !executable.is_file()
+        || !destination.join("PresentMon.exe").is_file()
+        || !destination
+            .join("LibreHardwareMonitor")
+            .join("LibreHardwareMonitor.exe")
+            .is_file()
+    {
+        return Err("Crucible portable payload is incomplete".into());
+    }
+    Ok(executable)
+}
+
+/// Materialize Crucible's complete upstream portable payload under CEC's app
+/// data. v0.0.6 is intentionally no longer one loose executable: PresentMon,
+/// LibreHardwareMonitor, and their license tree must remain beside it. The
+/// pinned archive hash makes extraction idempotent and lets a self-update swap
+/// one verified zip instead of trying to keep dozens of DLLs in lockstep.
+#[cfg(windows)]
+fn ensure_crucible_payload() -> Result<PathBuf, String> {
+    materialize_crucible_payload(false)
+}
+
+#[cfg(windows)]
+fn repair_crucible_payload() -> Result<PathBuf, String> {
+    materialize_crucible_payload(true)
+}
+
+#[cfg(windows)]
+fn materialize_crucible_payload(force: bool) -> Result<PathBuf, String> {
+    let _guard = CRUCIBLE_PAYLOAD_LOCK.lock();
+    let archive = crucible_archive_path()?;
+    let expected = option_env!("CRUCIBLE_SHA256")
+        .map(str::trim)
+        .filter(|hash| hash.len() == 64)
+        .ok_or_else(|| "this CEC Support build has no Crucible checksum pin".to_string())?;
+    let actual = file_sha256(&archive)?;
+    if !actual.eq_ignore_ascii_case(expected) {
+        return Err(format!(
+            "the bundled Crucible payload failed verification (expected {expected}, got {actual})"
+        ));
+    }
+
+    let version = option_env!("CRUCIBLE_PIN")
+        .unwrap_or("unknown")
+        .trim_start_matches('v');
+    let cec_home = std::env::var_os(allmystuff_cec_protocol::CEC_HOME_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(default_cec_home);
+    let root = cec_home.join("tools").join("crucible");
+    let target = root.join(version);
+    let executable = target.join("cec-crucible.exe");
+    let marker = target.join(".archive-sha256");
+    if !force
+        && executable.is_file()
+        && target.join("PresentMon.exe").is_file()
+        && target
+            .join("LibreHardwareMonitor")
+            .join("LibreHardwareMonitor.exe")
+            .is_file()
+        && std::fs::read_to_string(&marker)
+            .map(|hash| hash.trim().eq_ignore_ascii_case(expected))
+            .unwrap_or(false)
+    {
+        return Ok(executable);
+    }
+
+    std::fs::create_dir_all(&root)
+        .map_err(|e| format!("creating Crucible tools directory: {e}"))?;
+    let staging = root.join(format!(".{version}.staging-{}", std::process::id()));
+    if staging.exists() {
+        std::fs::remove_dir_all(&staging)
+            .map_err(|e| format!("clearing stale Crucible staging directory: {e}"))?;
+    }
+    std::fs::create_dir_all(&staging)
+        .map_err(|e| format!("creating Crucible staging directory: {e}"))?;
+
+    if let Err(error) = extract_crucible_archive(&archive, &staging) {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(error);
+    }
+    std::fs::write(staging.join(".archive-sha256"), expected)
+        .map_err(|e| format!("recording Crucible payload version: {e}"))?;
+
+    let backup = root.join(format!(".{version}.old"));
+    if backup.exists() {
+        let _ = std::fs::remove_dir_all(&backup);
+    }
+    if target.exists() {
+        std::fs::rename(&target, &backup)
+            .map_err(|e| format!("moving the previous Crucible payload aside: {e}"))?;
+    }
+    if let Err(error) = std::fs::rename(&staging, &target) {
+        if backup.exists() {
+            let _ = std::fs::rename(&backup, &target);
+        }
+        return Err(format!("activating the Crucible portable payload: {error}"));
+    }
+    if backup.exists() {
+        let _ = std::fs::remove_dir_all(&backup);
+    }
+    Ok(target.join("cec-crucible.exe"))
+}
+
+#[cfg(windows)]
+async fn crucible_version() -> Option<String> {
+    let executable = tokio::task::spawn_blocking(ensure_crucible_payload)
+        .await
+        .ok()?
+        .ok()?;
+    binary_version(executable).await
+}
+
+#[cfg(not(windows))]
+async fn crucible_version() -> Option<String> {
+    None
+}
+
+async fn service_payload_version() -> Option<String> {
+    if !cfg!(windows) {
+        // Unix services execute this installed binary directly rather than a
+        // privileged copy under ProgramData.
+        return Some(env!("CARGO_PKG_VERSION").to_string());
+    }
+    let root = std::env::var_os("ProgramData")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
+    binary_version(
+        root.join("Critical Error Computing")
+            .join("CEC Support")
+            .join("service")
+            .join(if cfg!(windows) {
+                "cec-support.exe"
+            } else {
+                "cec-support"
+            }),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn component_status(state: State<'_, AppState>) -> Result<Value, String> {
+    let node = state.node.request("node_version", json!({})).await.ok();
+    let mesh = state.node.request("mesh_status", json!({})).await.ok();
+    let app_version = env!("CARGO_PKG_VERSION");
+    let allmystuff_pin = ALLMYSTUFF_PIN;
+    let myownmesh_pin = option_env!("MYOWNMESH_PIN");
+    let amst = bundled_version("amst").await;
+    let crucible = crucible_version().await;
+    let service = cec_support_service::status_value(false).unwrap_or_default();
+    let mut rows = vec![
+        json!({ "id": "cec", "label": "CEC Support", "current": app_version, "pinned": app_version, "detail": "Running desktop app" }),
+        json!({ "id": "allmystuff", "label": "AllMyStuff Serve", "current": node.as_ref().and_then(|v| v.get("version")), "pinned": allmystuff_pin, "detail": "Shared remote-control and support backend" }),
+        json!({ "id": "myownmesh", "label": "MyOwnMesh Serve", "current": mesh.as_ref().and_then(|v| v.get("version")), "pinned": myownmesh_pin, "detail": "Running mesh transport daemon" }),
+        json!({ "id": "amst", "label": "AMSTerm", "current": amst, "pinned": allmystuff_pin, "detail": "Bundled administrator terminal helper" }),
+        json!({ "id": "crucible", "label": "Crucible", "current": crucible, "pinned": option_env!("CRUCIBLE_PIN"), "detail": "Bundled interactive hardware-test console" }),
+    ];
+    if service.get("installed").and_then(Value::as_bool) == Some(true) {
+        rows.push(json!({
+            "id": "cec_service",
+            "label": "CEC Support service payload",
+            "current": service_payload_version().await,
+            "pinned": app_version,
+            "detail": "Privileged background-service copy"
+        }));
+    }
+    Ok(json!({ "rows": rows }))
+}
+
+async fn run_bundled_update(base: &str) -> Result<String, String> {
+    let bin = bundled_sidecar(base).ok_or_else(|| format!("bundled {base} is missing"))?;
+    let mut command = tokio::process::Command::new(bin);
+    command.arg("update");
+    #[cfg(windows)]
+    {
+        command.creation_flags(0x0800_0000);
+    }
+    let output = command.output().await.map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+#[tauri::command]
+async fn component_repair(state: State<'_, AppState>, component: String) -> Result<Value, String> {
+    match component.as_str() {
+        "cec" => serde_json::to_value(
+            cec_support_updater::update_now()
+                .await
+                .map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string()),
+        "crucible" => {
+            #[cfg(windows)]
+            {
+                let executable = tokio::task::spawn_blocking(repair_crucible_payload)
+                    .await
+                    .map_err(|e| format!("Crucible repair task failed: {e}"))??;
+                let version = binary_version(executable).await;
+                Ok(json!({ "repaired": true, "version": version }))
+            }
+            #[cfg(not(windows))]
+            {
+                Err("Crucible is currently available on Windows only".into())
+            }
+        }
+        "allmystuff" => state
+            .node
+            .request(
+                "request_update",
+                json!({ "minimum": ALLMYSTUFF_PIN.unwrap_or(env!("CARGO_PKG_VERSION")) }),
+            )
+            .await
+            .map_err(|e| e.to_string()),
+        "amst" => {
+            let output = run_bundled_update("allmystuff-serve").await?;
+            Ok(json!({ "output": output }))
+        }
+        "myownmesh" => {
+            let service_installed = cec_support_service::status_value(false)
+                .ok()
+                .and_then(|value| value.get("installed").and_then(Value::as_bool))
+                == Some(true);
+            let output = run_bundled_update("myownmesh").await?;
+            if service_installed {
+                let service = service_install(state).await?;
+                return Ok(json!({ "output": output, "service": service, "restarting": true }));
+            }
+            let _ = state.node.request("restart_self", json!({})).await;
+            Ok(json!({ "output": output, "restarting": true }))
+        }
+        "cec_service" => service_install(state).await,
+        other => Err(format!("unknown component: {other}")),
+    }
+}
+
 /// Check the release feed right now, ignoring the interval cooldown, and stage
 /// anything the apply policy permits.
 #[tauri::command]
@@ -1860,6 +2231,8 @@ fn run_gui() -> ExitCode {
             background_get,
             background_set,
             update_status,
+            component_status,
+            component_repair,
             update_check,
             update_apply,
             update_relaunch,
@@ -1947,30 +2320,29 @@ fn run_gui() -> ExitCode {
                 // node. Older builds previously did these concurrently, so the
                 // old service, new service, and GUI could fight over one pipe.
                 if migrate_privileged_host {
-                    let migrated = match tokio::task::spawn_blocking(|| {
-                        service_mutate_blocking("install")
-                    })
-                    .await
-                    {
-                        Ok(Ok(value))
-                            if value.get("ok").and_then(Value::as_bool) == Some(true) =>
+                    let migrated =
+                        match tokio::task::spawn_blocking(|| service_mutate_blocking("install"))
+                            .await
                         {
-                            tracing::info!("installed the privileged interactive CEC host");
-                            true
-                        }
-                        Ok(Ok(_)) => {
-                            tracing::warn!("privileged CEC host setup did not complete");
-                            false
-                        }
-                        Ok(Err(error)) => {
-                            tracing::warn!("privileged CEC host setup failed: {error}");
-                            false
-                        }
-                        Err(error) => {
-                            tracing::warn!("privileged CEC host setup task failed: {error}");
-                            false
-                        }
-                    };
+                            Ok(Ok(value))
+                                if value.get("ok").and_then(Value::as_bool) == Some(true) =>
+                            {
+                                tracing::info!("installed the privileged interactive CEC host");
+                                true
+                            }
+                            Ok(Ok(_)) => {
+                                tracing::warn!("privileged CEC host setup did not complete");
+                                false
+                            }
+                            Ok(Err(error)) => {
+                                tracing::warn!("privileged CEC host setup failed: {error}");
+                                false
+                            }
+                            Err(error) => {
+                                tracing::warn!("privileged CEC host setup task failed: {error}");
+                                false
+                            }
+                        };
                     if migrated && !wait_for_node().await {
                         tracing::warn!(
                             "migrated CEC host did not become ready; starting the GUI fallback"
@@ -2531,6 +2903,53 @@ mod tests {
             })
         ));
         assert_eq!(toolbox_spec("powershell -Command whatever"), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn crucible_portable_payload_keeps_required_runtime_tree() {
+        use std::io::Write as _;
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cec-crucible-extract-test-{}-{unique}",
+            std::process::id()
+        ));
+        let archive = root.join("payload.zip");
+        let extracted = root.join("extracted");
+        std::fs::create_dir_all(&root).unwrap();
+        {
+            let file = std::fs::File::create(&archive).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let options = zip::write::SimpleFileOptions::default();
+            for name in [
+                "cec-crucible.exe",
+                "PresentMon.exe",
+                "LibreHardwareMonitor/LibreHardwareMonitor.exe",
+                "licenses/PresentMon-MIT.txt",
+            ] {
+                zip.start_file(name, options).unwrap();
+                zip.write_all(b"test payload").unwrap();
+            }
+            zip.finish().unwrap();
+        }
+
+        let executable = extract_crucible_archive(&archive, &extracted).unwrap();
+        assert_eq!(executable, extracted.join("cec-crucible.exe"));
+        assert!(extracted.join("PresentMon.exe").is_file());
+        assert!(extracted
+            .join("LibreHardwareMonitor")
+            .join("LibreHardwareMonitor.exe")
+            .is_file());
+        assert!(extracted
+            .join("licenses")
+            .join("PresentMon-MIT.txt")
+            .is_file());
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

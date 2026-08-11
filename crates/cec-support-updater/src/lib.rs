@@ -21,8 +21,8 @@
 //! # Shape
 //!
 //! One verified artifact containing `cec-support` and its required runtime
-//! companions (currently `amst.exe` on Windows). A check fetches the release
-//! feed, compares tags, and *stages* that payload under the CEC home; the swap
+//! companions (`amst.exe` and Crucible's verified portable payload on Windows).
+//! A check fetches the release feed, compares tags, and *stages* that payload under the CEC home; the swap
 //! happens on the next launch ([`apply_pending_if_any`]), because running
 //! executables can't reliably replace themselves in place. Verification is
 //! fail-closed: a published SHA-256 sidecar is mandatory, and when a release
@@ -350,7 +350,7 @@ fn bin_name() -> &'static str {
 fn required_companion_names() -> &'static [&'static str] {
     #[cfg(windows)]
     {
-        &["amst.exe"]
+        &["amst.exe", "cec-crucible-portable.zip"]
     }
     #[cfg(not(windows))]
     {
@@ -1568,7 +1568,7 @@ mod tests {
     }
 
     #[test]
-    fn self_update_zip_carries_gui_and_amst() {
+    fn self_update_zip_carries_gui_and_runtime_tools() {
         use std::io::Write as _;
 
         let tmp = tempfile::tempdir().unwrap();
@@ -1581,6 +1581,9 @@ mod tests {
             zip.write_all(b"new gui").unwrap();
             zip.start_file("amst.exe", options).unwrap();
             zip.write_all(b"new amst").unwrap();
+            zip.start_file("cec-crucible-portable.zip", options)
+                .unwrap();
+            zip.write_all(b"new crucible portable payload").unwrap();
             zip.finish().unwrap();
         }
         let out = tmp.path().join("out");
@@ -1593,11 +1596,16 @@ mod tests {
             std::fs::read(extract_binary(&archive, &out, "amst.exe").unwrap()).unwrap(),
             b"new amst"
         );
+        assert_eq!(
+            std::fs::read(extract_binary(&archive, &out, "cec-crucible-portable.zip").unwrap())
+                .unwrap(),
+            b"new crucible portable payload"
+        );
     }
 
     #[cfg(windows)]
     #[test]
-    fn companion_install_repairs_an_old_or_missing_amst() {
+    fn companion_install_repairs_old_or_missing_runtime_tools() {
         use std::io::Write as _;
 
         let tmp = tempfile::tempdir().unwrap();
@@ -1607,7 +1615,9 @@ mod tests {
         std::fs::create_dir_all(&stage).unwrap();
         let installed_gui = install.join("cec-support.exe");
         std::fs::write(&installed_gui, b"running gui").unwrap();
-        std::fs::write(install.join("amst.exe"), b"old amst").unwrap();
+        for name in required_companion_names() {
+            std::fs::write(install.join(name), format!("old {name}")).unwrap();
+        }
         let archive = stage.join("cec-support-windows-x86_64.zip");
         {
             let file = std::fs::File::create(&archive).unwrap();
@@ -1615,21 +1625,26 @@ mod tests {
             let options = zip::write::SimpleFileOptions::default();
             zip.start_file("cec-support.exe", options).unwrap();
             zip.write_all(b"new gui").unwrap();
-            zip.start_file("amst.exe", options).unwrap();
-            zip.write_all(b"new amst").unwrap();
+            for name in required_companion_names() {
+                zip.start_file(name, options).unwrap();
+                zip.write_all(format!("new {name}").as_bytes()).unwrap();
+            }
             zip.finish().unwrap();
         }
 
         install_companions_from_archive(&archive, &installed_gui).unwrap();
-        assert_eq!(
-            std::fs::read(install.join("amst.exe")).unwrap(),
-            b"new amst"
-        );
-        std::fs::remove_file(install.join("amst.exe")).unwrap();
+        for name in required_companion_names() {
+            assert_eq!(
+                std::fs::read(install.join(name)).unwrap(),
+                format!("new {name}").as_bytes()
+            );
+        }
+        let missing = required_companion_names()[0];
+        std::fs::remove_file(install.join(missing)).unwrap();
         install_companions_from_archive(&archive, &installed_gui).unwrap();
         assert_eq!(
-            std::fs::read(install.join("amst.exe")).unwrap(),
-            b"new amst"
+            std::fs::read(install.join(missing)).unwrap(),
+            format!("new {missing}").as_bytes()
         );
     }
 

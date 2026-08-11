@@ -7,13 +7,14 @@
 //!     pinned in `.allmystuff-rev`, fetched from AllMyStuff's GitHub Releases.
 //!
 //! `amst` is bundled from the same AllMyStuff release for attached Toolbox
-//! repairs. `cec-crucible` and its colocated `PresentMon` helper are bundled
-//! from the release pinned by `.crucible-rev`; that upstream release has no
-//! checksum asset, so its GitHub digest is pinned in `.crucible-sha256`.
-//! Sidecars are dropped at
-//! `binaries/<base>-<target-triple>{.exe}`;
-//! `tauri.conf.json`'s `externalBin` then ships them *inside* the app bundle
-//! (the NSIS `setup.exe` / `.msi`). Resolution order for each, mirroring
+//! repairs. Crucible's complete portable archive (including PresentMon and
+//! LibreHardwareMonitor) is bundled from the release pinned by
+//! `.crucible-rev`; that upstream release has no checksum asset, so its GitHub
+//! digest is pinned in `.crucible-sha256`.
+//! Ordinary sidecars are dropped at `binaries/<base>-<target-triple>{.exe}`
+//! and shipped through Tauri's `externalBin`. Crucible's verified archive is
+//! instead staged under `resources/` and extracted by the app as one coherent
+//! portable tree. Resolution order for ordinary sidecars, mirroring
 //! AllMyStuff's own sidecar build script:
 //!
 //!   1. **`<BASE>_BIN`** override (`MYOWNMESH_BIN` / `ALLMYSTUFF_SERVE_BIN`) — a
@@ -55,6 +56,10 @@ struct Sidecar {
     sha256_file: Option<&'static str>,
     /// Files extracted beside the main binary and their `externalBin` bases.
     companions: &'static [(&'static str, &'static str)],
+    /// Keep the verified upstream archive as a bundled app resource. Crucible
+    /// is a portable payload (exe + LibreHardwareMonitor tree), not one loose
+    /// executable, so runtime extraction must preserve that whole layout.
+    portable_resource: Option<&'static str>,
 }
 
 #[derive(Clone, Copy)]
@@ -74,6 +79,7 @@ const SIDECARS: &[Sidecar] = &[
         asset_style: AssetStyle::Standard,
         sha256_file: None,
         companions: &[],
+        portable_resource: None,
     },
     Sidecar {
         base: "allmystuff-serve",
@@ -85,6 +91,7 @@ const SIDECARS: &[Sidecar] = &[
         asset_style: AssetStyle::Standard,
         sha256_file: None,
         companions: &[],
+        portable_resource: None,
     },
     // Toolbox runs repairs through the same attached AllMyStuff terminal that
     // a technician uses, so there is one authorization and privilege path.
@@ -98,6 +105,7 @@ const SIDECARS: &[Sidecar] = &[
         asset_style: AssetStyle::Standard,
         sha256_file: None,
         companions: &[],
+        portable_resource: None,
     },
     Sidecar {
         base: "cec-crucible",
@@ -108,7 +116,8 @@ const SIDECARS: &[Sidecar] = &[
         sibling_target_sub: "",
         asset_style: AssetStyle::CrucibleWindows,
         sha256_file: Some(".crucible-sha256"),
-        companions: &[("PresentMon.exe", "PresentMon")],
+        companions: &[],
+        portable_resource: Some("cec-crucible-portable.zip"),
     },
 ];
 
@@ -124,6 +133,15 @@ fn main() {
     // separately-installed `allmystuff-serve` it doesn't own to update up to it.
     if let Some(pin) = read_allmystuff_pin() {
         println!("cargo:rustc-env=ALLMYSTUFF_PIN={pin}");
+    }
+    if let Ok(pin) = fs::read_to_string(repo_root().join(".myownmesh-rev")) {
+        println!("cargo:rustc-env=MYOWNMESH_PIN={}", pin.trim());
+    }
+    if let Ok(pin) = fs::read_to_string(repo_root().join(".crucible-rev")) {
+        println!("cargo:rustc-env=CRUCIBLE_PIN={}", pin.trim());
+    }
+    if let Ok(hash) = fs::read_to_string(repo_root().join(".crucible-sha256")) {
+        println!("cargo:rustc-env=CRUCIBLE_SHA256={}", hash.trim());
     }
 
     // A release build sets CEC_REQUIRE_SIDECARS=1 (see release.yml): then a
@@ -284,6 +302,12 @@ fn binaries_dir() -> PathBuf {
     PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("binaries")
 }
 
+fn portable_resource_path(name: &str) -> PathBuf {
+    PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
+        .join("resources")
+        .join(name)
+}
+
 /// The `externalBin` slot for this sidecar: `binaries/<base>-<triple>{.exe}`.
 fn slot_path(sc: &Sidecar) -> PathBuf {
     slot_path_for(sc.base)
@@ -337,21 +361,23 @@ fn bundle_sidecar(sc: &Sidecar) -> Result<(), String> {
 
     // 1. Explicit override — a deliberate human act, honored in both modes,
     //    but verified like every other source.
-    if let Ok(p) = env::var(sc.bin_env) {
-        let p = PathBuf::from(p);
-        if nonempty_file(&p) {
-            let sig = format!("bin:{}:{}", p.display(), file_mtime(&p));
-            let fresh = !sidecar_staged_matches(sc, &slot, &sentinel, &sig);
-            if fresh {
-                stage(&p, &slot)?;
-                stage_companions_from_dir(sc, p.parent().unwrap_or_else(|| Path::new(".")))?;
+    if sc.portable_resource.is_none() {
+        if let Ok(p) = env::var(sc.bin_env) {
+            let p = PathBuf::from(p);
+            if nonempty_file(&p) {
+                let sig = format!("bin:{}:{}", p.display(), file_mtime(&p));
+                let fresh = !sidecar_staged_matches(sc, &slot, &sentinel, &sig);
+                if fresh {
+                    stage(&p, &slot)?;
+                    stage_companions_from_dir(sc, p.parent().unwrap_or_else(|| Path::new(".")))?;
+                }
+                verify_slot(sc, &slot, pin, false)?;
+                if fresh {
+                    let _ = fs::write(&sentinel, &sig);
+                    println!("cargo:warning=[{}] bundled from {}", sc.base, sc.bin_env);
+                }
+                return Ok(());
             }
-            verify_slot(sc, &slot, pin, false)?;
-            if fresh {
-                let _ = fs::write(&sentinel, &sig);
-                println!("cargo:warning=[{}] bundled from {}", sc.base, sc.bin_env);
-            }
-            return Ok(());
         }
     }
 
@@ -360,7 +386,7 @@ fn bundle_sidecar(sc: &Sidecar) -> Result<(), String> {
     //    not from the state of a neighbouring checkout. Watch the picked binary
     //    so rebuilding the sidecar in its own repo re-runs this script and
     //    re-stages.
-    if !release_mode {
+    if !release_mode && sc.portable_resource.is_none() {
         if let Some(p) = sibling_binary(sc) {
             println!("cargo:rerun-if-changed={}", p.display());
             if sibling_is_current(sc, &p) {
@@ -473,6 +499,10 @@ fn sidecar_staged_matches(sc: &Sidecar, slot: &Path, sentinel: &Path, sig: &str)
             .companions
             .iter()
             .all(|(_, base)| nonempty_file(&slot_path_for(base)))
+        && sc
+            .portable_resource
+            .map(|name| nonempty_file(&portable_resource_path(name)))
+            .unwrap_or(true)
 }
 
 fn file_mtime(p: &Path) -> u64 {
@@ -753,7 +783,7 @@ fn download_release_asset(sc: &Sidecar, tag: &str, staging: &Path) -> Result<Pat
                 return Err("Crucible currently publishes only a Windows x64 sidecar".into());
             }
             format!(
-                "cec-crucible-{}-win-x64.zip",
+                "cec-crucible-{}-win-x64-portable.zip",
                 tag.strip_prefix('v').unwrap_or(tag)
             )
         }
@@ -799,6 +829,20 @@ fn download_release_asset(sc: &Sidecar, tag: &str, staging: &Path) -> Result<Pat
     // bytes. A proxy error page or truncated download must never become the
     // bundled mesh engine.
     verify_archive_sha256(sc, &archive, &url)?;
+
+    if let Some(name) = sc.portable_resource {
+        let destination = portable_resource_path(name);
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        fs::copy(&archive, &destination).map_err(|e| {
+            format!(
+                "copy verified portable archive {} -> {}: {e}",
+                archive.display(),
+                destination.display()
+            )
+        })?;
+    }
 
     if windows {
         let out = run_bounded(
@@ -902,6 +946,15 @@ fn write_stub(sc: &Sidecar) -> Result<(), String> {
         if !companion.exists() {
             fs::write(&companion, b"").map_err(|e| e.to_string())?;
             make_executable(&companion);
+        }
+    }
+    if let Some(name) = sc.portable_resource {
+        let resource = portable_resource_path(name);
+        if !resource.exists() {
+            if let Some(parent) = resource.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            fs::write(resource, b"").map_err(|e| e.to_string())?;
         }
     }
     Ok(())

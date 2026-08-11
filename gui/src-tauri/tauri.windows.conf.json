@@ -1,8 +1,9 @@
 {
   "bundle": {
-    "resources": [
-      "resources/vc_redist.x64.exe"
-    ],
+    "resources": {
+      "resources/vc_redist.x64.exe": "resources/vc_redist.x64.exe",
+      "resources/cec-crucible-portable.zip": "cec-crucible-portable.zip"
+    },
     "windows": {
       "nsis": {
         "installerHooks": "installer-hooks.nsh"

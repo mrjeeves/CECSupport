@@ -34,6 +34,8 @@ import {
   updateRelaunch,
   updateSetPrefs,
   updateStatus,
+  componentStatus,
+  componentRepair,
   cecSetLabel,
   claimNode,
   fleetKick,
@@ -88,6 +90,7 @@ import type {
   SiteAdvert,
   UpdateStatus,
   CheckOutcome,
+  ComponentVersionRow,
   UpdatePrefs,
 } from "./types";
 
@@ -238,6 +241,8 @@ class CecStore {
   /** Updater state — null until read, and in web mode where there's no
    *  backend. */
   updateInfo = $state<UpdateStatus | null>(null);
+  componentVersions = $state<ComponentVersionRow[]>([]);
+  componentBusy = $state<string | null>(null);
   /** Result of the most recent check (manual or from the background ticker). */
   updateOutcome = $state<CheckOutcome | null>(null);
   updateBusy = $state(false);
@@ -2241,6 +2246,22 @@ class CecStore {
   async loadUpdateStatus(): Promise<void> {
     if (this.demo) return;
     this.updateInfo = await updateStatus();
+    this.componentVersions = (await componentStatus())?.rows ?? [];
+  }
+
+  async repairComponent(component: string): Promise<void> {
+    if (this.demo) return;
+    this.componentBusy = component;
+    try {
+      await componentRepair(component);
+      this.notify("Repair finished. Rechecking installed versions…");
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      await this.loadUpdateStatus();
+    } catch (e) {
+      this.notify(`Repair failed: ${errMsg(e)}`);
+    } finally {
+      this.componentBusy = null;
+    }
   }
 
   /** A background check reported in. Only outcomes that mean "something newer
