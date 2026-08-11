@@ -14,11 +14,11 @@ is [MyOwnMesh](https://github.com/mrjeeves/MyOwnMesh). See
 
 ## What the customer sees
 
-1. **Ask for help.** The headline button. One tap raises the customer's hand on
-   the shared support area — a `SupportPresence` beacon a technician sees in
-   their queue and answers by connecting to this device directly. While it
-   waits, the screen also carries a short note — linking `allmystuff.works` —
-   that CEC Support runs on the AllMyStuff system.
+1. **Press for Help.** The large, physical-looking headline button. One press
+   joins the Silent `cecsupport-asking` room; that membership is the raised hand
+   a watching technician sees in their queue. Stopping the request leaves the
+   room. No customer-to-customer or technician-to-technician connection is
+   created just because the hand is raised.
 2. **Their support number.** Shown too (9 digits, e.g. `123 456 789`), with a
    copy button and "read this to your technician". It's derived from the
    device's key (`allmystuff_cec_protocol::support_id_from_device`) and serves
@@ -42,7 +42,9 @@ is [MyOwnMesh](https://github.com/mrjeeves/MyOwnMesh). See
    "**‹Agent Name› is trying to connect to your computer**", with the 6-digit
    verification code to check against what the technician reads out, and three
    choices — **Approve Once**, **Auto-Approve for 3 hours**, **Auto-Approve
-   Forever** — plus **Deny**. (These map to `ApprovalScope::Once` /
+   Forever** — plus **Deny**. The app brings its window to the foreground once
+   for each new request so the customer sees that a decision is waiting, but it
+   does not repeatedly steal focus. (These map to `ApprovalScope::Once` /
    `ThreeHours` / `Forever` in `allmystuff-cec-consent`.)
 5. **While connected**, the "Who can connect to your computer" list carries the
    live state: each technician row shows a status dot (connected / connecting /
@@ -50,16 +52,22 @@ is [MyOwnMesh](https://github.com/mrjeeves/MyOwnMesh). See
    (or "Controlling your screen") chip that pulses gently next to the grant's
    countdown. Each row has one kill-switch — **Forget** — which disconnects any
    live session *and* revokes standing access in the same tap, immediately.
-6. **Settings**: a grant-scoped **autostart** policy for surviving a reboot
-   mid-repair — `while_granted` (the default: start with Windows only while an
-   active technician grant is open), `always`, or `off`; the separate
-   `cec-support-service` OS-service installer with its Uninstall/Stop control;
-   and a friendly name for this computer.
+6. **Tabbed Settings.** General holds the friendly computer name; Startup owns
+   the grant-scoped autostart policy (`while_granted`, `always`, or `off`) and
+   background-window behavior; Updates shows the running and pinned versions
+   of CEC Support, AllMyStuff Serve, MyOwnMesh Serve, AMSTerm, Crucible, and any
+   installed service payload. Every row has its own Update or Repair action, so
+   an older shared backend cannot hide behind a current GUI version.
+7. **Toolbox.** A dedicated window collects safe Windows checks and familiar
+   diagnostics. SFC, DISM, the online CHKDSK scan, and DNS flush run in visible
+   administrator terminals with live progress while other tools remain usable.
+   Windows tools open directly; **Show Advanced** reveals configuration-changing
+   tools and the bundled **Crucible Tests** interactive hardware-test console.
 
 It is **customer-only**. It never browses or dials anyone (that's the
 technician's AllMyStuff app) — no graph, no fleets, no file browser, no
-terminal. Just: ask for help, approve/deny, who's connected, revoke,
-autostart.
+general-purpose remote terminal. Just: press for help, approve/deny, who's
+connected, revoke, maintenance tools, updates, and autostart.
 
 ## How it's built (reuse, don't clobber)
 
@@ -92,6 +100,29 @@ browser or fake in-app mount surface: consent and connection state stay in this
 customer UI, while the actual mapping lives in the node and the technician's
 active console.
 
+Clipboard and file-drop behavior follows the same versioned engine boundary:
+the technician's AllMyStuff console owns the interaction, and the customer's
+pinned AllMyStuff node receives the authenticated clipboard route. Text,
+images, copied files, and drag-to-remote transfer are available when both ends
+run an engine version that supports them; the Updates component table makes
+that prerequisite visible and can request the pinned node update in place.
+
+## Toolbox and privilege boundary
+
+The Toolbox is intentionally an allowlist, not a command prompt. The webview
+sends a short action id; Rust maps it to one fixed command or Windows program.
+Administrator repairs launch through the bundled `amst.exe --admin --run` path
+in a real visible console, while a UTF-8 transcript streams back into the
+Toolbox progress cards. Jobs have independent run ids and processes, so a long
+SFC or DISM pass does not block Event Viewer, Device Manager, or another repair.
+
+Crucible is bundled as its upstream portable archive, including PresentMon and
+LibreHardwareMonitor. The release pins both its version and SHA-256; CEC Support
+verifies the archive and materializes the complete runtime under
+`CEC_SUPPORT_HOME/tools/crucible/<version>` before launching it elevated. The
+Crucible row in Updates can repair that materialized payload without replacing
+the whole app.
+
 ## Install — a normal Windows app
 
 CEC Support installs like any other app: the customer downloads the **installer
@@ -111,8 +142,8 @@ build stages the pinned versions into the bundle — the versions pinned in
 
 ## The node-control contract the client drives
 
-The client only ever sends these to the node's control socket (a sibling agent
-implements them on the AllMyStuff node):
+The CEC session lifecycle uses these commands on the node's control socket (a
+sibling agent implements them on the AllMyStuff node):
 
 | Command | Args | Result |
 |---|---|---|
@@ -136,6 +167,12 @@ access list).
 The background service is handled by `cec-support-service` directly (not the
 node), via the `service_*` Tauri commands.
 
+Component reconciliation also uses the shared node contract: `node_version`
+and `mesh_status` report what is actually running, while `request_update`
+asks the existing AllMyStuff node to reach at least CEC Support's pin. That is
+deliberately a request to the owning process rather than CEC Support silently
+replacing another app's live backend.
+
 ## Repository layout
 
 ```
@@ -145,10 +182,10 @@ CECSupport/
 ├── crates/cec-support-service/     the client's OWN OS-service installer
 ├── gui/                            Tauri + Svelte 5 client (its own workspace)
 │   ├── package.json, vite.config.ts, tsconfig.json, svelte.config.js
-│   ├── src/                        App.svelte, tauri.ts bridge, store, components
+│   ├── src/                        App.svelte, tabbed Settings, Toolbox window, store, components
 │   └── src-tauri/                  Cargo.toml (pinned git deps), main.rs, tauri.conf.json
 ├── scripts/bump-version.sh         version bump used by `just release`
-├── .allmystuff-rev / .myownmesh-rev   sidecar version pins (the AllMyStuff / MyOwnMesh release tags to bundle)
+├── .allmystuff-rev / .myownmesh-rev / .crucible-rev   pinned bundled components
 ├── .github/workflows/             ci.yml (service crate + gui check) · release.yml (tag → Windows installer)
 ├── ARCHITECTURE.md · docs/         design + roadmap
 ```
