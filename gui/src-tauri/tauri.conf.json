@@ -32,9 +32,7 @@
     "externalBin": [
       "binaries/myownmesh",
       "binaries/allmystuff-serve",
-      "binaries/amst",
-      "binaries/cec-crucible",
-      "binaries/PresentMon"
+      "binaries/amst"
     ],
     "icon": [
       "icons/32x32.png",

@@ -143,28 +143,26 @@ jobs:
           set -e
           BIN=gui/src-tauri/target/x86_64-pc-windows-msvc/release/cec-support.exe
           AMST=gui/src-tauri/binaries/amst-x86_64-pc-windows-msvc.exe
-          CRUCIBLE=gui/src-tauri/binaries/cec-crucible-x86_64-pc-windows-msvc.exe
-          PRESENTMON=gui/src-tauri/binaries/PresentMon-x86_64-pc-windows-msvc.exe
+          CRUCIBLE=gui/src-tauri/resources/cec-crucible-portable.zip
           if [[ ! -f "$BIN" ]]; then
             echo "::error::cec-support.exe not found at $BIN"; exit 1
           fi
           if [[ ! -s "$AMST" ]]; then
             echo "::error::required AMST sidecar not found at $AMST"; exit 1
           fi
-          if [[ ! -s "$CRUCIBLE" || ! -s "$PRESENTMON" ]]; then
-            echo "::error::required Crucible sidecars are missing"; exit 1
+          if [[ ! -s "$CRUCIBLE" ]]; then
+            echo "::error::verified Crucible portable payload is missing"; exit 1
           fi
           mkdir -p dist-bin
           NAME="cec-support-windows-x86_64"
           cp "$BIN" dist-bin/cec-support.exe
           cp "$AMST" dist-bin/amst.exe
-          cp "$CRUCIBLE" dist-bin/cec-crucible.exe
-          cp "$PRESENTMON" dist-bin/PresentMon.exe
-          (cd dist-bin && 7z a "${NAME}.zip" cec-support.exe amst.exe cec-crucible.exe PresentMon.exe)
+          cp "$CRUCIBLE" dist-bin/cec-crucible-portable.zip
+          (cd dist-bin && 7z a "${NAME}.zip" cec-support.exe amst.exe cec-crucible-portable.zip)
           (cd dist-bin && (sha256sum "${NAME}.zip" || shasum -a 256 "${NAME}.zip") > "${NAME}.zip.sha256")
           # Drop raw payload files so the upload glob only matches the archive
           # and its checksum.
-          rm -f dist-bin/cec-support.exe dist-bin/amst.exe dist-bin/cec-crucible.exe dist-bin/PresentMon.exe
+          rm -f dist-bin/cec-support.exe dist-bin/amst.exe dist-bin/cec-crucible-portable.zip
 
       - uses: softprops/action-gh-release@v2
         with:

@@ -21,8 +21,8 @@
 //! # Shape
 //!
 //! One verified artifact containing `cec-support` and its required runtime
-//! companions (`amst.exe`, Crucible, and PresentMon on Windows). A check fetches the release
-//! feed, compares tags, and *stages* that payload under the CEC home; the swap
+//! companions (`amst.exe` and Crucible's verified portable payload on Windows).
+//! A check fetches the release feed, compares tags, and *stages* that payload under the CEC home; the swap
 //! happens on the next launch ([`apply_pending_if_any`]), because running
 //! executables can't reliably replace themselves in place. Verification is
 //! fail-closed: a published SHA-256 sidecar is mandatory, and when a release
@@ -350,7 +350,7 @@ fn bin_name() -> &'static str {
 fn required_companion_names() -> &'static [&'static str] {
     #[cfg(windows)]
     {
-        &["amst.exe", "cec-crucible.exe", "PresentMon.exe"]
+        &["amst.exe", "cec-crucible-portable.zip"]
     }
     #[cfg(not(windows))]
     {
@@ -1581,10 +1581,9 @@ mod tests {
             zip.write_all(b"new gui").unwrap();
             zip.start_file("amst.exe", options).unwrap();
             zip.write_all(b"new amst").unwrap();
-            zip.start_file("cec-crucible.exe", options).unwrap();
-            zip.write_all(b"new crucible").unwrap();
-            zip.start_file("PresentMon.exe", options).unwrap();
-            zip.write_all(b"new presentmon").unwrap();
+            zip.start_file("cec-crucible-portable.zip", options)
+                .unwrap();
+            zip.write_all(b"new crucible portable payload").unwrap();
             zip.finish().unwrap();
         }
         let out = tmp.path().join("out");
@@ -1598,12 +1597,9 @@ mod tests {
             b"new amst"
         );
         assert_eq!(
-            std::fs::read(extract_binary(&archive, &out, "cec-crucible.exe").unwrap()).unwrap(),
-            b"new crucible"
-        );
-        assert_eq!(
-            std::fs::read(extract_binary(&archive, &out, "PresentMon.exe").unwrap()).unwrap(),
-            b"new presentmon"
+            std::fs::read(extract_binary(&archive, &out, "cec-crucible-portable.zip").unwrap())
+                .unwrap(),
+            b"new crucible portable payload"
         );
     }
 
