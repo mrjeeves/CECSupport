@@ -125,6 +125,12 @@ fn main() {
     if let Some(pin) = read_allmystuff_pin() {
         println!("cargo:rustc-env=ALLMYSTUFF_PIN={pin}");
     }
+    if let Ok(pin) = fs::read_to_string(repo_root().join(".myownmesh-rev")) {
+        println!("cargo:rustc-env=MYOWNMESH_PIN={}", pin.trim());
+    }
+    if let Ok(pin) = fs::read_to_string(repo_root().join(".crucible-rev")) {
+        println!("cargo:rustc-env=CRUCIBLE_PIN={}", pin.trim());
+    }
 
     // A release build sets CEC_REQUIRE_SIDECARS=1 (see release.yml): then a
     // sidecar that can't be bundled fails the build *loudly* instead of stamping

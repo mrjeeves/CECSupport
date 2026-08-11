@@ -481,7 +481,14 @@ async fn run_admin_toolbox(
          Start-Sleep -Seconds 2; exit $cecExit"
     );
     let mut child = std::process::Command::new("powershell.exe")
-        .args(["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &script,
+        ])
         .creation_flags(CREATE_NEW_CONSOLE)
         .spawn()
         .map_err(|e| format!("starting {} in an AMST terminal: {e}", spec.label))?;
@@ -1595,6 +1602,152 @@ async fn update_status() -> Result<Value, String> {
         .map_err(|e| e.to_string())
 }
 
+fn bundled_sidecar(base: &str) -> Option<PathBuf> {
+    let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+    let ext = if cfg!(windows) { ".exe" } else { "" };
+    [
+        dir.join(format!("{base}{ext}")),
+        dir.join(format!("{base}-{}{ext}", env!("DAEMON_SIDECAR_TRIPLE"))),
+    ]
+    .into_iter()
+    .find(|path| {
+        path.metadata()
+            .map(|m| m.is_file() && m.len() > 0)
+            .unwrap_or(false)
+    })
+}
+
+async fn binary_version(bin: PathBuf) -> Option<String> {
+    let mut command = tokio::process::Command::new(bin);
+    command.arg("--version");
+    #[cfg(windows)]
+    {
+        command.creation_flags(0x0800_0000);
+    }
+    let output = tokio::time::timeout(Duration::from_secs(8), command.output())
+        .await
+        .ok()?
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .next()?
+        .split_whitespace()
+        .last()
+        .map(str::to_string)
+}
+
+async fn bundled_version(base: &str) -> Option<String> {
+    binary_version(bundled_sidecar(base)?).await
+}
+
+async fn service_payload_version() -> Option<String> {
+    if !cfg!(windows) {
+        // Unix services execute this installed binary directly rather than a
+        // privileged copy under ProgramData.
+        return Some(env!("CARGO_PKG_VERSION").to_string());
+    }
+    let root = std::env::var_os("ProgramData")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
+    binary_version(
+        root.join("Critical Error Computing")
+            .join("CEC Support")
+            .join("service")
+            .join(if cfg!(windows) {
+                "cec-support.exe"
+            } else {
+                "cec-support"
+            }),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn component_status(state: State<'_, AppState>) -> Result<Value, String> {
+    let node = state.node.request("node_version", json!({})).await.ok();
+    let mesh = state.node.request("mesh_status", json!({})).await.ok();
+    let app_version = env!("CARGO_PKG_VERSION");
+    let allmystuff_pin = ALLMYSTUFF_PIN;
+    let myownmesh_pin = option_env!("MYOWNMESH_PIN");
+    let amst = bundled_version("amst").await;
+    let crucible = bundled_version("cec-crucible").await;
+    let service = cec_support_service::status_value(false).unwrap_or_default();
+    let mut rows = vec![
+        json!({ "id": "cec", "label": "CEC Support", "current": app_version, "pinned": app_version, "detail": "Running desktop app" }),
+        json!({ "id": "allmystuff", "label": "AllMyStuff Serve", "current": node.as_ref().and_then(|v| v.get("version")), "pinned": allmystuff_pin, "detail": "Shared remote-control and support backend" }),
+        json!({ "id": "myownmesh", "label": "MyOwnMesh Serve", "current": mesh.as_ref().and_then(|v| v.get("version")), "pinned": myownmesh_pin, "detail": "Running mesh transport daemon" }),
+        json!({ "id": "amst", "label": "AMSTerm", "current": amst, "pinned": allmystuff_pin, "detail": "Bundled administrator terminal helper" }),
+        json!({ "id": "crucible", "label": "Crucible", "current": crucible, "pinned": option_env!("CRUCIBLE_PIN"), "detail": "Bundled interactive hardware-test console" }),
+    ];
+    if service.get("installed").and_then(Value::as_bool) == Some(true) {
+        rows.push(json!({
+            "id": "cec_service",
+            "label": "CEC Support service payload",
+            "current": service_payload_version().await,
+            "pinned": app_version,
+            "detail": "Privileged background-service copy"
+        }));
+    }
+    Ok(json!({ "rows": rows }))
+}
+
+async fn run_bundled_update(base: &str) -> Result<String, String> {
+    let bin = bundled_sidecar(base).ok_or_else(|| format!("bundled {base} is missing"))?;
+    let mut command = tokio::process::Command::new(bin);
+    command.arg("update");
+    #[cfg(windows)]
+    {
+        command.creation_flags(0x0800_0000);
+    }
+    let output = command.output().await.map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+#[tauri::command]
+async fn component_repair(state: State<'_, AppState>, component: String) -> Result<Value, String> {
+    match component.as_str() {
+        "cec" | "crucible" => serde_json::to_value(
+            cec_support_updater::update_now()
+                .await
+                .map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string()),
+        "allmystuff" => state
+            .node
+            .request(
+                "request_update",
+                json!({ "minimum": ALLMYSTUFF_PIN.unwrap_or(env!("CARGO_PKG_VERSION")) }),
+            )
+            .await
+            .map_err(|e| e.to_string()),
+        "amst" => {
+            let output = run_bundled_update("allmystuff-serve").await?;
+            Ok(json!({ "output": output }))
+        }
+        "myownmesh" => {
+            let service_installed = cec_support_service::status_value(false)
+                .ok()
+                .and_then(|value| value.get("installed").and_then(Value::as_bool))
+                == Some(true);
+            let output = run_bundled_update("myownmesh").await?;
+            if service_installed {
+                let service = service_install(state).await?;
+                return Ok(json!({ "output": output, "service": service, "restarting": true }));
+            }
+            let _ = state.node.request("restart_self", json!({})).await;
+            Ok(json!({ "output": output, "restarting": true }))
+        }
+        "cec_service" => service_install(state).await,
+        other => Err(format!("unknown component: {other}")),
+    }
+}
+
 /// Check the release feed right now, ignoring the interval cooldown, and stage
 /// anything the apply policy permits.
 #[tauri::command]
@@ -1860,6 +2013,8 @@ fn run_gui() -> ExitCode {
             background_get,
             background_set,
             update_status,
+            component_status,
+            component_repair,
             update_check,
             update_apply,
             update_relaunch,
@@ -1947,30 +2102,29 @@ fn run_gui() -> ExitCode {
                 // node. Older builds previously did these concurrently, so the
                 // old service, new service, and GUI could fight over one pipe.
                 if migrate_privileged_host {
-                    let migrated = match tokio::task::spawn_blocking(|| {
-                        service_mutate_blocking("install")
-                    })
-                    .await
-                    {
-                        Ok(Ok(value))
-                            if value.get("ok").and_then(Value::as_bool) == Some(true) =>
+                    let migrated =
+                        match tokio::task::spawn_blocking(|| service_mutate_blocking("install"))
+                            .await
                         {
-                            tracing::info!("installed the privileged interactive CEC host");
-                            true
-                        }
-                        Ok(Ok(_)) => {
-                            tracing::warn!("privileged CEC host setup did not complete");
-                            false
-                        }
-                        Ok(Err(error)) => {
-                            tracing::warn!("privileged CEC host setup failed: {error}");
-                            false
-                        }
-                        Err(error) => {
-                            tracing::warn!("privileged CEC host setup task failed: {error}");
-                            false
-                        }
-                    };
+                            Ok(Ok(value))
+                                if value.get("ok").and_then(Value::as_bool) == Some(true) =>
+                            {
+                                tracing::info!("installed the privileged interactive CEC host");
+                                true
+                            }
+                            Ok(Ok(_)) => {
+                                tracing::warn!("privileged CEC host setup did not complete");
+                                false
+                            }
+                            Ok(Err(error)) => {
+                                tracing::warn!("privileged CEC host setup failed: {error}");
+                                false
+                            }
+                            Err(error) => {
+                                tracing::warn!("privileged CEC host setup task failed: {error}");
+                                false
+                            }
+                        };
                     if migrated && !wait_for_node().await {
                         tracing::warn!(
                             "migrated CEC host did not become ready; starting the GUI fallback"

@@ -7,7 +7,7 @@ name: Release
 #
 # Two kinds of asset ship here, for two different jobs:
 #   *-setup.exe / .msi              first install (what a customer downloads)
-#   cec-support-windows-x86_64.zip  self-update payload (GUI + AMST)
+#   cec-support-windows-x86_64.zip  self-update payload (GUI + runtime tools)
 # The updater applies an update by swapping the GUI and AMST, so it needs the plain
 # archive — it can't install from an installer.
 #
@@ -129,9 +129,9 @@ jobs:
           # the host and recreates the Toolbox elevation failure.
           args: --target x86_64-pc-windows-msvc --bundles nsis
 
-      # Package the GUI and AMST so the SELF-UPDATER can repair older installs
-      # as well as update the app. The installers above are for first install;
-      # `cec-support-updater` cannot apply an NSIS executable in place.
+      # Package the GUI and runtime tools so the SELF-UPDATER can repair older
+      # installs as well as update the app. The installers above are for first
+      # install; `cec-support-updater` cannot apply an NSIS executable in place.
       #
       # The name must stay in lockstep with `platform_asset()` in
       # crates/cec-support-updater/src/lib.rs: `cec-support-<platform>.zip`.
@@ -143,21 +143,28 @@ jobs:
           set -e
           BIN=gui/src-tauri/target/x86_64-pc-windows-msvc/release/cec-support.exe
           AMST=gui/src-tauri/binaries/amst-x86_64-pc-windows-msvc.exe
+          CRUCIBLE=gui/src-tauri/binaries/cec-crucible-x86_64-pc-windows-msvc.exe
+          PRESENTMON=gui/src-tauri/binaries/PresentMon-x86_64-pc-windows-msvc.exe
           if [[ ! -f "$BIN" ]]; then
             echo "::error::cec-support.exe not found at $BIN"; exit 1
           fi
           if [[ ! -s "$AMST" ]]; then
             echo "::error::required AMST sidecar not found at $AMST"; exit 1
           fi
+          if [[ ! -s "$CRUCIBLE" || ! -s "$PRESENTMON" ]]; then
+            echo "::error::required Crucible sidecars are missing"; exit 1
+          fi
           mkdir -p dist-bin
           NAME="cec-support-windows-x86_64"
           cp "$BIN" dist-bin/cec-support.exe
           cp "$AMST" dist-bin/amst.exe
-          (cd dist-bin && 7z a "${NAME}.zip" cec-support.exe amst.exe)
+          cp "$CRUCIBLE" dist-bin/cec-crucible.exe
+          cp "$PRESENTMON" dist-bin/PresentMon.exe
+          (cd dist-bin && 7z a "${NAME}.zip" cec-support.exe amst.exe cec-crucible.exe PresentMon.exe)
           (cd dist-bin && (sha256sum "${NAME}.zip" || shasum -a 256 "${NAME}.zip") > "${NAME}.zip.sha256")
           # Drop raw payload files so the upload glob only matches the archive
           # and its checksum.
-          rm -f dist-bin/cec-support.exe dist-bin/amst.exe
+          rm -f dist-bin/cec-support.exe dist-bin/amst.exe dist-bin/cec-crucible.exe dist-bin/PresentMon.exe
 
       - uses: softprops/action-gh-release@v2
         with:

@@ -43,6 +43,7 @@ import type {
   ServiceResult,
   UpdateStatus,
   CheckOutcome,
+  ComponentStatus,
   UpdatePrefs,
   KvmApiCallResult,
   HostWifi,
@@ -601,6 +602,16 @@ export async function copyToClipboard(text: string): Promise<boolean> {
 /** Current updater state: running version, install kind, prefs, what's staged. */
 export function updateStatus(): Promise<UpdateStatus | null> {
   return tryInvoke<UpdateStatus>("update_status");
+}
+
+export function componentStatus(): Promise<ComponentStatus | null> {
+  return tryInvoke<ComponentStatus>("component_status");
+}
+
+export async function componentRepair(component: string): Promise<unknown> {
+  if (!isTauri()) throw new Error("component repair needs the installed app");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke("component_repair", { component });
 }
 
 /** Check the release feed now, ignoring the interval cooldown. */
