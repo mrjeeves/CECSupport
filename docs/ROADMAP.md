@@ -48,7 +48,15 @@ frontend type-checker — and reviewed by inspection:
   listen-only signaling API below.
 - **CEC Support client GUI (`gui/`) + `cec-support` binary** — the Tauri + Svelte
   customer app (inline support number, three-choice approve modal, connected
-  banner, access list, grant-scoped autostart settings). It installs like a
+  banner, access list, grant-scoped autostart settings). Settings is tabbed and
+  its Updates pane reports Current/Pinned versions for the app, shared node,
+  mesh daemon, AMSTerm, Crucible, and service payload with per-component repair.
+  The separate Toolbox window runs allowlisted Windows checks in visible
+  administrator terminals, streams concurrent task progress, and exposes
+  configuration-changing tools only behind Show Advanced. Crucible v0.0.6 is
+  bundled as its checksum-pinned portable runtime (including PresentMon and
+  LibreHardwareMonitor), materialized and repairable as one component. It
+  installs like a
   **normal Windows app**: the Tauri bundle is an NSIS `setup.exe` + `.msi` that
   ships the `allmystuff-serve` node and the `myownmesh` daemon **inside it**
   (`externalBin`), so the customer double-clicks one file — no terminal, no
@@ -92,7 +100,7 @@ every step.
 None of the following can be exercised in this headless environment; they are
 the runtime acceptance tests, run on a Windows box against a live mesh:
 
-- End-to-end (headline): customer launches → **Ask for help** → technician sees
+- End-to-end (headline): customer launches → **Press for Help** → technician sees
   the raised hand and answers → customer sees "‹Agent› is trying to connect" →
   Approve Once/3h/Forever → screen appears → control works → Revoke stops it
   immediately.
@@ -109,6 +117,13 @@ the runtime acceptance tests, run on a Windows box against a live mesh:
 - Reuse-or-bundle: install on a machine with AllMyStuff present (reuse the
   daemon) and on one without (bundle), with no clobbering of an AllMyStuff
   service.
+- Component repair: start with an older shared AllMyStuff node or mesh daemon,
+  confirm Updates shows the running/pinned mismatch, request repair, and verify
+  the owning process restarts at or above the pin without repeated app updates.
+- Toolbox: run two repairs concurrently and verify both the visible AMST
+  administrator consoles and independent in-window progress; launch every
+  default/advanced Windows tool; repair and launch the complete Crucible
+  portable payload on a clean install and an upgraded older install.
 
 ## Nice-to-haves (later)
 

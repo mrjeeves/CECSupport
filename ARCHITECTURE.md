@@ -13,8 +13,9 @@ AllMyStuff's remote-control console**, layered on the same substrate:
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
 │  CEC Support client app  (this repo)                                   │
-│  Windows-first customer GUI: show my number · approve/deny · revoke ·  │
-│  reconnect on boot. Embeds the AllMyStuff node in "CEC client mode".   │
+│  Windows-first customer GUI: Press for Help · approve/deny · revoke ·  │
+│  Toolbox · component repair · reconnect on boot. Embeds the AllMyStuff  │
+│  node in "CEC client mode".                                             │
 └───────────────▲──────────────────────────────────────────────────────┘
                 │ reuses (git dependency)
 ┌───────────────┴──────────────────────────────────────────────────────┐
@@ -120,7 +121,7 @@ Customer (CEC Support app)                 Technician (AllMyStuff + CEC tab)
 ──────────────────────────                 ────────────────────────────────
 launch → identity → number N
 join shared support area (cecsupport-clients)
-Ask for help → join asking room
+Press for Help → join asking room
  (cecsupport-asking) — membership IS
  the raised hand; wait
                                            already on the shared support area
@@ -145,6 +146,10 @@ prompt: "‹Agent Name› is trying to
 The 6-digit verification code and the Agent Name let the customer confirm *who*
 they're letting in before approving — the human check on top of the ed25519
 mutual authentication MyOwnMesh already performs.
+
+Each new connect request foregrounds the customer window once, keyed by the
+technician/session request. Repeated polls and duplicate events update the same
+pending request without repeatedly stealing focus.
 
 ## Consent: Approve Once / 3 hours / Forever
 
@@ -197,6 +202,58 @@ per-frame consent — not from siloing the apps.
 `CEC_SUPPORT_HOME` holds only CEC's **own app files** (service state, logs);
 the mesh stack's home stays the shared `~/.myownmesh`.
 
+## Settings and component reconciliation
+
+Settings is split into General, Startup, and Updates rather than one scrolling
+surface. Updates combines CEC Support's own release updater with a live
+component matrix. It reports Current and Pinned versions independently for the
+desktop app, `allmystuff-serve`, `myownmesh`, AMSTerm, Crucible, and the
+installed CEC service payload. An on-disk service copy that differs from the
+running process is therefore visible instead of being inferred from the GUI's
+version.
+
+Repair respects component ownership:
+
+- CEC Support updates through `cec-support-updater`.
+- The shared node receives `request_update { minimum }`, so the process that
+  owns the live backend performs and verifies its own replacement.
+- MyOwnMesh and AMSTerm repair from CEC Support's pinned bundled sidecars; an
+  installed support service is reinstalled/restarted when its payload changes.
+- Crucible is re-materialized from its verified bundled portable archive.
+
+Startup remains a separate policy: `while_granted`, `always`, or `off`, plus
+whether closing the customer window leaves the app in the tray. Component
+repair never silently changes that consent/startup policy.
+
+## Toolbox execution boundary
+
+The Toolbox is a dedicated Tauri window (`?toolbox=1`), created and foregrounded
+by Rust rather than by a general-purpose webview window permission. The UI can
+submit only a fixed `ToolboxAction`; `toolbox_spec` maps that id to one known
+repair or Windows program. No arbitrary command string crosses the webview
+boundary.
+
+SFC, DISM, online CHKDSK, DNS flush, and the administrator-only Windows tools
+launch through the bundled `amst.exe --admin --run` path in a real visible
+console. A PowerShell wrapper mirrors stdout/stderr to a per-run UTF-8
+transcript, which the backend tails into `toolbox://progress` events. Each run
+has an independently validated id and child process, so long repairs update
+their own progress cards without blocking other Toolbox actions.
+
+The default surface contains repeatable checks plus Event Viewer, Device
+Manager, Services, System Information, Task Manager, and Windows Settings.
+**Show Advanced** reveals configuration-changing tools: Control Panel, Registry
+Editor, Disk/Computer Management, System Configuration, Windows Features,
+Resource Monitor, and Crucible Tests.
+
+Crucible ships as the upstream portable zip, not a loose executable. The build
+pins `.crucible-rev` and its SHA-256; runtime extraction rejects unsafe archive
+paths and verifies the executable, PresentMon, and LibreHardwareMonitor tree.
+The complete payload is atomically materialized under
+`CEC_SUPPORT_HOME/tools/crucible/<version>` and launched through the same
+visible administrator-terminal path. The archive marker makes the operation
+idempotent and gives the Updates tab a targeted repair surface.
+
 ## Persistent state
 
 Mesh state lives in the shared `~/.myownmesh` home (`MYOWNMESH_HOME`):
@@ -210,7 +267,8 @@ Mesh state lives in the shared `~/.myownmesh` home (`MYOWNMESH_HOME`):
   unless the customer left grant-scoped autostart on (the default, active only
   while a technician grant is live) or installed the background service.
 
-CEC's own app files (service state, logs) live under `CEC_SUPPORT_HOME`
+CEC's own app files (service state, logs, and verified tool payloads) live under
+`CEC_SUPPORT_HOME`
 (default e.g. `%LOCALAPPDATA%\CEC Support` on Windows).
 
 ## Crate / component map
