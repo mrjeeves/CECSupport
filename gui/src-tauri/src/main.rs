@@ -1322,8 +1322,25 @@ fn service_do_verb() -> Option<String> {
 
 fn configure_service_environment() {
     if let Some(profile) = process_arg_value("--profile-home") {
-        std::env::set_var("MYOWNMESH_HOME", &profile);
-        std::env::set_var("ALLMYSTUFF_USER_HOME", &profile);
+        let profile = PathBuf::from(profile);
+        let (mesh_home, app_home) = service_environment_paths(&profile);
+        if let Err(error) = migrate_misplaced_service_state(&profile, &mesh_home) {
+            // Migration is recovery for builds that interpreted
+            // MYOWNMESH_HOME as a profile directory. Never make the support
+            // agent unstartable because recovery could not complete: the
+            // correctly-homed stack may already be usable, and the error is
+            // still visible in service stderr / diagnostics.
+            eprintln!("CEC Support could not migrate misplaced mesh state: {error}");
+        }
+        // MYOWNMESH_HOME names the state directory itself. Passing the profile
+        // here used to mint `<profile>/.secrets/identity.json` while the real
+        // machine identity lived at `<profile>/.myownmesh/.secrets/...`.
+        // Windows' global control pipe then made the split especially subtle:
+        // whichever app started first owned the pipe and the whole machine
+        // appeared under that identity.
+        std::env::set_var("MYOWNMESH_HOME", mesh_home);
+        std::env::set_var("ALLMYSTUFF_HOME", app_home);
+        std::env::set_var("ALLMYSTUFF_USER_HOME", profile);
     }
     if let Some(cec_home) = process_arg_value("--cec-home") {
         std::env::set_var(allmystuff_cec_protocol::CEC_HOME_ENV, cec_home);
@@ -1337,6 +1354,91 @@ fn configure_service_environment() {
     if let Some(mesh_bin) = process_arg_value("--mesh-bin") {
         std::env::set_var("MYOWNMESH_BIN", mesh_bin);
     }
+}
+
+fn service_environment_paths(profile: &std::path::Path) -> (PathBuf, PathBuf) {
+    (profile.join(".myownmesh"), profile.join(".allmystuff"))
+}
+
+/// Repair the one release family that treated `MYOWNMESH_HOME` as a profile
+/// instead of the state directory itself.
+///
+/// A machine with an identity in the correct home always wins: a second signed
+/// governance history must never overwrite it. A CEC-only machine may have no
+/// correct identity yet; in that case the misplaced identity proves that the
+/// adjacent `config.json`, `mesh/`, and AllMyStuff state files are ours, and we
+/// move only those recognized entries into the canonical home. Existing
+/// destination entries are never replaced.
+fn migrate_misplaced_service_state(
+    profile: &std::path::Path,
+    mesh_home: &std::path::Path,
+) -> Result<bool, String> {
+    let canonical_identity = mesh_home.join(".secrets").join("identity.json");
+    if canonical_identity.is_file() {
+        return Ok(false);
+    }
+    let misplaced_identity = profile.join(".secrets").join("identity.json");
+    if !misplaced_identity.is_file() {
+        return Ok(false);
+    }
+
+    std::fs::create_dir_all(mesh_home)
+        .map_err(|e| format!("create {}: {e}", mesh_home.display()))?;
+    let misplaced_mesh = profile.join("mesh");
+    let canonical_mesh = mesh_home.join("mesh");
+    if misplaced_mesh.exists() && !canonical_mesh.exists() {
+        std::fs::rename(&misplaced_mesh, &canonical_mesh).map_err(|e| {
+            format!(
+                "move {} to {}: {e}",
+                misplaced_mesh.display(),
+                canonical_mesh.display()
+            )
+        })?;
+    }
+
+    let mut files = vec![
+        profile.join("config.json"),
+        profile.join("cec-consent.json"),
+    ];
+    if let Ok(entries) = std::fs::read_dir(profile) {
+        files.extend(entries.flatten().filter_map(|entry| {
+            let name = entry.file_name();
+            let name = name.to_str()?;
+            (entry.file_type().ok()?.is_file()
+                && name.starts_with("allmystuff-")
+                && name.ends_with(".json"))
+            .then_some(entry.path())
+        }));
+    }
+    for from in files {
+        if !from.is_file() {
+            continue;
+        }
+        let Some(name) = from.file_name() else {
+            continue;
+        };
+        let to = mesh_home.join(name);
+        if to.exists() {
+            continue;
+        }
+        std::fs::rename(&from, &to)
+            .map_err(|e| format!("move {} to {}: {e}", from.display(), to.display()))?;
+    }
+
+    // Move the identity last. If an earlier companion-state move fails, the
+    // source identity remains the migration marker and the next launch can
+    // retry instead of treating the half-migrated destination as complete.
+    let canonical_secrets = mesh_home.join(".secrets");
+    std::fs::create_dir_all(&canonical_secrets)
+        .map_err(|e| format!("create {}: {e}", canonical_secrets.display()))?;
+    std::fs::rename(&misplaced_identity, &canonical_identity).map_err(|e| {
+        format!(
+            "move {} to {}: {e}",
+            misplaced_identity.display(),
+            canonical_identity.display()
+        )
+    })?;
+    Ok(true)
 }
 
 fn process_arg_value(flag: &str) -> Option<String> {
@@ -2870,6 +2972,73 @@ mod tests {
             Some(ServiceCmd::Uninstall)
         ));
         assert!(service_cmd("frobnicate").is_none());
+    }
+
+    #[test]
+    fn service_profile_uses_shared_canonical_state_homes() {
+        let profile = std::path::Path::new(r"C:\Users\Chris Paul");
+        let (mesh, app) = service_environment_paths(profile);
+        assert_eq!(mesh, profile.join(".myownmesh"));
+        assert_eq!(app, profile.join(".allmystuff"));
+    }
+
+    #[test]
+    fn service_state_migration_preserves_an_existing_canonical_identity() {
+        let root = std::env::temp_dir().join(format!(
+            "cec-service-home-preserve-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mesh = root.join(".myownmesh");
+        std::fs::create_dir_all(mesh.join(".secrets")).unwrap();
+        std::fs::create_dir_all(root.join(".secrets")).unwrap();
+        std::fs::write(mesh.join(".secrets").join("identity.json"), b"canonical").unwrap();
+        std::fs::write(root.join(".secrets").join("identity.json"), b"misplaced").unwrap();
+
+        assert!(!migrate_misplaced_service_state(&root, &mesh).unwrap());
+        assert_eq!(
+            std::fs::read(mesh.join(".secrets").join("identity.json")).unwrap(),
+            b"canonical"
+        );
+        assert!(root.join(".secrets").join("identity.json").is_file());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn service_state_migration_repairs_a_cec_only_misplaced_identity() {
+        let root = std::env::temp_dir().join(format!(
+            "cec-service-home-migrate-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mesh = root.join(".myownmesh");
+        std::fs::create_dir_all(root.join(".secrets")).unwrap();
+        std::fs::create_dir_all(root.join("mesh").join("states")).unwrap();
+        std::fs::write(root.join(".secrets").join("identity.json"), b"identity").unwrap();
+        std::fs::write(root.join("config.json"), b"config").unwrap();
+        std::fs::write(root.join("allmystuff-shares.json"), b"shares").unwrap();
+        std::fs::write(root.join("unrelated.txt"), b"keep me").unwrap();
+
+        assert!(migrate_misplaced_service_state(&root, &mesh).unwrap());
+        assert_eq!(
+            std::fs::read(mesh.join(".secrets").join("identity.json")).unwrap(),
+            b"identity"
+        );
+        assert_eq!(std::fs::read(mesh.join("config.json")).unwrap(), b"config");
+        assert_eq!(
+            std::fs::read(mesh.join("allmystuff-shares.json")).unwrap(),
+            b"shares"
+        );
+        assert!(mesh.join("mesh").join("states").is_dir());
+        assert!(root.join("unrelated.txt").is_file());
+        assert!(!root.join(".secrets").join("identity.json").exists());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
