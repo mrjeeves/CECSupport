@@ -424,7 +424,18 @@ mod launchd {
 
 #[cfg(windows)]
 mod windows {
+    use std::os::windows::ffi::OsStringExt;
     use std::os::windows::process::CommandExt;
+
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, TerminateProcess,
+        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
+    };
 
     use super::*;
 
@@ -434,6 +445,15 @@ mod windows {
     /// the GUI polls `is_installed` at startup, so without it the app opens
     /// with console flicker.
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    fn service_dir() -> PathBuf {
+        std::env::var_os("ProgramData")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
+            .join("Critical Error Computing")
+            .join("CEC Support")
+            .join("service")
+    }
 
     pub(super) fn is_installed() -> bool {
         std::process::Command::new("sc")
@@ -463,12 +483,8 @@ mod windows {
                 let _ = sc(&["stop", WINDOWS_SERVICE_NAME]);
                 wait_stopped();
                 let _ = sc(&["delete", WINDOWS_SERVICE_NAME]);
-                let service_dir = std::env::var_os("ProgramData")
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
-                    .join("Critical Error Computing")
-                    .join("CEC Support")
-                    .join("service");
+                let service_dir = service_dir();
+                drain_service_processes(&service_dir)?;
                 std::fs::create_dir_all(&service_dir)
                     .with_context(|| format!("creating {}", service_dir.display()))?;
                 let staged_exe = service_dir.join("cec-support.exe");
@@ -531,20 +547,23 @@ mod windows {
                 let _ = sc(&["stop", WINDOWS_SERVICE_NAME]);
                 wait_stopped();
                 sc(&["delete", WINDOWS_SERVICE_NAME])?;
-                let service_dir = std::env::var_os("ProgramData")
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
-                    .join("Critical Error Computing")
-                    .join("CEC Support")
-                    .join("service");
+                let service_dir = service_dir();
+                drain_service_processes(&service_dir)?;
                 let _ = std::fs::remove_dir_all(service_dir);
                 println!("Removed the {SERVICE_NAME} service.");
                 Ok(())
             }
             ServiceCmd::Start => sc(&["start", WINDOWS_SERVICE_NAME]),
-            ServiceCmd::Stop => sc(&["stop", WINDOWS_SERVICE_NAME]),
+            ServiceCmd::Stop => {
+                let result = sc(&["stop", WINDOWS_SERVICE_NAME]);
+                wait_stopped();
+                drain_service_processes(&service_dir())?;
+                result
+            }
             ServiceCmd::Restart => {
                 let _ = sc(&["stop", WINDOWS_SERVICE_NAME]);
+                wait_stopped();
+                drain_service_processes(&service_dir())?;
                 sc(&["start", WINDOWS_SERVICE_NAME])
             }
             ServiceCmd::Status => unreachable!("status handled in run()"),
@@ -597,6 +616,152 @@ mod windows {
                 return;
             }
             std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+    }
+
+    /// Stop only processes staged under CEC Support's service directory.
+    ///
+    /// The Windows service launches an interactive `cec-support` agent, which
+    /// in turn owns `allmystuff-serve` and `myownmesh`. SCM stopping the parent
+    /// used to terminate that agent without unwinding its Rust child handles,
+    /// leaving the two sidecars alive and locking their old binaries. An
+    /// update then either failed halfway or restarted a mixed-version stack.
+    /// Resolve each candidate's full executable path before terminating it:
+    /// identically-named AllMyStuff processes installed elsewhere are never in
+    /// scope.
+    fn drain_service_processes(service_dir: &Path) -> Result<()> {
+        for _ in 0..20 {
+            if terminate_service_processes(service_dir)? == 0 {
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        bail!(
+            "CEC Support's old service processes did not exit from {}",
+            service_dir.display()
+        )
+    }
+
+    fn terminate_service_processes(service_dir: &Path) -> Result<usize> {
+        // SAFETY: the snapshot handle is checked and closed below; every
+        // PROCESSENTRY32W has the required size before the ToolHelp calls.
+        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+        if snapshot == INVALID_HANDLE_VALUE {
+            return Err(std::io::Error::last_os_error()).context("listing Windows processes");
+        }
+        let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut more = unsafe { Process32FirstW(snapshot, &mut entry) } != 0;
+        let mut found = 0usize;
+        while more {
+            let pid = entry.th32ProcessID;
+            if pid != std::process::id() && service_image_name(&entry.szExeFile) {
+                // SAFETY: OpenProcess returns an owned handle or null. The
+                // handle is closed on every path after the full image query.
+                let process = unsafe {
+                    OpenProcess(
+                        PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE,
+                        0,
+                        pid,
+                    )
+                };
+                if !process.is_null() {
+                    if process_image_path(process)
+                        .as_deref()
+                        .is_some_and(|path| service_owned_image(service_dir, path))
+                    {
+                        found += 1;
+                        // SAFETY: `process` is an open process handle with
+                        // PROCESS_TERMINATE access, scoped to the exact staged
+                        // image path checked above.
+                        if unsafe { TerminateProcess(process, 0) } == 0 {
+                            let error = std::io::Error::last_os_error();
+                            unsafe { CloseHandle(process) };
+                            unsafe { CloseHandle(snapshot) };
+                            return Err(error).context(format!(
+                                "stopping stale CEC Support service process {pid}"
+                            ));
+                        }
+                    }
+                    unsafe { CloseHandle(process) };
+                }
+            }
+            more = unsafe { Process32NextW(snapshot, &mut entry) } != 0;
+        }
+        unsafe { CloseHandle(snapshot) };
+        Ok(found)
+    }
+
+    fn service_image_name(wide: &[u16]) -> bool {
+        let end = wide.iter().position(|c| *c == 0).unwrap_or(wide.len());
+        let name = std::ffi::OsString::from_wide(&wide[..end])
+            .to_string_lossy()
+            .to_ascii_lowercase();
+        matches!(
+            name.as_str(),
+            "cec-support.exe" | "allmystuff-serve.exe" | "myownmesh.exe"
+        )
+    }
+
+    fn process_image_path(process: windows_sys::Win32::Foundation::HANDLE) -> Option<PathBuf> {
+        let mut buf = vec![0u16; 32_768];
+        let mut len = buf.len() as u32;
+        // SAFETY: `buf` is writable for `len` UTF-16 code units; `process` is
+        // a live handle with PROCESS_QUERY_LIMITED_INFORMATION access.
+        if unsafe { QueryFullProcessImageNameW(process, 0, buf.as_mut_ptr(), &mut len) } == 0 {
+            return None;
+        }
+        Some(PathBuf::from(std::ffi::OsString::from_wide(
+            &buf[..len as usize],
+        )))
+    }
+
+    fn service_owned_image(service_dir: &Path, image: &Path) -> bool {
+        let normalize = |path: &Path| {
+            path.to_string_lossy()
+                .trim_start_matches(r"\\?\")
+                .replace('/', "\\")
+                .trim_end_matches('\\')
+                .to_ascii_lowercase()
+        };
+        let Some(name) = image.file_name().and_then(|name| name.to_str()) else {
+            return false;
+        };
+        matches!(
+            name.to_ascii_lowercase().as_str(),
+            "cec-support.exe" | "allmystuff-serve.exe" | "myownmesh.exe"
+        ) && image
+            .parent()
+            .is_some_and(|parent| normalize(parent) == normalize(service_dir))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn service_drain_targets_only_exact_staged_images() {
+            let dir = Path::new(r"C:\ProgramData\Critical Error Computing\CEC Support\service");
+            assert!(service_owned_image(
+                dir,
+                Path::new(
+                    r"C:\ProgramData\Critical Error Computing\CEC Support\service\allmystuff-serve.exe"
+                )
+            ));
+            assert!(service_owned_image(
+                dir,
+                Path::new(
+                    r"\\?\C:\ProgramData\Critical Error Computing\CEC Support\service\CEC-SUPPORT.EXE"
+                )
+            ));
+            assert!(!service_owned_image(
+                dir,
+                Path::new(r"C:\Program Files\AllMyStuff\allmystuff-serve.exe")
+            ));
+            assert!(!service_owned_image(
+                dir,
+                Path::new(r"C:\ProgramData\Critical Error Computing\CEC Support\service\amst.exe")
+            ));
         }
     }
 }
