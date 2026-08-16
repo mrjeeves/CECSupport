@@ -19,8 +19,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-bridge"
-version = "0.2.82"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.82#83f296ae313051b5fc70faccceceefa93395def7"
+version = "0.2.83"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.83#35e643d90219dae37094513bb0bea0b0c71df81f"
 dependencies = [
  "allmystuff-graph",
  "allmystuff-inventory",
@@ -29,8 +29,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-cec-consent"
-version = "0.2.82"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.82#83f296ae313051b5fc70faccceceefa93395def7"
+version = "0.2.83"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.83#35e643d90219dae37094513bb0bea0b0c71df81f"
 dependencies = [
  "allmystuff-cec-protocol",
  "serde",
@@ -40,8 +40,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-cec-protocol"
-version = "0.2.82"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.82#83f296ae313051b5fc70faccceceefa93395def7"
+version = "0.2.83"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.83#35e643d90219dae37094513bb0bea0b0c71df81f"
 dependencies = [
  "serde",
  "serde_json",
@@ -50,8 +50,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-graph"
-version = "0.2.82"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.82#83f296ae313051b5fc70faccceceefa93395def7"
+version = "0.2.83"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.83#35e643d90219dae37094513bb0bea0b0c71df81f"
 dependencies = [
  "serde",
  "serde_json",
@@ -60,8 +60,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-inventory"
-version = "0.2.82"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.82#83f296ae313051b5fc70faccceceefa93395def7"
+version = "0.2.83"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.83#35e643d90219dae37094513bb0bea0b0c71df81f"
 dependencies = [
  "serde",
  "serde_json",
@@ -70,8 +70,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-node"
-version = "0.2.82"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.82#83f296ae313051b5fc70faccceceefa93395def7"
+version = "0.2.83"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.83#35e643d90219dae37094513bb0bea0b0c71df81f"
 dependencies = [
  "allmystuff-bridge",
  "allmystuff-cec-consent",
@@ -127,12 +127,12 @@ dependencies = [
 [[package]]
 name = "allmystuff-pixels"
 version = "0.1.0"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.82#83f296ae313051b5fc70faccceceefa93395def7"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.83#35e643d90219dae37094513bb0bea0b0c71df81f"
 
 [[package]]
 name = "allmystuff-protocol"
-version = "0.2.82"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.82#83f296ae313051b5fc70faccceceefa93395def7"
+version = "0.2.83"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.83#35e643d90219dae37094513bb0bea0b0c71df81f"
 dependencies = [
  "allmystuff-graph",
  "dirs 5.0.1",
@@ -142,8 +142,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-session"
-version = "0.2.82"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.82#83f296ae313051b5fc70faccceceefa93395def7"
+version = "0.2.83"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.83#35e643d90219dae37094513bb0bea0b0c71df81f"
 dependencies = [
  "allmystuff-graph",
  "allmystuff-protocol",
@@ -154,8 +154,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-updater"
-version = "0.2.82"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.82#83f296ae313051b5fc70faccceceefa93395def7"
+version = "0.2.83"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.83#35e643d90219dae37094513bb0bea0b0c71df81f"
 dependencies = [
  "dirs 5.0.1",
  "flate2",
@@ -767,6 +767,7 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1497,7 +1498,7 @@ version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab8ecd87370524b461f8557c119c405552c396ed91fc0a8eec68679eab26f94a"
 dependencies = [
- "libloading 0.7.4",
+ "libloading 0.8.9",
 ]
 
 [[package]]
@@ -3564,7 +3565,7 @@ version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "680998035259dcfcafe653688bf2aa6d3e2dc05e98be6ab46afb089dc84f1df8"
 dependencies = [
- "proc-macro-crate 1.3.1",
+ "proc-macro-crate 2.0.2",
  "proc-macro2",
  "quote",
  "syn 2.0.118",
