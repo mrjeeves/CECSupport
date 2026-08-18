@@ -31,7 +31,14 @@ for package in allmystuff-node allmystuff-cec-protocol allmystuff-cec-consent; d
     || fail "$MANIFEST does not pin $package to .allmystuff-rev ($AMS_PIN)"
 done
 
-if [[ "$MODE" == "sync" ]]; then
+lock_matches_pin() {
+  [[ -f "$LOCK" ]] || return 1
+  grep -q 'source = "git+https://github.com/mrjeeves/AllMyStuff?tag=' "$LOCK" \
+    && ! grep 'source = "git+https://github.com/mrjeeves/AllMyStuff?tag=' "$LOCK" \
+      | grep -Fvq "?tag=${AMS_PIN}#"
+}
+
+if [[ "$MODE" == "sync" ]] && ! lock_matches_pin; then
   # A normal resolution updates the entire tagged AllMyStuff source as one
   # unit. It intentionally fails if the forward-pinned tag is not published:
   # CECSupport must be released only after its pinned AllMyStuff release.
