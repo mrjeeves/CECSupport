@@ -78,6 +78,14 @@ jobs:
           [[ "$got_gui_pkg"   == "$EXPECTED" ]] || fail "gui/package.json version is $got_gui_pkg, expected $EXPECTED (tag $TAG). Run 'just release $EXPECTED'."
           echo "Manifest versions match tag $TAG ($EXPECTED)."
 
+      # The pin may be moved in a preparation PR before the upstream tag is
+      # published. By release time it must be resolvable and the committed lock
+      # must already match it; otherwise Cargo can rewrite the lock inside the
+      # runner and hide that developers/other jobs are still on an older graph.
+      - name: Verify suite pins match the committed lock
+        shell: bash
+        run: bash ./scripts/sync-pinned-locks.sh --check
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc

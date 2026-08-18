@@ -14,9 +14,10 @@
 #   - Cargo.lock                    refreshed by `cargo update` to track it
 #   - gui/src-tauri/Cargo.toml      [package].version (the `cec-support` binary —
 #                                   a separate, excluded workspace)
-#   - gui/src-tauri/Cargo.lock      cec-support [[package]] version (if present —
-#                                   it isn't committed until the AllMyStuff git
-#                                   deps resolve, so this is best-effort)
+#   - gui/src-tauri/Cargo.lock      cec-support [[package]] version; the release
+#                                   recipe then runs sync-pinned-locks.sh so its
+#                                   AllMyStuff graph resolves from the published
+#                                   `.allmystuff-rev` tag too
 #   - gui/package.json              "version"
 #
 # The GUI lives in its own Cargo workspace (so `cargo build --workspace` at the
