@@ -49,11 +49,12 @@ if [[ "$MODE" == "sync" ]] && ! lock_matches_pin; then
 fi
 
 [[ -f "$LOCK" ]] || fail "$LOCK is missing"
-mapfile -t sources < <(grep 'source = "git+https://github.com/mrjeeves/AllMyStuff?tag=' "$LOCK" || true)
-((${#sources[@]} > 0)) || fail "$LOCK contains no pinned AllMyStuff packages"
-for source in "${sources[@]}"; do
+source_count=0
+while IFS= read -r source; do
+  source_count=$((source_count + 1))
   [[ "$source" == *"?tag=${AMS_PIN}#"* ]] \
     || fail "$LOCK disagrees with .allmystuff-rev ($AMS_PIN): $source"
-done
+done < <(grep 'source = "git+https://github.com/mrjeeves/AllMyStuff?tag=' "$LOCK" || true)
+((source_count > 0)) || fail "$LOCK contains no pinned AllMyStuff packages"
 
 echo "pinned Cargo locks agree with AllMyStuff $AMS_PIN; MyOwnMesh sidecar pin is $MESH_PIN"

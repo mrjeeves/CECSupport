@@ -22,6 +22,19 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      # CECSupport may intentionally carry a forward AllMyStuff pin until that
+      # tag is published, so its full lock check cannot run on every PR. Still
+      # compile the release helper with macOS's Bash 3.2 and reject the two
+      # Bash-4-only collection builtins that caused AllMyStuff's 0.2.86 cut to
+      # stop at `mapfile: command not found`.
+      - name: release helper is compatible with system Bash
+        if: matrix.os == 'macos-latest'
+        run: |
+          bash -n scripts/sync-pinned-locks.sh
+          if grep -En '(^|[[:space:]])(mapfile|readarray)([[:space:]]|$)' scripts/sync-pinned-locks.sh; then
+            echo "::error::release helper uses a Bash 4-only collection builtin"
+            exit 1
+          fi
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
