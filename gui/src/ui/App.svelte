@@ -179,6 +179,37 @@
     <ApproveModal {request} />
   {/if}
 
+  {#if store.updateRepair}
+    <div class="update-curtain" role="alert" aria-live="assertive">
+      <section class="update-card">
+        <div
+          class="update-spinner"
+          class:done={store.updateRepair.phase === "done"}
+          class:failed={store.updateRepair.phase === "failed"}
+          aria-hidden="true"
+        >
+          {store.updateRepair.phase === "done" ? "✓" : store.updateRepair.phase === "failed" ? "!" : ""}
+        </div>
+        <h2>{store.updateRepair.title}</h2>
+        <p>{store.updateRepair.note}</p>
+        <div
+          class="update-progress"
+          role="progressbar"
+          aria-label="Update repair progress"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow={store.updateRepair.progress}
+        >
+          <span style={`width: ${store.updateRepair.progress}%`}></span>
+        </div>
+        <div class="update-attempt">
+          <span>Attempt {store.updateRepair.attempt} of {store.updateRepair.total}</span>
+          <span>{store.updateRepair.progress}%</span>
+        </div>
+      </section>
+    </div>
+  {/if}
+
   <ConfirmDialog />
 
   {#if store.toast}
@@ -330,6 +361,84 @@
     gap: 1.1rem;
     align-items: center;
     min-width: 0;
+  }
+  .update-curtain {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: grid;
+    place-items: center;
+    padding: 1.25rem;
+    background: oklch(0.08 0.02 285 / 0.82);
+    backdrop-filter: blur(10px) saturate(0.75);
+  }
+  .update-card {
+    width: min(31rem, 100%);
+    padding: 1.5rem;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-lg);
+    background: var(--surface);
+    box-shadow: var(--shadow-lg), 0 24px 70px oklch(0 0 0 / 0.48);
+    text-align: center;
+  }
+  .update-card h2 {
+    margin: 0.75rem 0 0.35rem;
+    font-size: 1.05rem;
+  }
+  .update-card p {
+    min-height: 2.6em;
+    margin: 0 0 1rem;
+    color: var(--ink-soft);
+    font-size: 0.82rem;
+    line-height: 1.45;
+  }
+  .update-spinner {
+    width: 2.35rem;
+    height: 2.35rem;
+    margin: 0 auto;
+    display: grid;
+    place-items: center;
+    border: 3px solid var(--line-strong);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    color: var(--ok);
+    font-size: 1.15rem;
+    font-weight: 900;
+    animation: update-spin 0.8s linear infinite;
+  }
+  .update-spinner.done,
+  .update-spinner.failed {
+    animation: none;
+    border-color: var(--ok);
+  }
+  .update-spinner.failed {
+    color: var(--danger);
+    border-color: var(--danger);
+  }
+  @keyframes update-spin {
+    to { transform: rotate(360deg); }
+  }
+  .update-progress {
+    height: 0.55rem;
+    overflow: hidden;
+    border-radius: var(--r-pill);
+    background: var(--surface-2);
+    box-shadow: inset 0 1px 3px oklch(0 0 0 / 0.34);
+  }
+  .update-progress span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--accent), var(--ok));
+    transition: width 0.25s ease;
+  }
+  .update-attempt {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 0.4rem;
+    color: var(--ink-faint);
+    font-size: 0.68rem;
+    font-weight: 650;
   }
   @media (max-width: 880px) {
     .cols {
