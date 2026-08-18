@@ -233,6 +233,39 @@ const KVM_LINK_LABELS: Record<KvmLink["kind"], string> = {
   mesh: "Mesh",
 };
 
+export interface UpdateRepairFlow {
+  attempt: number;
+  total: number;
+  progress: number;
+  phase: "checking" | "repairing" | "waiting" | "done" | "failed";
+  title: string;
+  note: string;
+}
+
+function compareVersions(a: string, b: string): number {
+  const split = (version: string): { core: number[]; pre: string } => {
+    const clean = version.replace(/^v/, "");
+    const dash = clean.indexOf("-");
+    const core = (dash >= 0 ? clean.slice(0, dash) : clean)
+      .split(/[.-]/)
+      .slice(0, 3)
+      .map((part) => Number.parseInt(part, 10) || 0);
+    while (core.length < 3) core.push(0);
+    return { core, pre: dash >= 0 ? clean.slice(dash + 1) : "" };
+  };
+  const have = split(a);
+  const want = split(b);
+  for (let index = 0; index < 3; index += 1) {
+    if (have.core[index] !== want.core[index]) {
+      return have.core[index] < want.core[index] ? -1 : 1;
+    }
+  }
+  if (have.pre === want.pre) return 0;
+  if (have.pre === "") return 1;
+  if (want.pre === "") return -1;
+  return have.pre < want.pre ? -1 : 1;
+}
+
 class CecStore {
   /** Whether we're running in the browser preview (no backend). */
   readonly demo = !isTauri();
@@ -243,6 +276,9 @@ class CecStore {
   updateInfo = $state<UpdateStatus | null>(null);
   componentVersions = $state<ComponentVersionRow[]>([]);
   componentBusy = $state<string | null>(null);
+  /** Full-app curtain while a post-update component repair converges. */
+  updateRepair = $state<UpdateRepairFlow | null>(null);
+  private updateRepairPromise: Promise<boolean> | null = null;
   /** Result of the most recent check (manual or from the background ticker). */
   updateOutcome = $state<CheckOutcome | null>(null);
   updateBusy = $state(false);
@@ -579,7 +615,8 @@ class CecStore {
     // sit at "Starting up…" forever over a perfectly healthy node. Keep asking
     // until the node answers with our number, then settle into event-driven
     // updates. Runs in the background so the rest of init never blocks on it.
-    void this.bringUp();
+    const nodeReady = this.bringUp();
+    void nodeReady;
 
     // The background self-update ticker's verdict. Registered here rather than
     // in the settings panel so a release found while the customer is anywhere
@@ -592,6 +629,16 @@ class CecStore {
     // This is an immediate, forced release-feed check, not the delayed ticker
     // and not a read of yesterday's cached updater state.
     void this.checkUpdates();
+    // The running CEC Support build is the authority for its bundled suite
+    // pins. Wait until the shared AllMyStuff node is actually answering before
+    // detecting skew, then converge partial/legacy installs with the same
+    // bounded repair loop AllMyStuff uses. An aligned install stays silent.
+    void (async () => {
+      await nodeReady;
+      if (this.stopped) return;
+      await this.loadUpdateStatus();
+      await this.repairInstalledComponents();
+    })();
 
     this.service = await serviceStatus();
     this.autostart = await autostartGet();
@@ -2249,19 +2296,155 @@ class CecStore {
     this.componentVersions = (await componentStatus())?.rows ?? [];
   }
 
-  async repairComponent(component: string): Promise<void> {
-    if (this.demo) return;
-    this.componentBusy = component;
+  /** Rows whose live component is still older than this build's pin. A newer
+   *  process is never downgraded; an unavailable required process is repaired. */
+  private componentsNeedingRepair(rows = this.componentVersions): ComponentVersionRow[] {
+    return rows.filter((row) => {
+      const pinned = row.pinned?.replace(/^v/, "") ?? "";
+      const current = row.current?.replace(/^v/, "") ?? "";
+      return !!pinned && (!current || compareVersions(current, pinned) < 0);
+    });
+  }
+
+  private async refreshComponentVersions(): Promise<ComponentVersionRow[]> {
+    const status = await componentStatus();
+    if (status?.rows) this.componentVersions = status.rows;
+    return status?.rows ?? this.componentVersions;
+  }
+
+  /** Converge every installed component after an update. The initial attempt
+   *  is immediate; if the live version still has not moved, retries occur
+   *  after 1s, 3s, and 5s. Each pass re-detects reality, so a component that
+   *  recovered is not touched again. `forceComponent` is the Updates-tab
+   *  Repair button's first pass. */
+  async repairInstalledComponents(
+    title = "Finishing the CEC Support update",
+    forceComponent: string | null = null,
+  ): Promise<boolean> {
+    if (this.demo) return true;
+    if (this.updateRepairPromise) return this.updateRepairPromise;
+
+    const run = async (): Promise<boolean> => {
+      const retryDelays = [0, 1_000, 3_000, 5_000];
+      const total = retryDelays.length;
+      let force = forceComponent;
+      let lastError = "";
+
+      for (let index = 0; index < total; index += 1) {
+        const attempt = index + 1;
+        if (retryDelays[index] > 0) {
+          const seconds = retryDelays[index] / 1_000;
+          this.updateRepair = {
+            attempt,
+            total,
+            progress: Math.round((index / total) * 100),
+            phase: "waiting",
+            title,
+            note: `The components have not reported the pinned versions yet. Trying again in ${seconds} ${seconds === 1 ? "second" : "seconds"}…`,
+          };
+          await new Promise((resolve) => setTimeout(resolve, retryDelays[index]));
+        }
+
+        this.updateRepair = this.updateRepair
+          ? {
+              attempt,
+              total,
+              progress: Math.round((index / total) * 100),
+              phase: "checking",
+              title,
+              note: "Checking CEC Support, AllMyStuff, the mesh service, and bundled tools…",
+            }
+          : null;
+
+        let rows = await this.refreshComponentVersions();
+        let repair = this.componentsNeedingRepair(rows);
+        if (force) {
+          const forced = rows.find((row) => row.id === force);
+          if (forced && !repair.some((row) => row.id === forced.id)) repair = [forced, ...repair];
+        }
+
+        // A routine launch with a completely aligned install never flashes a
+        // curtain. Once skew is found, every retry remains visible.
+        if (repair.length === 0) {
+          if (this.updateRepair) {
+            this.updateRepair = {
+              attempt,
+              total,
+              progress: 100,
+              phase: "done",
+              title,
+              note: "All installed components are current.",
+            };
+            await new Promise((resolve) => setTimeout(resolve, 650));
+          }
+          return true;
+        }
+
+        this.updateRepair = {
+          attempt,
+          total,
+          progress: Math.round(((index + 0.5) / total) * 100),
+          phase: "repairing",
+          title,
+          note: `Updating ${repair.map((row) => row.label).join(", ")}…`,
+        };
+
+        let forcedRepairFailed = false;
+        for (const row of repair) {
+          this.componentBusy = row.id;
+          try {
+            await componentRepair(row.id);
+          } catch (error) {
+            lastError = errMsg(error);
+            if (row.id === force) forcedRepairFailed = true;
+          }
+        }
+        this.componentBusy = null;
+        if (!forcedRepairFailed) force = null;
+
+        rows = await this.refreshComponentVersions();
+        if (!force && this.componentsNeedingRepair(rows).length === 0) {
+          this.updateRepair = {
+            attempt,
+            total,
+            progress: 100,
+            phase: "done",
+            title,
+            note: "All installed components are current.",
+          };
+          await new Promise((resolve) => setTimeout(resolve, 650));
+          return true;
+        }
+      }
+
+      const remaining = this.componentsNeedingRepair();
+      this.updateRepair = {
+        attempt: total,
+        total,
+        progress: 100,
+        phase: "failed",
+        title: "The update needs attention",
+        note: remaining.length
+          ? `${remaining.map((row) => row.label).join(", ")} did not reach the pinned version after four attempts.`
+          : lastError || "One or more installed components could not be verified.",
+      };
+      this.notify(lastError || "Some installed components still need repair. Open Settings > Updates.");
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      return false;
+    };
+
+    this.updateRepairPromise = run();
     try {
-      await componentRepair(component);
-      this.notify("Repair finished. Rechecking installed versions…");
-      await new Promise((resolve) => setTimeout(resolve, 900));
-      await this.loadUpdateStatus();
-    } catch (e) {
-      this.notify(`Repair failed: ${errMsg(e)}`);
+      return await this.updateRepairPromise;
     } finally {
       this.componentBusy = null;
+      this.updateRepair = null;
+      this.updateRepairPromise = null;
     }
+  }
+
+  async repairComponent(component: string): Promise<void> {
+    await this.repairInstalledComponents("Repairing installed components", component);
   }
 
   /** A background check reported in. Only outcomes that mean "something newer

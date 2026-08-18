@@ -1979,6 +1979,7 @@ async fn component_status(state: State<'_, AppState>) -> Result<Value, String> {
     let allmystuff_pin = ALLMYSTUFF_PIN;
     let myownmesh_pin = option_env!("MYOWNMESH_PIN");
     let amst = bundled_version("amst").await;
+    #[cfg(windows)]
     let crucible = crucible_version().await;
     let service = cec_support_service::status_value(false).unwrap_or_default();
     let mut rows = vec![
@@ -1986,8 +1987,12 @@ async fn component_status(state: State<'_, AppState>) -> Result<Value, String> {
         json!({ "id": "allmystuff", "label": "AllMyStuff Serve", "current": node.as_ref().and_then(|v| v.get("version")), "pinned": allmystuff_pin, "detail": "Shared remote-control and support backend" }),
         json!({ "id": "myownmesh", "label": "MyOwnMesh Serve", "current": mesh.as_ref().and_then(|v| v.get("version")), "pinned": myownmesh_pin, "detail": "Running mesh transport daemon" }),
         json!({ "id": "amst", "label": "AMSTerm", "current": amst, "pinned": allmystuff_pin, "detail": "Bundled administrator terminal helper" }),
-        json!({ "id": "crucible", "label": "Crucible", "current": crucible, "pinned": option_env!("CRUCIBLE_PIN"), "detail": "Bundled interactive hardware-test console" }),
     ];
+    // Crucible is a Windows-only tool. Omitting it elsewhere is important now
+    // that startup automatically repairs missing pinned components: a null
+    // macOS/Linux row would otherwise trigger an impossible repair every time.
+    #[cfg(windows)]
+    rows.push(json!({ "id": "crucible", "label": "Crucible", "current": crucible, "pinned": option_env!("CRUCIBLE_PIN"), "detail": "Bundled interactive hardware-test console" }));
     if service.get("installed").and_then(Value::as_bool) == Some(true) {
         rows.push(json!({
             "id": "cec_service",
