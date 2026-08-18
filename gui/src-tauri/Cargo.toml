@@ -53,11 +53,11 @@ tauri-plugin-single-instance = "2"
 # these resolve wherever that tag is reachable; bump all three together with
 # `.allmystuff-rev`, which pins the `allmystuff-serve` sidecar to the same
 # release (see build.rs — it stamps the tag in as ALLMYSTUFF_PIN).
-allmystuff-node = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.84" }
+allmystuff-node = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.86" }
 # The CEC wire contract + Support-ID derivation, and the three-choice consent
 # store — the customer's per-technician approvals.
-allmystuff-cec-protocol = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.84" }
-allmystuff-cec-consent = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.84" }
+allmystuff-cec-protocol = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.86" }
+allmystuff-cec-consent = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.86" }
 
 # The client's OWN OS-service installer (never AllMyStuff's), so installing the
 # background service never clobbers an existing AllMyStuff install.
