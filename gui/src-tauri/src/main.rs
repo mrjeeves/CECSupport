@@ -2838,13 +2838,6 @@ fn main() -> ExitCode {
     // before the shared node socket is addressed.
     apply_cec_env();
 
-    // Swap in anything the updater staged on a previous run, before any of it
-    // is loaded. A running executable can't reliably replace itself, so the
-    // apply always happens here — at the very start of the *next* launch —
-    // rather than at the moment the download finished. Never fatal: a failure
-    // logs and leaves the marker for the launch after this one.
-    cec_support_updater::apply_pending_if_any();
-
     #[cfg(windows)]
     if std::env::args().any(|arg| arg == "--service-bootstrap") {
         let verb = process_arg_value("--service-bootstrap").unwrap_or_else(|| "install".into());
@@ -2912,6 +2905,13 @@ fn main() -> ExitCode {
     }
 
     let args: Vec<String> = std::env::args().skip(1).collect();
+
+    // Apply a GUI update only from the desktop installation that staged it.
+    // The Windows service and its session agent use this binary too, but their
+    // ProgramData payload is repaired separately by `service_install`. If one
+    // of those roles consumes the shared pending marker first, it updates the
+    // wrong executable and leaves the GUI in an endless stage/apply loop.
+    cec_support_updater::apply_pending_desktop_if_any(&args);
 
     // `--version` / `--help` flags, before the verb dispatch (so they aren't
     // mistaken for a `--minimized` GUI launch).

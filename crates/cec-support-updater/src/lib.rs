@@ -23,8 +23,8 @@
 //! One verified artifact containing `cec-support` and its required runtime
 //! companions (`amst.exe` and Crucible's verified portable payload on Windows).
 //! A check fetches the release feed, compares tags, and *stages* that payload under the CEC home; the swap
-//! happens on the next launch ([`apply_pending_if_any`]), because running
-//! executables can't reliably replace themselves in place. Verification is
+//! happens on the next desktop launch ([`apply_pending_desktop_if_any`]), because
+//! running executables can't reliably replace themselves in place. Verification is
 //! fail-closed: a published SHA-256 sidecar is mandatory, and when a release
 //! signing key is baked in at build time a valid detached minisign signature is
 //! required too.
@@ -473,10 +473,20 @@ fn detect_install_kind_from_path(path_str: &str) -> InstallKind {
 // Apply (runs at process start, or on demand).
 // ---------------------------------------------------------------------------
 
-/// Apply any staged update before real work starts. Idempotent, and never
-/// fatal: a failure leaves the staged marker in place so the next launch
-/// retries rather than silently dropping the update. Call this first in `main`.
-pub fn apply_pending_if_any() {
+/// Apply any staged desktop update before GUI work starts. Idempotent, and
+/// never fatal: a failure leaves the staged marker in place so the next GUI
+/// launch retries rather than silently dropping the update.
+///
+/// The CEC Support binary also runs from a separately installed service
+/// payload, and both copies deliberately share the updater home. Classifying
+/// the invocation here makes the ownership rule part of the updater API: a
+/// service or session-agent process cannot accidentally consume the desktop's
+/// pending marker, update only its ProgramData copy, and strand the GUI on the
+/// old build. Service payloads converge through CEC Support's service repair.
+pub fn apply_pending_desktop_if_any(args: &[String]) {
+    if !desktop_invocation_owns_update(args) {
+        return;
+    }
     cleanup_old_replaced_binary();
     if let Err(e) = apply_pending() {
         tracing::warn!("self-update apply skipped: {e}");
@@ -487,6 +497,18 @@ pub fn apply_pending_if_any() {
     if let Err(e) = repair_companions_from_cached_archive() {
         tracing::warn!("self-update companion repair skipped: {e}");
     }
+}
+
+fn desktop_invocation_owns_update(args: &[String]) -> bool {
+    if args
+        .iter()
+        .any(|arg| matches!(arg.as_str(), "-V" | "--version" | "-h" | "--help"))
+    {
+        return false;
+    }
+    // A bare launch and the option-only `--minimized` login-item launch own
+    // the desktop install. Every named verb is CLI/service work.
+    args.iter().all(|arg| arg.starts_with('-'))
 }
 
 /// Apply a staged update now, surfacing the applied version (the swap is on
@@ -930,7 +952,7 @@ async fn run_check(force: bool, notify: &(dyn Fn(&CheckOutcome) + Send + Sync)) 
 /// interval cooldown, so opening the app is itself a check; then the timer
 /// takes over at `check_interval_hours` (re-read each loop, so a settings
 /// change takes effect without a restart). Whatever it stages applies on the
-/// next launch (see [`apply_pending_if_any`]).
+/// next desktop launch (see [`apply_pending_desktop_if_any`]).
 ///
 /// Spawning this is what separates an updater that runs from one that only ever
 /// reacts to a "Check now" button.
@@ -1293,6 +1315,35 @@ mod tests {
     /// `CEC_SUPPORT_HOME` is process-global; serialize the tests that mutate it
     /// so cargo's parallel runner can't cross their temp dirs.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn only_desktop_launches_own_pending_gui_updates() {
+        let args = |values: &[&str]| {
+            values
+                .iter()
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>()
+        };
+
+        assert!(desktop_invocation_owns_update(&args(&[])));
+        assert!(desktop_invocation_owns_update(&args(&["--minimized"])));
+
+        for invocation in [
+            &["run", "--service"][..],
+            &["run", "--session-agent"][..],
+            &["service", "restart"][..],
+            &["id"][..],
+            &["version"][..],
+            &["help"][..],
+            &["--version"][..],
+            &["--help"][..],
+        ] {
+            assert!(
+                !desktop_invocation_owns_update(&args(invocation)),
+                "non-GUI invocation must not consume a desktop update: {invocation:?}"
+            );
+        }
+    }
 
     #[test]
     fn attended_checks_ignore_only_the_automatic_update_preference() {
