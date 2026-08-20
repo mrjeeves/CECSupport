@@ -19,8 +19,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-bridge"
-version = "0.2.89"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.89#6d057368333cd8997bf6cf39e62019a3092c0658"
+version = "0.2.93"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.93#97fa268fda5a1af3f2a07d1431fa93db91dda618"
 dependencies = [
  "allmystuff-graph",
  "allmystuff-inventory",
@@ -29,8 +29,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-cec-consent"
-version = "0.2.89"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.89#6d057368333cd8997bf6cf39e62019a3092c0658"
+version = "0.2.93"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.93#97fa268fda5a1af3f2a07d1431fa93db91dda618"
 dependencies = [
  "allmystuff-cec-protocol",
  "serde",
@@ -40,8 +40,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-cec-protocol"
-version = "0.2.89"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.89#6d057368333cd8997bf6cf39e62019a3092c0658"
+version = "0.2.93"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.93#97fa268fda5a1af3f2a07d1431fa93db91dda618"
 dependencies = [
  "serde",
  "serde_json",
@@ -50,8 +50,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-graph"
-version = "0.2.89"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.89#6d057368333cd8997bf6cf39e62019a3092c0658"
+version = "0.2.93"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.93#97fa268fda5a1af3f2a07d1431fa93db91dda618"
 dependencies = [
  "serde",
  "serde_json",
@@ -60,8 +60,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-inventory"
-version = "0.2.89"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.89#6d057368333cd8997bf6cf39e62019a3092c0658"
+version = "0.2.93"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.93#97fa268fda5a1af3f2a07d1431fa93db91dda618"
 dependencies = [
  "serde",
  "serde_json",
@@ -70,8 +70,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-node"
-version = "0.2.89"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.89#6d057368333cd8997bf6cf39e62019a3092c0658"
+version = "0.2.93"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.93#97fa268fda5a1af3f2a07d1431fa93db91dda618"
 dependencies = [
  "allmystuff-bridge",
  "allmystuff-cec-consent",
@@ -91,8 +91,10 @@ dependencies = [
  "dav-server",
  "dirs 5.0.1",
  "enigo",
+ "fs2",
  "futures-util",
  "getrandom 0.2.17",
+ "http-body-util",
  "hyper",
  "hyper-util",
  "interprocess",
@@ -127,12 +129,12 @@ dependencies = [
 [[package]]
 name = "allmystuff-pixels"
 version = "0.1.0"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.89#6d057368333cd8997bf6cf39e62019a3092c0658"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.93#97fa268fda5a1af3f2a07d1431fa93db91dda618"
 
 [[package]]
 name = "allmystuff-protocol"
-version = "0.2.89"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.89#6d057368333cd8997bf6cf39e62019a3092c0658"
+version = "0.2.93"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.93#97fa268fda5a1af3f2a07d1431fa93db91dda618"
 dependencies = [
  "allmystuff-graph",
  "dirs 5.0.1",
@@ -142,8 +144,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-session"
-version = "0.2.89"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.89#6d057368333cd8997bf6cf39e62019a3092c0658"
+version = "0.2.93"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.93#97fa268fda5a1af3f2a07d1431fa93db91dda618"
 dependencies = [
  "allmystuff-graph",
  "allmystuff-protocol",
@@ -154,8 +156,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-updater"
-version = "0.2.89"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.89#6d057368333cd8997bf6cf39e62019a3092c0658"
+version = "0.2.93"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.93#97fa268fda5a1af3f2a07d1431fa93db91dda618"
 dependencies = [
  "dirs 5.0.1",
  "flate2",
@@ -750,6 +752,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-autostart",
+ "tauri-plugin-opener",
  "tauri-plugin-shell",
  "tauri-plugin-single-instance",
  "tokio",
@@ -3575,7 +3578,7 @@ version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "680998035259dcfcafe653688bf2aa6d3e2dc05e98be6ab46afb089dc84f1df8"
 dependencies = [
- "proc-macro-crate 2.0.2",
+ "proc-macro-crate 3.5.0",
  "proc-macro2",
  "quote",
  "syn 2.0.118",
@@ -3981,9 +3984,9 @@ dependencies = [
 
 [[package]]
 name = "openh264"
-version = "0.9.7"
+version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6b2b561d2103303e233779545da757ecd35bad82188d619a6d8901f3007e1ff"
+checksum = "4a12b82c14f702c2cece4e0fc28896c6a6bed5317dc13448c86ac41df91a6f82"
 dependencies = [
  "openh264-sys2",
  "wide",
@@ -4824,9 +4827,9 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "safe_arch"
-version = "1.0.0"
+version = "0.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f7caad094bd561859bcd467734a720c3c1f5d1f338995351fefe2190c45efed"
+checksum = "96b02de82ddbe1b636e6170c21be622223aea188ef2e139be0a5b219ec215323"
 dependencies = [
  "bytemuck",
 ]
@@ -5647,6 +5650,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "tauri-plugin-opener"
+version = "2.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17e1bea14edce6b793a04e2417e3fd924b9bc4faae83cdee7d714156cceeed29"
+dependencies = [
+ "dunce",
+ "glob",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "open",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.18",
+ "url",
+ "windows 0.61.3",
+ "zbus",
+]
+
+[[package]]
 name = "tauri-plugin-shell"
 version = "2.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5764,7 +5789,7 @@ dependencies = [
  "serde_with",
  "swift-rs",
  "thiserror 2.0.18",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.2+spec-1.1.0",
  "url",
  "urlpattern",
  "uuid",
@@ -6793,9 +6818,9 @@ dependencies = [
 
 [[package]]
 name = "wide"
-version = "1.5.0"
+version = "0.7.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dfdfe6a32973f2d1b268b8895845a8a96cac2f0191e72c27cc929036060dbf89"
+checksum = "0ce5da8ecb62bcd8ec8b7ea19f69a51275e91299be594ea5cc6ef7819e16cd03"
 dependencies = [
  "bytemuck",
  "safe_arch",

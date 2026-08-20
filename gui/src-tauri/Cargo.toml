@@ -40,6 +40,9 @@ sha2 = "0.10"
 # waits in the background for a technician.
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-shell = "2"
+# System-browser launches use Tauri's dedicated opener plugin. The shell
+# plugin remains for the bundled sidecar commands below.
+tauri-plugin-opener = "2"
 # "Open CEC Support when this computer starts" — a per-user login item
 # (Windows Run key / macOS LaunchAgent / Linux autostart), no admin needed.
 tauri-plugin-autostart = "2"
@@ -53,11 +56,11 @@ tauri-plugin-single-instance = "2"
 # these resolve wherever that tag is reachable; bump all three together with
 # `.allmystuff-rev`, which pins the `allmystuff-serve` sidecar to the same
 # release (see build.rs — it stamps the tag in as ALLMYSTUFF_PIN).
-allmystuff-node = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.89" }
+allmystuff-node = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.93" }
 # The CEC wire contract + Support-ID derivation, and the three-choice consent
 # store — the customer's per-technician approvals.
-allmystuff-cec-protocol = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.89" }
-allmystuff-cec-consent = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.89" }
+allmystuff-cec-protocol = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.93" }
+allmystuff-cec-consent = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.93" }
 
 # The client's OWN OS-service installer (never AllMyStuff's), so installing the
 # background service never clobbers an existing AllMyStuff install.

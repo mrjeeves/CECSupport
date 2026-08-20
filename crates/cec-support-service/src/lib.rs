@@ -285,7 +285,7 @@ mod systemd {
         }
         let status = cmd.args(args).status().context("running systemctl")?;
         if !status.success() {
-            bail!("systemctl {:?} failed", args);
+            bail!("systemctl {args:?} failed");
         }
         Ok(())
     }
@@ -306,7 +306,7 @@ mod systemd {
                     // Survive logout on a headless box; best-effort.
                     let _ = enable_linger();
                 }
-                println!("Installed and started {SYSTEMD_UNIT} ({:?} scope).", scope);
+                println!("Installed and started {SYSTEMD_UNIT} ({scope:?} scope).");
                 Ok(())
             }
             ServiceCmd::Uninstall => {
@@ -386,7 +386,7 @@ mod launchd {
                 }
                 write_file(&plist, &render_launchd_plist(exe, &log))?;
                 launchctl(&["load", "-w", &plist.to_string_lossy()])?;
-                println!("Installed and loaded {LAUNCHD_LABEL} ({:?} scope).", scope);
+                println!("Installed and loaded {LAUNCHD_LABEL} ({scope:?} scope).");
                 Ok(())
             }
             ServiceCmd::Uninstall => {
@@ -411,7 +411,7 @@ mod launchd {
             .status()
             .context("running launchctl")?;
         if !status.success() {
-            bail!("launchctl {:?} failed", args);
+            bail!("launchctl {args:?} failed");
         }
         Ok(())
     }

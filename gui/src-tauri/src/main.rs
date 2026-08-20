@@ -238,9 +238,12 @@ async fn machine_specs(state: State<'_, AppState>) -> Result<Value, String> {
 /// never gains an open-anything primitive.
 #[tauri::command]
 async fn open_tiktok(app: tauri::AppHandle) -> Result<(), String> {
-    use tauri_plugin_shell::ShellExt as _;
-    app.shell()
-        .open("https://www.tiktok.com/@criticalerrorcomputing", None)
+    use tauri_plugin_opener::OpenerExt as _;
+    app.opener()
+        .open_url(
+            "https://www.tiktok.com/@criticalerrorcomputing",
+            None::<&str>,
+        )
         .map_err(|e| e.to_string())
 }
 
@@ -250,9 +253,9 @@ async fn open_tiktok(app: tauri::AppHandle) -> Result<(), String> {
 /// gets one named door, never an open-anything primitive.
 #[tauri::command]
 async fn open_allmystuff_works(app: tauri::AppHandle) -> Result<(), String> {
-    use tauri_plugin_shell::ShellExt as _;
-    app.shell()
-        .open("https://allmystuff.works", None)
+    use tauri_plugin_opener::OpenerExt as _;
+    app.opener()
+        .open_url("https://allmystuff.works", None::<&str>)
         .map_err(|e| e.to_string())
 }
 
@@ -262,9 +265,9 @@ async fn open_allmystuff_works(app: tauri::AppHandle) -> Result<(), String> {
 /// open-anything primitive.
 #[tauri::command]
 async fn open_kvm_store(app: tauri::AppHandle) -> Result<(), String> {
-    use tauri_plugin_shell::ShellExt as _;
-    app.shell()
-        .open("https://support.cec.direct/#kvms", None)
+    use tauri_plugin_opener::OpenerExt as _;
+    app.opener()
+        .open_url("https://support.cec.direct/#kvms", None::<&str>)
         .map_err(|e| e.to_string())
 }
 
@@ -607,6 +610,7 @@ fn toolbox_run_id_valid(run_id: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
+#[cfg(any(windows, test))]
 fn append_toolbox_line(output: &mut String, line: &str) {
     if !output.is_empty() && !output.ends_with('\n') {
         output.push('\n');
@@ -617,6 +621,7 @@ fn append_toolbox_line(output: &mut String, line: &str) {
 /// AMST carries a real PTY, so its output can contain terminal title and color
 /// sequences. Keep the useful text/progress while preventing raw escape codes
 /// from leaking into the Toolbox progress cards.
+#[cfg(any(windows, test))]
 fn clean_toolbox_output(input: &[u8]) -> String {
     let mut clean = Vec::with_capacity(input.len());
     let mut index = 0;
@@ -657,6 +662,7 @@ fn clean_toolbox_output(input: &[u8]) -> String {
     String::from_utf8_lossy(&clean).into_owned()
 }
 
+#[cfg(windows)]
 fn emit_toolbox_progress(app: &tauri::AppHandle, run_id: &str, stream: &str, line: &str) {
     let chunk = line.trim_end_matches(['\r', '\n']);
     if chunk.is_empty() {
@@ -1196,7 +1202,7 @@ async fn open_kvm_console(
     scheme: String,
 ) -> Result<(), String> {
     use std::net::IpAddr;
-    use tauri_plugin_shell::ShellExt as _;
+    use tauri_plugin_opener::OpenerExt as _;
 
     let ip: IpAddr = host
         .parse()
@@ -1222,8 +1228,8 @@ async fn open_kvm_console(
     } else {
         format!("{host}:{port}")
     };
-    app.shell()
-        .open(format!("{scheme}://{authority}"), None)
+    app.opener()
+        .open_url(format!("{scheme}://{authority}"), None::<&str>)
         .map_err(|e| e.to_string())
 }
 
@@ -1944,11 +1950,6 @@ async fn crucible_version() -> Option<String> {
     binary_version(executable).await
 }
 
-#[cfg(not(windows))]
-async fn crucible_version() -> Option<String> {
-    None
-}
-
 async fn service_payload_version() -> Option<String> {
     if !cfg!(windows) {
         // Unix services execute this installed binary directly rather than a
@@ -2262,6 +2263,15 @@ async fn run_event_pump(app: tauri::AppHandle, node: Arc<NodeClient>) {
                     }
                     let _ = app.emit(&event, payload);
                 }
+                NodeEvent::Upgrade => {
+                    match cec_support_updater::update_now().await {
+                        Ok(outcome) => {
+                            tracing::info!("CEC Support suite upgrade completed: {outcome:?}")
+                        }
+                        Err(e) => tracing::warn!("CEC Support suite upgrade failed: {e}"),
+                    }
+                    app.restart();
+                }
                 NodeEvent::Restart => app.restart(), // never returns
             }
         }
@@ -2290,6 +2300,7 @@ fn run_gui() -> ExitCode {
             reveal_main_window(app);
         }))
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--minimized"]),
@@ -2551,15 +2562,17 @@ fn run_agent(service: bool) -> ExitCode {
         }
     };
     rt.block_on(async {
-        // Hold the child so it (and the mesh daemon under it) dies with us.
-        let _child = match ensure_node_running_pinned(ALLMYSTUFF_PIN).await {
+        // Hold a CEC-owned fallback so it (and the mesh daemon under it) dies
+        // with us. This is deliberately mutable: installed AllMyStuff may take
+        // the machine socket while the service is running, and a dead fallback
+        // must be replaceable if that owner later goes away.
+        let mut child = match ensure_node_running_pinned(ALLMYSTUFF_PIN).await {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("cec-support: couldn't bring up the CEC node: {e:#}");
                 return ExitCode::FAILURE;
             }
         };
-        wait_for_node().await;
         let node = match NodeClient::new() {
             Ok(n) => n,
             Err(e) => {
@@ -2567,15 +2580,111 @@ fn run_agent(service: bool) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-        if let Err(e) = node.request("cec_online", json!({})).await {
-            eprintln!("cec-support: couldn't go online on the support area: {e:#}");
-        } else {
-            println!("CEC Support is running and waiting for your technician.");
+        let mut announced = false;
+        let mut wedged_rounds = 0u32;
+
+        loop {
+            // An owner handoff closes the old event stream. Re-resolve the
+            // machine socket before subscribing to its replacement. If the
+            // CEC-owned fallback is still alive behind an unresponsive socket,
+            // give it the same three grace windows as the GUI pump before
+            // deliberately replacing it; never spawn a bind-loser over a live
+            // child on the first missed probe.
+            if !NodeClient::probe().await {
+                wait_for_node().await;
+            }
+            if !NodeClient::probe().await {
+                let own_alive = child
+                    .as_mut()
+                    .map(|owned| owned.is_alive())
+                    .unwrap_or(false);
+                if own_alive {
+                    wedged_rounds = wedged_rounds.saturating_add(1);
+                    if wedged_rounds < 3 {
+                        tracing::warn!(
+                            "node socket is unresponsive but the CEC fallback is still running \
+                             ({wedged_rounds}/3); waiting instead of spawning over it"
+                        );
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+                    tracing::warn!(
+                        "node socket stayed dead across {wedged_rounds} grace windows; \
+                         replacing the CEC-owned fallback"
+                    );
+                }
+                // Drop a dead child handle, or deliberately stop the wedged
+                // fallback after its grace windows, before ensuring a new
+                // canonical owner.
+                child.take();
+                wedged_rounds = 0;
+                match ensure_node_running_pinned(ALLMYSTUFF_PIN).await {
+                    Ok(Some(replacement)) => child = Some(replacement),
+                    Ok(None) => {}
+                    Err(e) => {
+                        tracing::warn!("couldn't restore the shared node: {e:#}");
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+                }
+            } else {
+                wedged_rounds = 0;
+            }
+
+            if !wait_for_node().await {
+                tracing::warn!("node did not return before the re-host grace window elapsed");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+
+            // Subscribe first. A successful ack identifies one concrete node
+            // owner; cec_online immediately after it registers CEC presence on
+            // that exact owner. When AMS takes the socket, EOF returns us to
+            // the top and the same pair is repeated against the replacement.
+            let (tx, rx) = tokio::sync::mpsc::channel::<NodeEvent>(256);
+            if let Err(e) = node.subscribe_events(tx).await {
+                tracing::warn!("node event subscribe failed: {e:#}; retrying");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+            if let Err(e) = node.request("cec_online", json!({})).await {
+                tracing::warn!("couldn't go online on the support area: {e:#}; retrying");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+            if !announced {
+                println!("CEC Support is running and waiting for your technician.");
+                announced = true;
+            } else {
+                tracing::info!("CEC Support re-hosted on the current AllMyStuff node owner");
+            }
+
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => return ExitCode::SUCCESS,
+                () = wait_for_headless_owner_change(rx) => {
+                    tracing::info!("AllMyStuff node owner changed; re-subscribing and re-hosting CEC Support");
+                }
+            }
         }
-        // Park until asked to stop (Ctrl-C / service stop).
-        let _ = tokio::signal::ctrl_c().await;
-        ExitCode::SUCCESS
     })
+}
+
+/// Drain one headless-agent subscription until its node owner disappears or
+/// announces a restart. Ordinary node events need no GUI forwarding here; the
+/// service's job is simply to notice the ownership edge and re-run
+/// `cec_online` against the successor. A desktop upgrade is intentionally left
+/// to a desktop installation: the ProgramData service payload must never
+/// consume or apply a GUI update in the wrong install context.
+async fn wait_for_headless_owner_change(mut rx: tokio::sync::mpsc::Receiver<NodeEvent>) {
+    while let Some(event) = rx.recv().await {
+        match event {
+            NodeEvent::Restart => return,
+            NodeEvent::Upgrade => tracing::info!(
+                "node requested a desktop upgrade; the installed desktop updater owns it"
+            ),
+            NodeEvent::Emit { .. } => {}
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -3185,5 +3294,40 @@ mod tests {
         assert!(!should_repair_kvm_tunnel("POST", &transport_failure));
         assert!(!should_repair_kvm_tunnel("DELETE", &transport_failure));
         assert!(!should_repair_kvm_tunnel("GET", &device_error));
+    }
+
+    #[tokio::test]
+    async fn headless_agent_treats_event_stream_eof_as_an_owner_change() {
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        drop(tx);
+        tokio::time::timeout(
+            Duration::from_millis(100),
+            wait_for_headless_owner_change(rx),
+        )
+        .await
+        .expect("a closed owner stream must return so the service can re-host");
+    }
+
+    #[tokio::test]
+    async fn headless_agent_waits_through_events_but_returns_on_restart() {
+        let (tx, rx) = tokio::sync::mpsc::channel(2);
+        let waiter = tokio::spawn(wait_for_headless_owner_change(rx));
+        tx.send(NodeEvent::Emit {
+            event: "cec://help".into(),
+            payload: json!({ "asking": true }),
+        })
+        .await
+        .unwrap();
+        tokio::task::yield_now().await;
+        assert!(
+            !waiter.is_finished(),
+            "ordinary CEC events must not make the service re-host"
+        );
+
+        tx.send(NodeEvent::Restart).await.unwrap();
+        tokio::time::timeout(Duration::from_millis(100), waiter)
+            .await
+            .expect("a node restart must return so the service can re-host")
+            .unwrap();
     }
 }
