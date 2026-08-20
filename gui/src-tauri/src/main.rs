@@ -238,9 +238,12 @@ async fn machine_specs(state: State<'_, AppState>) -> Result<Value, String> {
 /// never gains an open-anything primitive.
 #[tauri::command]
 async fn open_tiktok(app: tauri::AppHandle) -> Result<(), String> {
-    use tauri_plugin_shell::ShellExt as _;
-    app.shell()
-        .open("https://www.tiktok.com/@criticalerrorcomputing", None)
+    use tauri_plugin_opener::OpenerExt as _;
+    app.opener()
+        .open_url(
+            "https://www.tiktok.com/@criticalerrorcomputing",
+            None::<&str>,
+        )
         .map_err(|e| e.to_string())
 }
 
@@ -250,9 +253,9 @@ async fn open_tiktok(app: tauri::AppHandle) -> Result<(), String> {
 /// gets one named door, never an open-anything primitive.
 #[tauri::command]
 async fn open_allmystuff_works(app: tauri::AppHandle) -> Result<(), String> {
-    use tauri_plugin_shell::ShellExt as _;
-    app.shell()
-        .open("https://allmystuff.works", None)
+    use tauri_plugin_opener::OpenerExt as _;
+    app.opener()
+        .open_url("https://allmystuff.works", None::<&str>)
         .map_err(|e| e.to_string())
 }
 
@@ -262,9 +265,9 @@ async fn open_allmystuff_works(app: tauri::AppHandle) -> Result<(), String> {
 /// open-anything primitive.
 #[tauri::command]
 async fn open_kvm_store(app: tauri::AppHandle) -> Result<(), String> {
-    use tauri_plugin_shell::ShellExt as _;
-    app.shell()
-        .open("https://support.cec.direct/#kvms", None)
+    use tauri_plugin_opener::OpenerExt as _;
+    app.opener()
+        .open_url("https://support.cec.direct/#kvms", None::<&str>)
         .map_err(|e| e.to_string())
 }
 
@@ -607,6 +610,7 @@ fn toolbox_run_id_valid(run_id: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
+#[cfg(any(windows, test))]
 fn append_toolbox_line(output: &mut String, line: &str) {
     if !output.is_empty() && !output.ends_with('\n') {
         output.push('\n');
@@ -617,6 +621,7 @@ fn append_toolbox_line(output: &mut String, line: &str) {
 /// AMST carries a real PTY, so its output can contain terminal title and color
 /// sequences. Keep the useful text/progress while preventing raw escape codes
 /// from leaking into the Toolbox progress cards.
+#[cfg(any(windows, test))]
 fn clean_toolbox_output(input: &[u8]) -> String {
     let mut clean = Vec::with_capacity(input.len());
     let mut index = 0;
@@ -657,6 +662,7 @@ fn clean_toolbox_output(input: &[u8]) -> String {
     String::from_utf8_lossy(&clean).into_owned()
 }
 
+#[cfg(windows)]
 fn emit_toolbox_progress(app: &tauri::AppHandle, run_id: &str, stream: &str, line: &str) {
     let chunk = line.trim_end_matches(['\r', '\n']);
     if chunk.is_empty() {
@@ -1196,7 +1202,7 @@ async fn open_kvm_console(
     scheme: String,
 ) -> Result<(), String> {
     use std::net::IpAddr;
-    use tauri_plugin_shell::ShellExt as _;
+    use tauri_plugin_opener::OpenerExt as _;
 
     let ip: IpAddr = host
         .parse()
@@ -1222,8 +1228,8 @@ async fn open_kvm_console(
     } else {
         format!("{host}:{port}")
     };
-    app.shell()
-        .open(format!("{scheme}://{authority}"), None)
+    app.opener()
+        .open_url(format!("{scheme}://{authority}"), None::<&str>)
         .map_err(|e| e.to_string())
 }
 
@@ -1944,11 +1950,6 @@ async fn crucible_version() -> Option<String> {
     binary_version(executable).await
 }
 
-#[cfg(not(windows))]
-async fn crucible_version() -> Option<String> {
-    None
-}
-
 async fn service_payload_version() -> Option<String> {
     if !cfg!(windows) {
         // Unix services execute this installed binary directly rather than a
@@ -2264,9 +2265,9 @@ async fn run_event_pump(app: tauri::AppHandle, node: Arc<NodeClient>) {
                 }
                 NodeEvent::Upgrade => {
                     match cec_support_updater::update_now().await {
-                        Ok(outcome) => tracing::info!(
-                            "CEC Support suite upgrade completed: {outcome:?}"
-                        ),
+                        Ok(outcome) => {
+                            tracing::info!("CEC Support suite upgrade completed: {outcome:?}")
+                        }
                         Err(e) => tracing::warn!("CEC Support suite upgrade failed: {e}"),
                     }
                     app.restart();
@@ -2299,6 +2300,7 @@ fn run_gui() -> ExitCode {
             reveal_main_window(app);
         }))
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--minimized"]),
