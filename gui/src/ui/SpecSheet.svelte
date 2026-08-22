@@ -7,6 +7,9 @@
   // sensors — the card never invents numbers. Hidden entirely until the
   // scan lands (or on an older node without the command).
   import { store } from "../store.svelte";
+  import type { MachineSpecs } from "../types";
+
+  type Gpu = MachineSpecs["gpus"][number];
 
   const specs = $derived(store.specs);
   /** "Name (HOSTNAME)" — the identity pair, spelled exactly like the
@@ -42,6 +45,43 @@
     [...(specs?.disks ?? [])].sort((a, b) => Number(a.removable) - Number(b.removable)),
   );
 
+  function linkProblem(gpu: Gpu): boolean {
+    return (
+      gpu.link_width != null &&
+      gpu.max_link_width != null &&
+      gpu.link_width < gpu.max_link_width
+    );
+  }
+
+  function linkText(gpu: Gpu): string {
+    if (gpu.link_width == null) return "Unavailable";
+    if (gpu.max_link_width != null && gpu.max_link_width !== gpu.link_width) {
+      return `PCIe x${gpu.link_width} (max x${gpu.max_link_width})`;
+    }
+    return `PCIe x${gpu.link_width}`;
+  }
+
+  function linkWarning(gpu: Gpu): string | undefined {
+    if (!linkProblem(gpu)) return undefined;
+    return `This GPU is running at x${gpu.link_width} instead of its x${gpu.max_link_width} maximum. Move the GPU to the motherboard's primary x16 slot.`;
+  }
+
+  function monitorText(gpu: Gpu): string {
+    if (gpu.primary_monitor == null) return "Unavailable";
+    if (gpu.primary_monitor) return "Primary monitor connected";
+    return gpu.primary_monitor_adapter
+      ? `Primary monitor on ${gpu.primary_monitor_adapter}`
+      : "Primary monitor on another GPU";
+  }
+
+  function monitorWarning(gpu: Gpu): string | undefined {
+    if (gpu.primary_monitor !== false) return undefined;
+    const location = gpu.primary_monitor_adapter
+      ? ` to ${gpu.primary_monitor_adapter}`
+      : " to another graphics adapter";
+    return `The primary monitor is connected${location}. Move its display cable to a port on ${gpu.name}.`;
+  }
+
   // Temperature rendering is intentionally gone for now — see the note in
   // the template where the temps block used to be. The data still rides
   // `specs.temps`; only the display is parked.
@@ -66,7 +106,29 @@
       <span class="v">{ramLine}</span>
       {#each specs.gpus as g, i (g.name + i)}
         <span class="k">{specs.gpus.length > 1 ? `GPU ${i + 1}` : "GPU"}</span>
-        <span class="v">{g.name}{g.vram_bytes ? ` · ${gb(g.vram_bytes)}` : ""}</span>
+        <span class="v gpu">
+          <span>{g.name}{g.vram_bytes ? ` · ${gb(g.vram_bytes)}` : ""}</span>
+          {#if g.kind === "discrete"}
+            <span class="gpu-details">
+              <span
+                class:problem={linkProblem(g)}
+                class="gpu-detail"
+                title={linkWarning(g)}
+              >
+                <span class="gpu-detail-key">Link Speed</span>
+                <span>{linkText(g)}</span>
+              </span>
+              <span
+                class:problem={g.primary_monitor === false}
+                class="gpu-detail"
+                title={monitorWarning(g)}
+              >
+                <span class="gpu-detail-key">Monitor</span>
+                <span>{monitorText(g)}</span>
+              </span>
+            </span>
+          {/if}
+        </span>
       {/each}
       {#if specs.board}
         <span class="k">Board</span>
@@ -166,6 +228,45 @@
     min-width: 0;
     overflow-wrap: anywhere;
   }
+  .gpu {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .gpu-details {
+    display: flex;
+    flex-direction: column;
+    gap: 0.16rem;
+    padding-left: 0.55rem;
+    border-left: 2px solid var(--line);
+  }
+  .gpu-detail {
+    display: grid;
+    grid-template-columns: 5.2rem minmax(0, 1fr);
+    gap: 0.45rem;
+    font-size: 0.75rem;
+    color: var(--ink-soft);
+  }
+  .gpu-detail-key {
+    font-weight: 700;
+    color: var(--ink-faint);
+  }
+  .gpu-detail.problem,
+  .gpu-detail.problem .gpu-detail-key {
+    color: var(--danger);
+  }
+  .gpu-detail.problem {
+    cursor: help;
+    animation: problem-breathe 3.8s ease-in-out infinite;
+  }
+  @keyframes problem-breathe {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.55;
+    }
+  }
 
   .disks {
     display: flex;
@@ -211,5 +312,10 @@
     margin: 0;
     font-size: 0.72rem;
     color: var(--ink-faint);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .gpu-detail.problem {
+      animation: none;
+    }
   }
 </style>

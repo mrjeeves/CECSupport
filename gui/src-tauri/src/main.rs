@@ -45,6 +45,8 @@ use serde_json::{json, Value};
 use tauri::{Emitter, Manager, RunEvent, State};
 use tauri_plugin_autostart::ManagerExt;
 
+mod gpu_diagnostics;
+
 /// The AllMyStuff version this build pins its bundled `allmystuff-serve` at,
 /// stamped by `build.rs` from `.allmystuff-rev` (e.g. `v0.2.25`). Passed to the
 /// node bring-up so a **reused, separately-installed** `allmystuff-serve` CEC
@@ -227,11 +229,13 @@ async fn cec_online(state: State<'_, AppState>) -> Result<Value, String> {
 /// scan — the front door's spec card.
 #[tauri::command]
 async fn machine_specs(state: State<'_, AppState>) -> Result<Value, String> {
-    state
+    let mut specs = state
         .node
         .request("machine_specs", json!({}))
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    gpu_diagnostics::augment_machine_specs(&mut specs);
+    Ok(specs)
 }
 
 /// Open CEC's TikTok in the system browser — the waiting screen's "catch us
