@@ -31,10 +31,11 @@
     windows_subsystem = "windows"
 )]
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -288,6 +289,196 @@ struct ToolboxSpec {
     kind: ToolboxKind,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ToolboxEntryStatus {
+    Complete,
+    Failed,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ToolboxEntry {
+    id: String,
+    action: String,
+    label: String,
+    started_at: String,
+    completed_at: String,
+    status: ToolboxEntryStatus,
+    output: String,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ToolboxSession {
+    id: String,
+    started_at: String,
+    entries: Vec<ToolboxEntry>,
+}
+
+#[derive(Default, Debug)]
+struct ToolboxHistory {
+    sessions: Vec<ToolboxSession>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "record", rename_all = "snake_case")]
+enum ToolboxHistoryRecord {
+    Session {
+        id: String,
+        started_at: String,
+    },
+    Entry {
+        session_id: String,
+        entry: ToolboxEntry,
+    },
+}
+
+static TOOLBOX_HISTORY_LOCK: std::sync::LazyLock<Mutex<()>> =
+    std::sync::LazyLock::new(|| Mutex::new(()));
+static TOOLBOX_SESSION_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+const MAX_TOOLBOX_ENTRY_CHARS: usize = 256 * 1024;
+
+fn toolbox_now() -> String {
+    chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+fn toolbox_history_path() -> Option<PathBuf> {
+    std::env::var_os(allmystuff_cec_protocol::CEC_HOME_ENV)
+        .map(PathBuf::from)
+        .map(|home| home.join("logs").join("toolbox-history.jsonl"))
+}
+
+fn append_toolbox_history_record_at(
+    path: &std::path::Path,
+    record: &ToolboxHistoryRecord,
+) -> Result<(), String> {
+    use std::io::Write as _;
+
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)
+            .map_err(|e| format!("creating the Toolbox history folder: {e}"))?;
+    }
+    let mut bytes = serde_json::to_vec(record)
+        .map_err(|e| format!("encoding the Toolbox history record: {e}"))?;
+    bytes.push(b'\n');
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .and_then(|mut file| file.write_all(&bytes))
+        .map_err(|e| format!("writing the Toolbox history: {e}"))
+}
+
+fn load_toolbox_history_at(path: &std::path::Path) -> ToolboxHistory {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return ToolboxHistory::default();
+    };
+    let mut history = ToolboxHistory::default();
+    let mut session_indexes = HashMap::<String, usize>::new();
+    let mut malformed = 0usize;
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        let Ok(record) = serde_json::from_str::<ToolboxHistoryRecord>(line) else {
+            malformed += 1;
+            continue;
+        };
+        match record {
+            ToolboxHistoryRecord::Session { id, started_at } => {
+                if session_indexes.contains_key(&id) {
+                    continue;
+                }
+                session_indexes.insert(id.clone(), history.sessions.len());
+                history.sessions.push(ToolboxSession {
+                    id,
+                    started_at,
+                    entries: Vec::new(),
+                });
+            }
+            ToolboxHistoryRecord::Entry { session_id, entry } => {
+                if let Some(index) = session_indexes.get(&session_id).copied() {
+                    history.sessions[index].entries.push(entry);
+                }
+            }
+        }
+    }
+    if malformed > 0 {
+        tracing::warn!("ignored {malformed} malformed Toolbox history record(s)");
+    }
+    history
+}
+
+fn load_toolbox_history() -> ToolboxHistory {
+    let _guard = TOOLBOX_HISTORY_LOCK.lock();
+    toolbox_history_path()
+        .map(|path| load_toolbox_history_at(&path))
+        .unwrap_or_default()
+}
+
+fn append_toolbox_history_record(record: &ToolboxHistoryRecord) -> Result<(), String> {
+    let _guard = TOOLBOX_HISTORY_LOCK.lock();
+    let path = toolbox_history_path().ok_or("CEC Support has no Toolbox history path")?;
+    append_toolbox_history_record_at(&path, record)
+}
+
+fn toolbox_output_for_history(output: &str) -> String {
+    if output.len() <= MAX_TOOLBOX_ENTRY_CHARS {
+        return output.to_string();
+    }
+    let start = output.len().saturating_sub(MAX_TOOLBOX_ENTRY_CHARS);
+    let start = output
+        .char_indices()
+        .find_map(|(index, _)| (index >= start).then_some(index))
+        .unwrap_or(0);
+    format!(
+        "... earlier output trimmed from stored Toolbox history ...\n{}",
+        &output[start..]
+    )
+}
+
+fn toolbox_action_persists_success(action: &str) -> bool {
+    matches!(action, "sfc" | "dism" | "chkdsk" | "flush_dns")
+}
+
+fn render_toolbox_log(history: &ToolboxHistory, only_session: Option<&str>) -> String {
+    let mut log = String::from("CEC SUPPORT TOOLBOX SERVICE LOG\n");
+    log.push_str("Generated: ");
+    log.push_str(&toolbox_now());
+    log.push_str("\n\n");
+    for session in history.sessions.iter().filter(|session| {
+        !session.entries.is_empty() && only_session.is_none_or(|id| id == session.id)
+    }) {
+        log.push_str(
+            "================================================================================\n",
+        );
+        log.push_str("TOOLBOX SESSION\n");
+        log.push_str(&format!("Session ID: {}\n", session.id));
+        log.push_str(&format!("Opened: {}\n", session.started_at));
+        log.push_str(
+            "================================================================================\n\n",
+        );
+        for entry in &session.entries {
+            log.push_str("--------------------------------------------------------------------------------\n");
+            log.push_str(&format!("COMMAND: {}\n", entry.label));
+            log.push_str(&format!("Action: {}\n", entry.action));
+            log.push_str(&format!("Started: {}\n", entry.started_at));
+            log.push_str(&format!("Completed: {}\n", entry.completed_at));
+            log.push_str(&format!(
+                "Status: {}\n",
+                match entry.status {
+                    ToolboxEntryStatus::Complete => "COMPLETE",
+                    ToolboxEntryStatus::Failed => "FAILED",
+                }
+            ));
+            log.push_str("--------------------------------------------------------------------------------\n");
+            log.push_str(entry.output.trim());
+            log.push_str("\n\n");
+        }
+        log.push_str("END TOOLBOX SESSION\n\n");
+    }
+    log
+}
+
 fn toolbox_spec(action: &str) -> Option<ToolboxSpec> {
     Some(match action {
         "sfc" => ToolboxSpec {
@@ -305,6 +496,10 @@ fn toolbox_spec(action: &str) -> Option<ToolboxSpec> {
         "flush_dns" => ToolboxSpec {
             label: "Flush DNS cache",
             kind: ToolboxKind::AdminTerminal("ipconfig.exe /flushdns"),
+        },
+        "disk_cleanup" => ToolboxSpec {
+            label: "Disk Cleanup",
+            kind: ToolboxKind::WindowsProgram("cleanmgr.exe", &[]),
         },
         "event_viewer" => ToolboxSpec {
             label: "Event Viewer",
@@ -362,6 +557,10 @@ fn toolbox_spec(action: &str) -> Option<ToolboxSpec> {
             label: "Resource Monitor",
             kind: ToolboxKind::WindowsProgram("resmon.exe", &[]),
         },
+        "reliability_monitor" => ToolboxSpec {
+            label: "Reliability Monitor",
+            kind: ToolboxKind::WindowsProgram("perfmon.exe", &["/rel"]),
+        },
         _ => return None,
     })
 }
@@ -391,6 +590,63 @@ async fn open_toolbox(app: tauri::AppHandle) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+/// Start one persisted Toolbox visit. Opening windows inside the Toolbox is
+/// deliberately not recorded; this marker becomes visible/exportable only
+/// after a repair or a meaningful failure appends an entry to it.
+#[tauri::command]
+fn toolbox_session_start() -> Result<Value, String> {
+    let sequence = TOOLBOX_SESSION_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let id = format!(
+        "session-{}-{}-{sequence}",
+        chrono::Local::now().timestamp_millis(),
+        std::process::id()
+    );
+    let started_at = toolbox_now();
+    append_toolbox_history_record(&ToolboxHistoryRecord::Session {
+        id: id.clone(),
+        started_at,
+    })?;
+    let mut sessions = load_toolbox_history().sessions;
+    sessions.reverse();
+    Ok(json!({ "currentSessionId": id, "sessions": sessions }))
+}
+
+/// Export one persisted Toolbox session, or every non-empty session, as a
+/// plain service log in the user's Downloads folder. The file has explicit
+/// session/command/status markers so it remains useful outside this UI.
+#[tauri::command]
+fn toolbox_log_download(session_id: Option<String>) -> Result<Value, String> {
+    if let Some(id) = session_id.as_deref() {
+        if !toolbox_session_id_valid(id) {
+            return Err("invalid Toolbox session id".into());
+        }
+    }
+    let history = load_toolbox_history();
+    let matching = history.sessions.iter().any(|session| {
+        !session.entries.is_empty()
+            && session_id
+                .as_deref()
+                .is_none_or(|id| id == session.id.as_str())
+    });
+    if !matching {
+        return Err("that Toolbox log has no stored command output".into());
+    }
+    let contents = render_toolbox_log(&history, session_id.as_deref());
+    let directory = dirs::download_dir()
+        .or_else(|| {
+            toolbox_history_path().and_then(|path| path.parent().map(|p| p.join("exports")))
+        })
+        .ok_or("CEC Support could not resolve a log download folder")?;
+    std::fs::create_dir_all(&directory)
+        .map_err(|e| format!("creating the Toolbox log download folder: {e}"))?;
+    let stamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
+    let scope = session_id.as_deref().unwrap_or("all-sessions");
+    let filename = format!("cec-support-toolbox-{scope}-{stamp}.log");
+    let path = directory.join(&filename);
+    std::fs::write(&path, contents).map_err(|e| format!("writing the Toolbox service log: {e}"))?;
+    Ok(json!({ "filename": filename, "path": path }))
+}
+
 /// Run one fixed Toolbox action. No arbitrary command crosses the webview
 /// boundary; administrator repairs use AMST's normal attached terminal route.
 #[tauri::command]
@@ -398,12 +654,64 @@ async fn toolbox_run(
     app: tauri::AppHandle,
     action: String,
     run_id: String,
+    session_id: String,
 ) -> Result<Value, String> {
     let spec = toolbox_spec(&action).ok_or_else(|| format!("unknown Toolbox action: {action}"))?;
     if !toolbox_run_id_valid(&run_id) {
         return Err("invalid Toolbox run id".into());
     }
-    toolbox_run_spec(app, spec, &run_id).await
+    if !toolbox_session_id_valid(&session_id)
+        || !load_toolbox_history()
+            .sessions
+            .iter()
+            .any(|session| session.id == session_id)
+    {
+        return Err("unknown Toolbox session".into());
+    }
+
+    let started_at = toolbox_now();
+    let result = toolbox_run_spec(app, spec, &run_id).await;
+    let persistent = toolbox_action_persists_success(&action) || result.is_err();
+    if persistent {
+        let (status, output) = match &result {
+            Ok(value) => (
+                ToolboxEntryStatus::Complete,
+                value
+                    .get("output")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Toolbox task completed."),
+            ),
+            Err(error) => (ToolboxEntryStatus::Failed, error.as_str()),
+        };
+        let record = ToolboxHistoryRecord::Entry {
+            session_id,
+            entry: ToolboxEntry {
+                id: run_id.clone(),
+                action: action.clone(),
+                label: spec.label.to_string(),
+                started_at,
+                completed_at: toolbox_now(),
+                status,
+                output: toolbox_output_for_history(output),
+            },
+        };
+        if let Err(history_error) = append_toolbox_history_record(&record) {
+            return Err(match result {
+                Ok(_) => format!(
+                    "{} completed, but CEC Support could not store its service log: {history_error}",
+                    spec.label
+                ),
+                Err(error) => format!("{error}; additionally, its service log was not stored: {history_error}"),
+            });
+        }
+    }
+
+    result.map(|mut value| {
+        if let Some(object) = value.as_object_mut() {
+            object.insert("persistent".into(), Value::Bool(persistent));
+        }
+        value
+    })
 }
 
 #[cfg(windows)]
@@ -608,6 +916,14 @@ fn toolbox_run_id_valid(run_id: &str) -> bool {
         && run_id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
+fn toolbox_session_id_valid(session_id: &str) -> bool {
+    session_id.starts_with("session-")
+        && session_id.len() <= 96
+        && session_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
 }
 
 #[cfg(any(windows, test))]
@@ -2315,7 +2631,9 @@ fn run_gui() -> ExitCode {
             open_allmystuff_works,
             open_kvm_store,
             open_toolbox,
+            toolbox_session_start,
             toolbox_run,
+            toolbox_log_download,
             cec_pending,
             cec_approve,
             cec_deny,
@@ -3185,7 +3503,134 @@ mod tests {
                 ..
             })
         ));
+        assert_eq!(
+            toolbox_spec("disk_cleanup"),
+            Some(ToolboxSpec {
+                label: "Disk Cleanup",
+                kind: ToolboxKind::WindowsProgram("cleanmgr.exe", &[]),
+            })
+        );
+        assert_eq!(
+            toolbox_spec("reliability_monitor"),
+            Some(ToolboxSpec {
+                label: "Reliability Monitor",
+                kind: ToolboxKind::WindowsProgram("perfmon.exe", &["/rel"]),
+            })
+        );
         assert_eq!(toolbox_spec("powershell -Command whatever"), None);
+    }
+
+    #[test]
+    fn toolbox_activity_classification_keeps_window_opens_transient() {
+        for action in ["sfc", "dism", "chkdsk", "flush_dns"] {
+            assert!(toolbox_action_persists_success(action), "{action}");
+        }
+        for action in [
+            "disk_cleanup",
+            "reliability_monitor",
+            "event_viewer",
+            "device_manager",
+            "crucible_tests",
+        ] {
+            assert!(!toolbox_action_persists_success(action), "{action}");
+        }
+        assert!(toolbox_session_id_valid("session-1786123456789-42-1"));
+        assert!(!toolbox_session_id_valid("session-../../other"));
+    }
+
+    #[test]
+    fn toolbox_history_is_append_only_grouped_and_exportable() {
+        use std::io::Write as _;
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cec-toolbox-history-test-{}-{unique}",
+            std::process::id()
+        ));
+        let path = root.join("toolbox-history.jsonl");
+        append_toolbox_history_record_at(
+            &path,
+            &ToolboxHistoryRecord::Session {
+                id: "session-1".into(),
+                started_at: "2026-08-21T10:00:00-05:00".into(),
+            },
+        )
+        .unwrap();
+        append_toolbox_history_record_at(
+            &path,
+            &ToolboxHistoryRecord::Entry {
+                session_id: "session-1".into(),
+                entry: ToolboxEntry {
+                    id: "sfc-1".into(),
+                    action: "sfc".into(),
+                    label: "System File Checker".into(),
+                    started_at: "2026-08-21T10:01:00-05:00".into(),
+                    completed_at: "2026-08-21T10:02:00-05:00".into(),
+                    status: ToolboxEntryStatus::Complete,
+                    output: "Windows Resource Protection found no problems.".into(),
+                },
+            },
+        )
+        .unwrap();
+        append_toolbox_history_record_at(
+            &path,
+            &ToolboxHistoryRecord::Session {
+                id: "session-2".into(),
+                started_at: "2026-08-21T11:00:00-05:00".into(),
+            },
+        )
+        .unwrap();
+        append_toolbox_history_record_at(
+            &path,
+            &ToolboxHistoryRecord::Entry {
+                session_id: "session-2".into(),
+                entry: ToolboxEntry {
+                    id: "dns-1".into(),
+                    action: "flush_dns".into(),
+                    label: "Flush DNS cache".into(),
+                    started_at: "2026-08-21T11:01:00-05:00".into(),
+                    completed_at: "2026-08-21T11:01:05-05:00".into(),
+                    status: ToolboxEntryStatus::Failed,
+                    output: "The requested operation requires elevation.".into(),
+                },
+            },
+        )
+        .unwrap();
+        // A power loss can leave one partial JSONL record. Prior complete
+        // records still load and export instead of losing the whole history.
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        file.write_all(b"{\"record\":\"entry\"").unwrap();
+
+        let history = load_toolbox_history_at(&path);
+        assert_eq!(history.sessions.len(), 2);
+        assert_eq!(history.sessions[0].entries.len(), 1);
+        let log = render_toolbox_log(&history, Some("session-1"));
+        assert!(log.contains("CEC SUPPORT TOOLBOX SERVICE LOG"));
+        assert!(log.contains("TOOLBOX SESSION"));
+        assert!(log.contains("COMMAND: System File Checker"));
+        assert!(log.contains("Status: COMPLETE"));
+        assert!(log.contains("END TOOLBOX SESSION"));
+        assert!(!log.contains("Flush DNS cache"));
+        let all_log = render_toolbox_log(&history, None);
+        assert_eq!(all_log.matches("Session ID:").count(), 2);
+        assert!(all_log.contains("COMMAND: Flush DNS cache"));
+        assert!(all_log.contains("Status: FAILED"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn toolbox_stored_output_is_unicode_safe_and_bounded() {
+        let output = "🧰".repeat(MAX_TOOLBOX_ENTRY_CHARS);
+        let stored = toolbox_output_for_history(&output);
+        assert!(stored.starts_with("... earlier output trimmed"));
+        assert!(stored.ends_with('🧰'));
+        assert!(stored.len() <= MAX_TOOLBOX_ENTRY_CHARS + 80);
     }
 
     #[cfg(windows)]

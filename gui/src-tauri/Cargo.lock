@@ -743,6 +743,7 @@ dependencies = [
  "cec-support-service",
  "cec-support-updater",
  "cec-support-wifi",
+ "chrono",
  "dirs 5.0.1",
  "parking_lot",
  "reqwest 0.12.28",
@@ -764,7 +765,7 @@ dependencies = [
 
 [[package]]
 name = "cec-support-service"
-version = "0.2.56"
+version = "0.2.57"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
@@ -775,7 +776,7 @@ dependencies = [
 
 [[package]]
 name = "cec-support-updater"
-version = "0.2.56"
+version = "0.2.57"
 dependencies = [
  "dirs 5.0.1",
  "flate2",
@@ -794,7 +795,7 @@ dependencies = [
 
 [[package]]
 name = "cec-support-wifi"
-version = "0.2.56"
+version = "0.2.57"
 dependencies = [
  "serde",
 ]
