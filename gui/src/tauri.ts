@@ -80,6 +80,7 @@ export interface ToolboxResult {
   ok: boolean;
   label: string;
   output: string;
+  persistent: boolean;
 }
 
 export interface ToolboxProgress {
@@ -87,6 +88,34 @@ export interface ToolboxProgress {
   stream: "stdout" | "stderr";
   chunk: string;
 }
+
+export interface ToolboxHistoryEntry {
+  id: string;
+  action: ToolboxAction;
+  label: string;
+  startedAt: string;
+  completedAt: string;
+  status: "complete" | "failed";
+  output: string;
+}
+
+export interface ToolboxSession {
+  id: string;
+  startedAt: string;
+  entries: ToolboxHistoryEntry[];
+}
+
+export interface ToolboxSessionStart {
+  currentSessionId: string;
+  sessions: ToolboxSession[];
+}
+
+export interface ToolboxLogDownload {
+  filename: string;
+  path: string;
+}
+
+let previewToolboxSessions: ToolboxSession[] = [];
 
 /** Open the dedicated Toolbox window. In browser preview mode, open the same
  * query-routed Svelte surface in a normal popup. */
@@ -100,12 +129,50 @@ export async function openToolbox(): Promise<void> {
 
 /** Run one backend-allowlisted maintenance action. Errors deliberately reach
  * the Toolbox so a failed repair never looks like success. */
-export async function runToolboxAction(action: ToolboxAction, runId: string): Promise<ToolboxResult> {
+export async function startToolboxSession(): Promise<ToolboxSessionStart> {
+  if (!isTauri()) {
+    const startedAt = new Date().toISOString();
+    const currentSessionId = `session-${Date.now()}-preview-1`;
+    previewToolboxSessions = [
+      { id: currentSessionId, startedAt, entries: [] },
+      ...previewToolboxSessions,
+    ];
+    return { currentSessionId, sessions: previewToolboxSessions };
+  }
+  return rawInvoke<ToolboxSessionStart>("toolbox_session_start");
+}
+
+/** Run one allowlisted action inside the current Toolbox visit. The backend
+ * persists repair output and meaningful failures; successful window launches
+ * explicitly return `persistent: false` so their UI cards can fade away. */
+export async function runToolboxAction(
+  action: ToolboxAction,
+  runId: string,
+  sessionId: string,
+): Promise<ToolboxResult> {
   if (!isTauri()) {
     await new Promise((resolve) => setTimeout(resolve, 1200));
-    return { ok: true, label: action, output: "Preview mode: action not run." };
+    return {
+      ok: true,
+      label: action,
+      output: "Preview mode: action not run.",
+      persistent: ["sfc", "dism", "chkdsk", "flush_dns"].includes(action),
+    };
   }
-  return rawInvoke<ToolboxResult>("toolbox_run", { action, runId });
+  return rawInvoke<ToolboxResult>("toolbox_run", { action, runId, sessionId });
+}
+
+export async function downloadToolboxLog(sessionId?: string): Promise<ToolboxLogDownload> {
+  if (!isTauri()) {
+    const scope = sessionId ?? "all-sessions";
+    return {
+      filename: `cec-support-toolbox-${scope}-preview.log`,
+      path: `Downloads/cec-support-toolbox-${scope}-preview.log`,
+    };
+  }
+  return rawInvoke<ToolboxLogDownload>("toolbox_log_download", {
+    sessionId: sessionId ?? null,
+  });
 }
 
 /** Stream stdout/stderr from independently running Toolbox repairs. */

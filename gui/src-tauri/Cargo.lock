@@ -743,6 +743,7 @@ dependencies = [
  "cec-support-service",
  "cec-support-updater",
  "cec-support-wifi",
+ "chrono",
  "dirs 5.0.1",
  "parking_lot",
  "reqwest 0.12.28",

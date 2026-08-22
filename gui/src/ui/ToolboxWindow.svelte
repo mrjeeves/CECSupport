@@ -1,9 +1,12 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import {
+    downloadToolboxLog,
     onToolboxProgress,
     runToolboxAction,
+    startToolboxSession,
     type ToolboxAction,
+    type ToolboxSession,
     type ToolboxProgress,
   } from "../tauri";
 
@@ -12,6 +15,7 @@
     title: string;
     description: string;
     cta?: "Run" | "Open";
+    persistent?: boolean;
   };
 
   type Job = {
@@ -21,13 +25,21 @@
     output: string;
     started: number;
     status: "running" | "complete" | "failed";
+    persistent: boolean;
+  };
+
+  type ActivitySession = {
+    id: string;
+    startedAt: string;
+    jobs: Job[];
+    current: boolean;
   };
 
   const repairs: Tool[] = [
-    { id: "sfc", title: "System File Checker", description: "Scan Windows system files and replace damaged copies." },
-    { id: "dism", title: "Repair Windows image", description: "Check and repair the component store SFC relies on." },
-    { id: "chkdsk", title: "Scan system drive", description: "Run the online, non-rebooting disk check." },
-    { id: "flush_dns", title: "Flush DNS cache", description: "Clear stale local name-resolution entries." },
+    { id: "sfc", title: "System File Checker", description: "Scan Windows system files and replace damaged copies.", persistent: true },
+    { id: "dism", title: "Repair Windows image", description: "Check and repair the component store SFC relies on.", persistent: true },
+    { id: "chkdsk", title: "Scan system drive", description: "Run the online, non-rebooting disk check.", persistent: true },
+    { id: "flush_dns", title: "Flush DNS cache", description: "Clear stale local name-resolution entries.", persistent: true },
     { id: "disk_cleanup", title: "Disk Cleanup", description: "Open Windows Disk Cleanup to safely review removable files.", cta: "Open" },
   ];
 
@@ -53,14 +65,54 @@
   ];
 
   let advanced = $state(false);
-  let jobs = $state<Job[]>([]);
+  let sessions = $state<ActivitySession[]>([]);
+  let currentSessionId = $state("");
+  let sessionError = $state("");
+  let downloadNotice = $state("");
+  let downloading = $state<string | null>(null);
   let now = $state(Date.now());
   let runSequence = 0;
   let progressReady: Promise<void> = Promise.resolve();
+  let sessionReady: Promise<void> = Promise.resolve();
+  const fadeTimers = new Map<string, number>();
   const MAX_PROGRESS_CHARS = 24_000;
+  const TRANSIENT_VISIBLE_MS = 6_000;
+
+  function allJobs(): Job[] {
+    return sessions.flatMap((session) => session.jobs);
+  }
+
+  function visibleSessions(): ActivitySession[] {
+    return sessions.filter((session) => session.jobs.length > 0);
+  }
+
+  function storedJobs(session: ActivitySession): Job[] {
+    return session.jobs.filter((job) => job.persistent && job.status !== "running");
+  }
+
+  function hasStoredOutput(): boolean {
+    return sessions.some((session) => storedJobs(session).length > 0);
+  }
+
+  function historySession(session: ToolboxSession, currentId: string): ActivitySession {
+    return {
+      id: session.id,
+      startedAt: session.startedAt,
+      current: session.id === currentId,
+      jobs: [...session.entries].reverse().map((entry) => ({
+        id: entry.id,
+        action: entry.action,
+        title: entry.label,
+        output: entry.output,
+        started: Date.parse(entry.startedAt) || Date.now(),
+        status: entry.status,
+        persistent: true,
+      })),
+    };
+  }
 
   function running(action: ToolboxAction): boolean {
-    return jobs.some((job) => job.action === action && job.status === "running");
+    return allJobs().some((job) => job.action === action && job.status === "running");
   }
 
   function appendOutput(current: string, chunk: string): string {
@@ -70,7 +122,26 @@
   }
 
   function updateJob(id: string, update: (job: Job) => Job): void {
-    jobs = jobs.map((job) => (job.id === id ? update(job) : job));
+    sessions = sessions.map((session) => ({
+      ...session,
+      jobs: session.jobs.map((job) => (job.id === id ? update(job) : job)),
+    }));
+  }
+
+  function removeJob(id: string): void {
+    sessions = sessions.map((session) => ({
+      ...session,
+      jobs: session.jobs.filter((job) => job.id !== id),
+    }));
+    const timer = fadeTimers.get(id);
+    if (timer !== undefined) window.clearTimeout(timer);
+    fadeTimers.delete(id);
+  }
+
+  function fadeTransientJob(id: string): void {
+    const prior = fadeTimers.get(id);
+    if (prior !== undefined) window.clearTimeout(prior);
+    fadeTimers.set(id, window.setTimeout(() => removeJob(id), TRANSIENT_VISIBLE_MS));
   }
 
   function followOutput(node: HTMLElement, _value: string) {
@@ -101,9 +172,37 @@
     return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
   }
 
+  function sessionTitle(session: ActivitySession): string {
+    if (session.current) return "This session";
+    return "Earlier session";
+  }
+
+  async function downloadLog(sessionId?: string): Promise<void> {
+    const key = sessionId ?? "all";
+    if (downloading) return;
+    downloading = key;
+    downloadNotice = "";
+    try {
+      const result = await downloadToolboxLog(sessionId);
+      downloadNotice = `Saved ${result.filename} to ${result.path}`;
+    } catch (error) {
+      downloadNotice = error instanceof Error ? error.message : String(error);
+    } finally {
+      downloading = null;
+    }
+  }
+
   onMount(() => {
     let disposed = false;
     let stopProgress: (() => void) | null = null;
+    sessionReady = startToolboxSession()
+      .then((history) => {
+        currentSessionId = history.currentSessionId;
+        sessions = history.sessions.map((session) => historySession(session, currentSessionId));
+      })
+      .catch((error) => {
+        sessionError = error instanceof Error ? error.message : String(error);
+      });
     progressReady = onToolboxProgress(receiveProgress)
       .then((stop) => {
         if (disposed) stop();
@@ -114,38 +213,51 @@
     return () => {
       disposed = true;
       stopProgress?.();
+      for (const timer of fadeTimers.values()) window.clearTimeout(timer);
+      fadeTimers.clear();
       window.clearInterval(ticker);
     };
   });
 
   async function run(tool: Tool): Promise<void> {
     if (running(tool.id)) return;
+    await sessionReady;
+    if (!currentSessionId) return;
     const runId = `${tool.id}-${Date.now()}-${++runSequence}`;
-    jobs = [
-      {
-        id: runId,
-        action: tool.id,
-        title: tool.title,
-        output: "",
-        started: Date.now(),
-        status: "running",
-      },
-      ...jobs,
-    ];
+    sessions = sessions.map((session) => session.id === currentSessionId
+      ? {
+          ...session,
+          jobs: [
+            {
+              id: runId,
+              action: tool.id,
+              title: tool.title,
+              output: "",
+              started: Date.now(),
+              status: "running",
+              persistent: tool.persistent ?? false,
+            },
+            ...session.jobs,
+          ],
+        }
+      : session);
     await progressReady;
     try {
-      const result = await runToolboxAction(tool.id, runId);
+      const result = await runToolboxAction(tool.id, runId, currentSessionId);
       updateJob(runId, (job) => ({
         ...job,
         status: "complete",
         output: job.output || result.output || `${tool.title} completed.`,
+        persistent: result.persistent,
       }));
+      if (!result.persistent) fadeTransientJob(runId);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       updateJob(runId, (job) => ({
         ...job,
         status: "failed",
         output: job.output || detail,
+        persistent: true,
       }));
     }
   }
@@ -164,7 +276,7 @@
     </span>
   </header>
 
-  <div class="toolbox-workspace" class:has-progress={jobs.length > 0}>
+  <div class="toolbox-workspace" class:has-progress={visibleSessions().length > 0 || !!sessionError}>
     <main>
       <section aria-labelledby="repair-title">
         <div class="section-heading">
@@ -236,30 +348,67 @@
       </div>
     </main>
 
-    {#if jobs.length}
+    {#if visibleSessions().length || sessionError}
       <aside class="progress-panel" aria-label="Toolbox activity">
         <div class="progress-heading">
           <span>
             <h2>Activity</h2>
-            <small>Live tool output</small>
+            <small>{downloadNotice || "Toolbox history and live output"}</small>
           </span>
-          <span class="job-count">{jobs.length}</span>
+          <span class="progress-actions">
+            {#if hasStoredOutput()}
+              <button
+                class="download-button"
+                disabled={downloading !== null}
+                onclick={() => void downloadLog()}
+              >{downloading === "all" ? "Saving…" : "Download all"}</button>
+            {/if}
+            <span class="job-count">{allJobs().length}</span>
+          </span>
         </div>
         <div class="progress-list" aria-label="Toolbox task progress" aria-live="polite">
-          {#each jobs as job (job.id)}
-            <article class="status" class:running={job.status === "running"} class:failed={job.status === "failed"}>
+          {#if sessionError}
+            <article class="status failed">
               <span class="status-dot" aria-hidden="true"></span>
               <div class="status-body">
-                <div class="status-head">
-                  <strong>{job.title}</strong>
-                  <span>{job.status === "running" ? `Running · ${elapsed(job)}` : job.status === "failed" ? "Failed" : "Complete"}</span>
-                </div>
-                <pre use:followOutput={`${job.status}:${job.output}`}>{job.output || `${job.title} is starting…`}</pre>
+                <div class="status-head"><strong>Toolbox history unavailable</strong></div>
+                <pre>{sessionError}</pre>
               </div>
-              {#if job.status !== "running"}
-                <button aria-label="Dismiss {job.title} progress" onclick={() => (jobs = jobs.filter((item) => item.id !== job.id))}>&times;</button>
-              {/if}
             </article>
+          {/if}
+          {#each visibleSessions() as session (session.id)}
+            <section class="activity-session" aria-label={sessionTitle(session)}>
+              <div class="session-heading">
+                <span>
+                  <strong>{sessionTitle(session)}</strong>
+                  <small>{session.startedAt ? new Date(session.startedAt).toLocaleString() : ""}</small>
+                </span>
+                {#if storedJobs(session).length}
+                  <button
+                    class="download-button"
+                    disabled={downloading !== null}
+                    onclick={() => void downloadLog(session.id)}
+                  >{downloading === session.id ? "Saving…" : "Download .log"}</button>
+                {/if}
+              </div>
+              {#each session.jobs as job (job.id)}
+                <article
+                  class="status"
+                  class:running={job.status === "running"}
+                  class:failed={job.status === "failed"}
+                  class:transient-complete={!job.persistent && job.status !== "running"}
+                >
+                  <span class="status-dot" aria-hidden="true"></span>
+                  <div class="status-body">
+                    <div class="status-head">
+                      <strong>{job.title}</strong>
+                      <span>{job.status === "running" ? `Running · ${elapsed(job)}` : job.status === "failed" ? "Failed" : "Complete"}</span>
+                    </div>
+                    <pre use:followOutput={`${job.status}:${job.output}`}>{job.output || `${job.title} is starting…`}</pre>
+                  </div>
+                </article>
+              {/each}
+            </section>
           {/each}
         </div>
       </aside>
@@ -425,8 +574,21 @@
     padding: 0.05rem 0.1rem 0.62rem;
     border-bottom: 1px solid var(--line);
   }
-  .progress-heading > span:first-child { display: grid; gap: 0.12rem; }
-  .progress-heading small { color: var(--ink-faint); font-size: 0.7rem; }
+  .progress-heading > span:first-child { min-width: 0; display: grid; gap: 0.12rem; }
+  .progress-heading small { color: var(--ink-faint); font-size: 0.7rem; overflow-wrap: anywhere; }
+  .progress-actions { display: flex; align-items: center; gap: 0.42rem; flex-shrink: 0; }
+  .download-button {
+    padding: 0.38rem 0.52rem;
+    border: 1px solid var(--line);
+    border-radius: 0.5rem;
+    color: var(--accent-ink);
+    background: var(--surface);
+    font: inherit;
+    font-size: 0.66rem;
+    font-weight: 750;
+  }
+  .download-button:hover:not(:disabled) { border-color: var(--line-strong); background: var(--surface-2); }
+  .download-button:disabled { color: var(--ink-faint); cursor: default; opacity: 0.62; }
   .job-count {
     min-width: 1.6rem;
     height: 1.6rem;
@@ -450,9 +612,25 @@
     padding: 0.05rem 0.2rem 0.4rem 0.05rem;
     scrollbar-gutter: stable;
   }
+  .activity-session {
+    padding: 0.12rem 0 0.7rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .activity-session:last-child { border-bottom: 0; }
+  .session-heading {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.7rem;
+    padding: 0 0.1rem 0.08rem;
+  }
+  .session-heading > span { min-width: 0; display: grid; gap: 0.08rem; }
+  .session-heading strong { font-size: 0.76rem; }
+  .session-heading small { color: var(--ink-faint); font-size: 0.66rem; }
   .status {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: auto minmax(0, 1fr);
     align-items: start;
     gap: 0.7rem;
     padding: 0.68rem 0.8rem;
@@ -484,9 +662,13 @@
     color: var(--ink-soft);
     scrollbar-gutter: stable;
   }
-  .status button { border: 0; background: transparent; color: var(--ink-faint); font-size: 1.2rem; padding: 0 0.2rem; }
+  .transient-complete { animation: transient-fade 6s ease forwards; }
   @keyframes panel-in { from { opacity: 0; transform: translateX(1rem); } }
   @keyframes progress-pulse { 50% { opacity: 0.38; transform: scale(0.78); } }
+  @keyframes transient-fade {
+    0%, 62% { opacity: 1; transform: translateX(0); }
+    100% { opacity: 0; transform: translateX(0.5rem); }
+  }
   @media (max-width: 1100px) {
     .toolbox-workspace.has-progress .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
