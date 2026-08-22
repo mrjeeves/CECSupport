@@ -59,6 +59,7 @@ export type ToolboxAction =
   | "dism"
   | "chkdsk"
   | "flush_dns"
+  | "disk_cleanup"
   | "event_viewer"
   | "device_manager"
   | "services"
@@ -72,7 +73,8 @@ export type ToolboxAction =
   | "computer_management"
   | "system_configuration"
   | "windows_features"
-  | "resource_monitor";
+  | "resource_monitor"
+  | "reliability_monitor";
 
 export interface ToolboxResult {
   ok: boolean;

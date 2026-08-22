@@ -306,6 +306,10 @@ fn toolbox_spec(action: &str) -> Option<ToolboxSpec> {
             label: "Flush DNS cache",
             kind: ToolboxKind::AdminTerminal("ipconfig.exe /flushdns"),
         },
+        "disk_cleanup" => ToolboxSpec {
+            label: "Disk Cleanup",
+            kind: ToolboxKind::WindowsProgram("cleanmgr.exe", &[]),
+        },
         "event_viewer" => ToolboxSpec {
             label: "Event Viewer",
             kind: ToolboxKind::WindowsProgram("mmc.exe", &["eventvwr.msc"]),
@@ -361,6 +365,10 @@ fn toolbox_spec(action: &str) -> Option<ToolboxSpec> {
         "resource_monitor" => ToolboxSpec {
             label: "Resource Monitor",
             kind: ToolboxKind::WindowsProgram("resmon.exe", &[]),
+        },
+        "reliability_monitor" => ToolboxSpec {
+            label: "Reliability Monitor",
+            kind: ToolboxKind::WindowsProgram("perfmon.exe", &["/rel"]),
         },
         _ => return None,
     })
@@ -3185,6 +3193,20 @@ mod tests {
                 ..
             })
         ));
+        assert_eq!(
+            toolbox_spec("disk_cleanup"),
+            Some(ToolboxSpec {
+                label: "Disk Cleanup",
+                kind: ToolboxKind::WindowsProgram("cleanmgr.exe", &[]),
+            })
+        );
+        assert_eq!(
+            toolbox_spec("reliability_monitor"),
+            Some(ToolboxSpec {
+                label: "Reliability Monitor",
+                kind: ToolboxKind::WindowsProgram("perfmon.exe", &["/rel"]),
+            })
+        );
         assert_eq!(toolbox_spec("powershell -Command whatever"), None);
     }
 

@@ -11,6 +11,7 @@
     id: ToolboxAction;
     title: string;
     description: string;
+    cta?: "Run" | "Open";
   };
 
   type Job = {
@@ -27,6 +28,7 @@
     { id: "dism", title: "Repair Windows image", description: "Check and repair the component store SFC relies on." },
     { id: "chkdsk", title: "Scan system drive", description: "Run the online, non-rebooting disk check." },
     { id: "flush_dns", title: "Flush DNS cache", description: "Clear stale local name-resolution entries." },
+    { id: "disk_cleanup", title: "Disk Cleanup", description: "Open Windows Disk Cleanup to safely review removable files.", cta: "Open" },
   ];
 
   const consoles: Tool[] = [
@@ -47,6 +49,7 @@
     { id: "system_configuration", title: "System Configuration", description: "Change boot and service troubleshooting options." },
     { id: "windows_features", title: "Windows Features", description: "Turn optional Windows components on or off." },
     { id: "resource_monitor", title: "Resource Monitor", description: "Inspect detailed CPU, memory, disk, and network activity." },
+    { id: "reliability_monitor", title: "Reliability Monitor", description: "Review the stability timeline, failures, and application crashes." },
   ];
 
   let advanced = $state(false);
@@ -68,6 +71,18 @@
 
   function updateJob(id: string, update: (job: Job) => Job): void {
     jobs = jobs.map((job) => (job.id === id ? update(job) : job));
+  }
+
+  function followOutput(node: HTMLElement, _value: string) {
+    const scrollToEnd = () => {
+      node.scrollTop = node.scrollHeight;
+    };
+    requestAnimationFrame(scrollToEnd);
+    return {
+      update(_next: string) {
+        requestAnimationFrame(scrollToEnd);
+      },
+    };
   }
 
   function receiveProgress(progress: ToolboxProgress): void {
@@ -149,55 +164,36 @@
     </span>
   </header>
 
-  <main>
-    <section aria-labelledby="repair-title">
-      <div class="section-heading">
-        <h2 id="repair-title">Check & repair</h2>
-        <span>Runs through the attached administrator terminal</span>
-      </div>
-      <div class="grid">
-        {#each repairs as tool (tool.id)}
-          <button class="tool repair" disabled={running(tool.id)} onclick={() => void run(tool)}>
-            <span class="tool-icon" aria-hidden="true">&#10003;</span>
-            <span class="tool-copy">
-              <strong>{tool.title}</strong>
-              <small>{tool.description}</small>
-            </span>
-            <span class="run-label">{running(tool.id) ? "Running…" : "Run"}</span>
-          </button>
-        {/each}
-      </div>
-    </section>
-
-    <section aria-labelledby="console-title">
-      <div class="section-heading">
-        <h2 id="console-title">Windows tools</h2>
-        <span>Open familiar diagnostics directly</span>
-      </div>
-      <div class="grid">
-        {#each consoles as tool (tool.id)}
-          <button class="tool" disabled={running(tool.id)} onclick={() => void run(tool)}>
-            <span class="tool-icon" aria-hidden="true">&#8599;</span>
-            <span class="tool-copy">
-              <strong>{tool.title}</strong>
-              <small>{tool.description}</small>
-            </span>
-            <span class="run-label">Open</span>
-          </button>
-        {/each}
-      </div>
-    </section>
-
-    {#if advanced}
-      <section class="advanced" aria-labelledby="advanced-title">
+  <div class="toolbox-workspace" class:has-progress={jobs.length > 0}>
+    <main>
+      <section aria-labelledby="repair-title">
         <div class="section-heading">
-          <h2 id="advanced-title">Advanced Windows tools</h2>
-          <span>These tools can change system configuration</span>
+          <h2 id="repair-title">Check & repair</h2>
+          <span>Safe checks and Windows cleanup tools</span>
         </div>
         <div class="grid">
-          {#each advancedTools as tool (tool.id)}
-            <button class="tool advanced-tool" disabled={running(tool.id)} onclick={() => void run(tool)}>
-              <span class="tool-icon" aria-hidden="true">!</span>
+          {#each repairs as tool (tool.id)}
+            <button class="tool repair" disabled={running(tool.id)} onclick={() => void run(tool)}>
+              <span class="tool-icon" aria-hidden="true">&#10003;</span>
+              <span class="tool-copy">
+                <strong>{tool.title}</strong>
+                <small>{tool.description}</small>
+              </span>
+              <span class="run-label">{running(tool.id) ? "Running…" : tool.cta ?? "Run"}</span>
+            </button>
+          {/each}
+        </div>
+      </section>
+
+      <section aria-labelledby="console-title">
+        <div class="section-heading">
+          <h2 id="console-title">Windows tools</h2>
+          <span>Open familiar diagnostics directly</span>
+        </div>
+        <div class="grid">
+          {#each consoles as tool (tool.id)}
+            <button class="tool" disabled={running(tool.id)} onclick={() => void run(tool)}>
+              <span class="tool-icon" aria-hidden="true">&#8599;</span>
               <span class="tool-copy">
                 <strong>{tool.title}</strong>
                 <small>{tool.description}</small>
@@ -207,38 +203,68 @@
           {/each}
         </div>
       </section>
-    {/if}
+
+      {#if advanced}
+        <section class="advanced" aria-labelledby="advanced-title">
+          <div class="section-heading">
+            <h2 id="advanced-title">Advanced Windows tools</h2>
+            <span>These tools can change system configuration</span>
+          </div>
+          <div class="grid">
+            {#each advancedTools as tool (tool.id)}
+              <button class="tool advanced-tool" disabled={running(tool.id)} onclick={() => void run(tool)}>
+                <span class="tool-icon" aria-hidden="true">!</span>
+                <span class="tool-copy">
+                  <strong>{tool.title}</strong>
+                  <small>{tool.description}</small>
+                </span>
+                <span class="run-label">Open</span>
+              </button>
+            {/each}
+          </div>
+        </section>
+      {/if}
+
+      <div class="mode-row">
+        <div class="mode-group" role="group" aria-label="Toolbox mode">
+          <button
+            class:active={advanced}
+            aria-pressed={advanced}
+            onclick={() => (advanced = !advanced)}
+          >{advanced ? "Hide Advanced" : "Show Advanced"}</button>
+        </div>
+      </div>
+    </main>
 
     {#if jobs.length}
-      <div class="progress-list" aria-label="Toolbox task progress" aria-live="polite">
-        {#each jobs as job (job.id)}
-          <article class="status" class:running={job.status === "running"} class:failed={job.status === "failed"}>
-            <span class="status-dot" aria-hidden="true"></span>
-            <div class="status-body">
-              <div class="status-head">
-                <strong>{job.title}</strong>
-                <span>{job.status === "running" ? `Running · ${elapsed(job)}` : job.status === "failed" ? "Failed" : "Complete"}</span>
+      <aside class="progress-panel" aria-label="Toolbox activity">
+        <div class="progress-heading">
+          <span>
+            <h2>Activity</h2>
+            <small>Live tool output</small>
+          </span>
+          <span class="job-count">{jobs.length}</span>
+        </div>
+        <div class="progress-list" aria-label="Toolbox task progress" aria-live="polite">
+          {#each jobs as job (job.id)}
+            <article class="status" class:running={job.status === "running"} class:failed={job.status === "failed"}>
+              <span class="status-dot" aria-hidden="true"></span>
+              <div class="status-body">
+                <div class="status-head">
+                  <strong>{job.title}</strong>
+                  <span>{job.status === "running" ? `Running · ${elapsed(job)}` : job.status === "failed" ? "Failed" : "Complete"}</span>
+                </div>
+                <pre use:followOutput={`${job.status}:${job.output}`}>{job.output || `${job.title} is starting…`}</pre>
               </div>
-              <pre>{job.output || `${job.title} is starting…`}</pre>
-            </div>
-            {#if job.status !== "running"}
-              <button aria-label="Dismiss {job.title} progress" onclick={() => (jobs = jobs.filter((item) => item.id !== job.id))}>&times;</button>
-            {/if}
-          </article>
-        {/each}
-      </div>
+              {#if job.status !== "running"}
+                <button aria-label="Dismiss {job.title} progress" onclick={() => (jobs = jobs.filter((item) => item.id !== job.id))}>&times;</button>
+              {/if}
+            </article>
+          {/each}
+        </div>
+      </aside>
     {/if}
-
-    <div class="mode-row">
-      <div class="mode-group" role="group" aria-label="Toolbox mode">
-        <button
-          class:active={advanced}
-          aria-pressed={advanced}
-          onclick={() => (advanced = !advanced)}
-        >{advanced ? "Hide Advanced" : "Show Advanced"}</button>
-      </div>
-    </div>
-  </main>
+  </div>
 </div>
 
 <style>
@@ -273,7 +299,19 @@
   .header-mark svg { width: 1.3rem; height: 1.3rem; }
   h1 { margin: 0; font-size: 1.15rem; }
   header p { margin: 0.1rem 0 0; color: var(--ink-soft); font-size: 0.78rem; }
+  .toolbox-workspace {
+    min-width: 0;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    overflow: hidden;
+    transition: grid-template-columns 160ms ease-out;
+  }
+  .toolbox-workspace.has-progress {
+    grid-template-columns: minmax(0, 1fr) clamp(20rem, 32vw, 25rem);
+  }
   main {
+    min-width: 0;
     width: min(100%, 76rem);
     height: 100%;
     box-sizing: border-box;
@@ -366,7 +404,52 @@
   .tool-copy strong { font-size: 0.84rem; }
   .tool-copy small { color: var(--ink-soft); line-height: 1.28; font-size: 0.68rem; }
   .run-label { color: var(--accent-ink); font-size: 0.7rem; font-weight: 700; }
-  .progress-list { display: grid; gap: 0.5rem; }
+  .progress-panel {
+    min-width: 0;
+    min-height: 0;
+    padding: 0.85rem;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 0.72rem;
+    overflow: hidden;
+    border-left: 1px solid var(--line);
+    background: color-mix(in oklch, var(--surface) 96%, var(--accent));
+    box-shadow: -0.8rem 0 2rem color-mix(in oklch, var(--ink) 8%, transparent);
+    animation: panel-in 160ms ease-out;
+  }
+  .progress-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.05rem 0.1rem 0.62rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .progress-heading > span:first-child { display: grid; gap: 0.12rem; }
+  .progress-heading small { color: var(--ink-faint); font-size: 0.7rem; }
+  .job-count {
+    min-width: 1.6rem;
+    height: 1.6rem;
+    padding: 0 0.35rem;
+    display: grid;
+    place-items: center;
+    box-sizing: border-box;
+    border-radius: 999px;
+    color: var(--accent-ink);
+    background: var(--accent-soft);
+    font-size: 0.7rem;
+    font-weight: 800;
+  }
+  .progress-list {
+    min-height: 0;
+    display: grid;
+    align-content: start;
+    gap: 0.58rem;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0.05rem 0.2rem 0.4rem 0.05rem;
+    scrollbar-gutter: stable;
+  }
   .status {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
@@ -385,11 +468,34 @@
   .status-body { min-width: 0; display: grid; gap: 0.3rem; }
   .status-head { display: flex; justify-content: space-between; gap: 0.8rem; font-size: 0.77rem; }
   .status-head span { color: var(--ink-faint); font-size: 0.7rem; white-space: nowrap; }
-  pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 7rem; overflow: auto; font: 0.72rem/1.42 var(--mono); color: var(--ink-soft); }
+  pre {
+    margin: 0;
+    max-height: clamp(9rem, 26vh, 15rem);
+    padding: 0.62rem 0.7rem;
+    box-sizing: border-box;
+    overflow: auto;
+    overscroll-behavior: contain;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    border: 1px solid var(--line);
+    border-radius: 0.55rem;
+    background: var(--bg);
+    font: 0.72rem/1.52 var(--mono);
+    color: var(--ink-soft);
+    scrollbar-gutter: stable;
+  }
   .status button { border: 0; background: transparent; color: var(--ink-faint); font-size: 1.2rem; padding: 0 0.2rem; }
+  @keyframes panel-in { from { opacity: 0; transform: translateX(1rem); } }
   @keyframes progress-pulse { 50% { opacity: 0.38; transform: scale(0.78); } }
+  @media (max-width: 1100px) {
+    .toolbox-workspace.has-progress .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
   @media (max-width: 850px) {
     .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .toolbox-workspace.has-progress {
+      grid-template-columns: minmax(0, 1fr) minmax(17rem, 42vw);
+    }
+    .toolbox-workspace.has-progress .grid { grid-template-columns: 1fr; }
   }
   @media (max-width: 620px) {
     .grid { grid-template-columns: 1fr; }
