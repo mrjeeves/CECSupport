@@ -109,6 +109,16 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 windows-service = "0.7"
 sha2 = "0.10"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+windows = { version = "0.61", features = [
+  "Win32_Devices_DeviceAndDriverInstallation",
+  "Win32_Devices_Properties",
+  "Win32_Foundation",
+  "Win32_Graphics_DXCore",
+  "Win32_Graphics_Dxgi",
+  "Win32_Graphics_Dxgi_Common",
+  "Win32_Graphics_Gdi",
+  "Win32_UI_WindowsAndMessaging",
+] }
 
 [profile.release]
 panic = "abort"

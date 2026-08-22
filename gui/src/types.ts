@@ -46,7 +46,19 @@ export interface MachineSpecs {
     max_mhz: number | null;
   };
   memory: { total_bytes: number; available_bytes: number };
-  gpus: Array<{ name: string; vram_bytes: number | null }>;
+  gpus: Array<{
+    name: string;
+    vram_bytes: number | null;
+    /** Windows-only, classified locally by CEC Support through DXCore. */
+    kind?: "integrated" | "discrete" | "unknown";
+    /** Negotiated and device-maximum PCIe lane counts from SetupAPI. */
+    link_width?: number | null;
+    max_link_width?: number | null;
+    /** Whether this adapter owns Windows' primary desktop monitor. */
+    primary_monitor?: boolean | null;
+    /** Adapter that owns the primary monitor, for a useful correction hint. */
+    primary_monitor_adapter?: string | null;
+  }>;
   disks: Array<{
     name: string;
     mount: string | null;

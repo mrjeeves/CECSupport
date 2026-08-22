@@ -2651,7 +2651,22 @@ class CecStore {
         total_bytes: 16 * 1024 ** 3,
         available_bytes: Math.round(9.3 * 1024 ** 3),
       },
-      gpus: [{ name: "AMD Radeon Graphics", vram_bytes: null }],
+      gpus: [
+        {
+          name: "AMD Radeon Graphics",
+          vram_bytes: null,
+          kind: "integrated",
+        },
+        {
+          name: "NVIDIA GeForce RTX 4060",
+          vram_bytes: 8 * 1024 ** 3,
+          kind: "discrete",
+          link_width: 4,
+          max_link_width: 16,
+          primary_monitor: false,
+          primary_monitor_adapter: "AMD Radeon Graphics",
+        },
+      ],
       disks: [
         {
           name: "Samsung SSD 970 EVO",
