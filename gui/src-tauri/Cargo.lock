@@ -734,7 +734,7 @@ dependencies = [
 
 [[package]]
 name = "cec-support"
-version = "0.2.58"
+version = "0.2.59"
 dependencies = [
  "allmystuff-cec-consent",
  "allmystuff-cec-protocol",
