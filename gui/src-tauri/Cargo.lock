@@ -9,6 +9,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "ahash"
+version = "0.8.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a15f179cd60c4584b8a8c596927aadc462e27f2ca70c04e0071964a73ba7a75"
+dependencies = [
+ "cfg-if 1.0.4",
+ "once_cell",
+ "version_check",
+ "zerocopy",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -19,8 +31,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-bridge"
-version = "0.2.95"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.95#6f5622c442bbda2e048f57ebce8adf24dbd5f857"
+version = "0.2.114"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.114#1b8fdf8d818d49f767d23e717b6eb94b8a05e3df"
 dependencies = [
  "allmystuff-graph",
  "allmystuff-inventory",
@@ -29,8 +41,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-cec-consent"
-version = "0.2.95"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.95#6f5622c442bbda2e048f57ebce8adf24dbd5f857"
+version = "0.2.114"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.114#1b8fdf8d818d49f767d23e717b6eb94b8a05e3df"
 dependencies = [
  "allmystuff-cec-protocol",
  "serde",
@@ -40,8 +52,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-cec-protocol"
-version = "0.2.95"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.95#6f5622c442bbda2e048f57ebce8adf24dbd5f857"
+version = "0.2.114"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.114#1b8fdf8d818d49f767d23e717b6eb94b8a05e3df"
 dependencies = [
  "serde",
  "serde_json",
@@ -50,8 +62,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-graph"
-version = "0.2.95"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.95#6f5622c442bbda2e048f57ebce8adf24dbd5f857"
+version = "0.2.114"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.114#1b8fdf8d818d49f767d23e717b6eb94b8a05e3df"
 dependencies = [
  "serde",
  "serde_json",
@@ -60,18 +72,19 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-inventory"
-version = "0.2.95"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.95#6f5622c442bbda2e048f57ebce8adf24dbd5f857"
+version = "0.2.114"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.114#1b8fdf8d818d49f767d23e717b6eb94b8a05e3df"
 dependencies = [
  "serde",
  "serde_json",
  "sysinfo",
+ "wmi",
 ]
 
 [[package]]
 name = "allmystuff-node"
-version = "0.2.95"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.95#6f5622c442bbda2e048f57ebce8adf24dbd5f857"
+version = "0.2.114"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.114#1b8fdf8d818d49f767d23e717b6eb94b8a05e3df"
 dependencies = [
  "allmystuff-bridge",
  "allmystuff-cec-consent",
@@ -103,14 +116,17 @@ dependencies = [
  "libloading 0.8.9",
  "memchr",
  "nokhwa",
+ "notify",
  "openh264",
  "opus",
  "parking_lot",
  "pipewire",
  "plist",
  "reqwest 0.12.28",
+ "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "sysinfo",
  "tokio",
  "tokio-tungstenite",
@@ -129,12 +145,12 @@ dependencies = [
 [[package]]
 name = "allmystuff-pixels"
 version = "0.1.0"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.95#6f5622c442bbda2e048f57ebce8adf24dbd5f857"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.114#1b8fdf8d818d49f767d23e717b6eb94b8a05e3df"
 
 [[package]]
 name = "allmystuff-protocol"
-version = "0.2.95"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.95#6f5622c442bbda2e048f57ebce8adf24dbd5f857"
+version = "0.2.114"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.114#1b8fdf8d818d49f767d23e717b6eb94b8a05e3df"
 dependencies = [
  "allmystuff-graph",
  "dirs 5.0.1",
@@ -144,8 +160,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-session"
-version = "0.2.95"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.95#6f5622c442bbda2e048f57ebce8adf24dbd5f857"
+version = "0.2.114"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.114#1b8fdf8d818d49f767d23e717b6eb94b8a05e3df"
 dependencies = [
  "allmystuff-graph",
  "allmystuff-protocol",
@@ -156,8 +172,8 @@ dependencies = [
 
 [[package]]
 name = "allmystuff-updater"
-version = "0.2.95"
-source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.95#6f5622c442bbda2e048f57ebce8adf24dbd5f857"
+version = "0.2.114"
+source = "git+https://github.com/mrjeeves/AllMyStuff?tag=v0.2.114#1b8fdf8d818d49f767d23e717b6eb94b8a05e3df"
 dependencies = [
  "dirs 5.0.1",
  "flate2",
@@ -189,6 +205,12 @@ checksum = "0e76a019e91224d279006ff972f1e984179a6e9feb050adba6ce8274aef23195"
 dependencies = [
  "alloc-no-stdlib",
 ]
+
+[[package]]
+name = "allocator-api2"
+version = "0.2.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "alsa"
@@ -766,7 +788,7 @@ dependencies = [
 
 [[package]]
 name = "cec-support-service"
-version = "0.2.58"
+version = "0.2.59"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
@@ -777,7 +799,7 @@ dependencies = [
 
 [[package]]
 name = "cec-support-updater"
-version = "0.2.58"
+version = "0.2.59"
 dependencies = [
  "dirs 5.0.1",
  "flate2",
@@ -796,7 +818,7 @@ dependencies = [
 
 [[package]]
 name = "cec-support-wifi"
-version = "0.2.58"
+version = "0.2.59"
 dependencies = [
  "serde",
 ]
@@ -1317,10 +1339,14 @@ dependencies = [
  "http",
  "http-body",
  "http-body-util",
+ "libc",
  "log",
+ "lru",
  "mime_guess",
+ "parking_lot",
  "percent-encoding",
  "pin-project-lite",
+ "reflink-copy",
  "tokio",
  "url",
  "uuid",
@@ -1503,7 +1529,7 @@ version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab8ecd87370524b461f8557c119c405552c396ed91fc0a8eec68679eab26f94a"
 dependencies = [
- "libloading 0.7.4",
+ "libloading 0.8.9",
 ]
 
 [[package]]
@@ -1791,6 +1817,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "fallible-iterator"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649"
+
+[[package]]
+name = "fallible-streaming-iterator"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
+
+[[package]]
 name = "fastrand"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1944,12 +1982,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "fsevent-sys"
+version = "4.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76ee7a02da4d231650c7cea31349b889be2f45ddb3ef3032d2ec8185f6313fd2"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "futures"
+version = "0.3.32"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b147ee9d1f6d097cef9ce628cd2ee62288d963e16fb287bd9286455b241382d"
+dependencies = [
+ "futures-channel",
+ "futures-core",
+ "futures-executor",
+ "futures-io",
+ "futures-sink",
+ "futures-task",
+ "futures-util",
+]
+
+[[package]]
 name = "futures-channel"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07bbe89c50d7a535e539b8c17bc0b49bdb77747034daa8087407d655f3f7cc1d"
 dependencies = [
  "futures-core",
+ "futures-sink",
 ]
 
 [[package]]
@@ -2017,6 +2080,7 @@ version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "389ca41296e6190b48053de0321d02a77f32f8a5d2461dd38762c0593805c6d6"
 dependencies = [
+ "futures-channel",
  "futures-core",
  "futures-io",
  "futures-macro",
@@ -2396,9 +2460,38 @@ checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
 
 [[package]]
 name = "hashbrown"
+version = "0.14.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
+dependencies = [
+ "ahash",
+]
+
+[[package]]
+name = "hashbrown"
+version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash",
+]
+
+[[package]]
+name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+
+[[package]]
+name = "hashlink"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ba4ff7128dee98c7dc9794b6a411377e1404dba1c97deb8d1a55297bd25d8af"
+dependencies = [
+ "hashbrown 0.14.5",
+]
 
 [[package]]
 name = "headers"
@@ -2779,6 +2872,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "inotify"
+version = "0.11.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cc00ea907cab49550b7da656f80ebb97be1b997d931fbcd28d39734e17ce592"
+dependencies = [
+ "bitflags 2.13.0",
+ "inotify-sys",
+ "libc",
+]
+
+[[package]]
+name = "inotify-sys"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c033f80b2c113cdf91ab7a33faa9cbc014726dcad99880c8609af2a370edf37d"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "interprocess"
 version = "2.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2977,6 +3090,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
+name = "kqueue"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d763e5b24120b4ddf50de6c92308156765aabfbbccebf401da7cff2d70a41ea"
+dependencies = [
+ "kqueue-sys",
+ "libc",
+]
+
+[[package]]
+name = "kqueue-sys"
+version = "1.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "07293a4e297ac234359b510362495713f75ea345d5307140414f20c69ffeb087"
+dependencies = [
+ "bitflags 2.13.0",
+ "libc",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3085,6 +3218,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "libsqlite3-sys"
+version = "0.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e99fb7a497b1e3339bc746195567ed8d3e24945ecd636e3619d20b9de9e9149"
+dependencies = [
+ "cc",
+ "pkg-config",
+ "vcpkg",
+]
+
+[[package]]
 name = "libwayshot-xcap"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3143,6 +3287,15 @@ name = "log"
 version = "0.4.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
+
+[[package]]
+name = "lru"
+version = "0.16.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f66e8d5d03f609abc3a39e6f08e4164ebf1447a732906d39eb9b99b7919ef39"
+dependencies = [
+ "hashbrown 0.16.1",
+]
 
 [[package]]
 name = "lru-slab"
@@ -3272,6 +3425,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "02bd0af71c67b473010cbbc60715ee815645a4dc942899111f494b4b737d6fda"
 dependencies = [
  "libc",
+ "log",
  "wasi",
  "windows-sys 0.61.2",
 ]
@@ -3521,6 +3675,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "notify"
+version = "8.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d3d07927151ff8575b7087f245456e549fea62edf0ec4e565a5ee50c8402bc3"
+dependencies = [
+ "bitflags 2.13.0",
+ "fsevent-sys",
+ "inotify",
+ "kqueue",
+ "libc",
+ "log",
+ "mio",
+ "notify-types",
+ "walkdir",
+ "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "notify-types"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "42b8cfee0e339a0337359f3c88165702ac6e600dc01c0cc9579a92d62b08477a"
+dependencies = [
+ "bitflags 2.13.0",
+]
+
+[[package]]
 name = "ntapi"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3580,7 +3761,7 @@ version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "680998035259dcfcafe653688bf2aa6d3e2dc05e98be6ab46afb089dc84f1df8"
 dependencies = [
- "proc-macro-crate 1.3.1",
+ "proc-macro-crate 2.0.2",
  "proc-macro2",
  "quote",
  "syn 2.0.118",
@@ -4606,6 +4787,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "reflink-copy"
+version = "0.1.30"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d9dd7ab4af0363d5ccfd2838d782a28196cf32a5cc2e4fe3c5dc83f2be588b8b"
+dependencies = [
+ "cfg-if 1.0.4",
+ "libc",
+ "rustix 1.1.4",
+ "windows 0.62.2",
+]
+
+[[package]]
 name = "regex"
 version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4731,6 +4924,20 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "rusqlite"
+version = "0.32.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7753b721174eb8ff87a9a0e799e2d7bc3749323e773db92e0984debb00019d6e"
+dependencies = [
+ "bitflags 2.13.0",
+ "fallible-iterator",
+ "fallible-streaming-iterator",
+ "hashlink",
+ "libsqlite3-sys",
+ "smallvec",
 ]
 
 [[package]]
@@ -6445,6 +6652,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
+name = "vcpkg"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
+
+[[package]]
 name = "version-compare"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7525,6 +7738,20 @@ name = "wit-bindgen"
 version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
+
+[[package]]
+name = "wmi"
+version = "0.18.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c81b85c57a57500e56669586496bf2abd5cf082b9d32995251185d105208b64"
+dependencies = [
+ "futures",
+ "log",
+ "serde",
+ "thiserror 2.0.18",
+ "windows 0.62.2",
+ "windows-core 0.62.2",
+]
 
 [[package]]
 name = "writeable"
