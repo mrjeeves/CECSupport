@@ -19,7 +19,6 @@ import {
   backgroundGet,
   backgroundSet,
   cecApprove,
-  cecAskHelp,
   cecChatHistory,
   cecChatSend,
   cecDeny,
@@ -48,7 +47,6 @@ import {
   meshPeers,
   onCecChat,
   onCecGrants,
-  onCecHelp,
   onCecRequest,
   onCecSession,
   onCecViewing,
@@ -307,22 +305,8 @@ class CecStore {
   keepBackground = $state(false);
   /** Unix seconds, re-read each second so expiry countdowns tick. */
   now = $state(Math.floor(Date.now() / 1000));
-  /** Which screen is showing. `start` is the front door (Ask for help, with
-   *  the support number shown inline as a copyable fallback); `settings` is
-   *  the gear. The standalone "number" screen was removed — the number never
-   *  warranted a whole view of its own. */
+  /** The support-number screen or settings. */
   view = $state<"start" | "settings">("start");
-  /** Whether this machine is currently asking for help on the global help
-   *  room — drives the start screen's waiting card. Synced from `cec_status`
-   *  and cleared live by the `cec://help` event when help arrives. */
-  askingHelp = $state(false);
-  /** Whether the raised hand is confirmed up. A hand is asking-room
-   *  membership now: the node reports `raised: true` once the join has
-   *  round-tripped through the daemon — from that moment this device is
-   *  present in the queue room's signaling and every watching technician
-   *  can see it. (An older node reports beacon `watchers` counts instead;
-   *  any positive count means the same thing.) */
-  helpRaised = $state(false);
   /** This machine's headline hardware for the spec card (null until the node
    *  answers — the card hides). Fetched once the node is up; a fresh scan
    *  each launch is plenty for a spec sheet. */
@@ -381,12 +365,12 @@ class CecStore {
    *  doesn't keep nagging. Session-local (clears on restart). */
   private attachAsked = $state<Record<string, boolean>>({});
 
-  // ---- KVM "ask for help" ----------------------------------------------
-  /** Each attached KVM's hand-raise state, keyed by canonical node id. The
-   *  device is the source of truth: its own button raises the same hand, so
-   *  this is re-read rather than assumed after every action. */
+  // ---- KVM support requests and access ---------------------------------
+  /** Each attached KVM's number, pending requests and access status. */
+  private helpRevision = new Map<string, number>();
+  private helpReading = new Set<string>();
   kvmHelp = $state<Record<string, KvmHelpStatus>>({});
-  /** Nodes with a raise/lower in flight (their button shows a pending label). */
+  /** Nodes with an approval decision in flight. */
   helpBusy = $state<Record<string, boolean>>({});
 
   // ---- "Open" menu (reach the KVM's own web UI) -------------------------
@@ -557,13 +541,13 @@ class CecStore {
     return rows;
   }
 
-  /** Whether a support engagement is underway in any form: the hand is up, a
+  /** Whether a support engagement is underway: a
    *  technician is connected (or connecting), or standing grants exist. Drives
    *  where the KVM & Claiming card sits — the right rail during an engagement
    *  (the left column is busy with the session), the bottom of the quiet left
    *  column otherwise. */
   get engaged(): boolean {
-    return this.askingHelp || this.liveSessions.length > 0 || this.grants.length > 0;
+    return this.liveSessions.length > 0 || this.grants.length > 0;
   }
 
   /** A friendly display name for a technician peer (canonical id): the live
@@ -592,23 +576,6 @@ class CecStore {
     this.unlisteners.push(
       await onCecChat((e) => this.appendChat(e.peer, e.message)),
     );
-    this.unlisteners.push(
-      await onCecHelp((e) => {
-        // The node withdraws the ask itself when a session is approved (help
-        // arrived) — the waiting card must follow without a manual refresh. Not
-        // while a request is in flight, though: `busy` (the just-tapped ask)
-        // owns the flag then, so a stale bring-up beacon can't flick the
-        // optimistic card off.
-        if (e.asking === false && !this.busy) this.askingHelp = false;
-        // The waiting card's "raising your hand…" vs "CEC can see you"
-        // signal. A new node says `raised: true` when the asking-room join
-        // lands (membership IS the hand); an older node reports per-beacon
-        // watcher counts — any positive count means the same thing.
-        if (e.raised === true) this.helpRaised = true;
-        if (typeof e.watchers === "number" && e.watchers > 0) this.helpRaised = true;
-      }),
-    );
-
     // The node comes up in parallel with this webview — on a fresh machine its
     // first start (identity generation, first-run AV scans of the sidecars)
     // takes many seconds. A single early fetch returns null and the UI would
@@ -793,12 +760,6 @@ class CecStore {
     // Pull the live viewing map too, so an app that starts (or reconnects)
     // mid-session paints the chip without waiting for the next transition.
     this.viewing = await cecViewing();
-    // The node is the truth for the ask (it withdraws it itself on approval,
-    // and a restart drops it) — mirror it whenever the status lands, but never
-    // mid-request: an in-flight ask/cancel (busy) owns the flag, so a status
-    // poll landing before the node has registered a just-tapped ask can't stomp
-    // the optimistic "Raising your hand…" card back to the front door.
-    if (this.status && !this.busy) this.askingHelp = this.status.asking_help === true;
   }
 
   private async loadGrants(): Promise<void> {
@@ -964,58 +925,6 @@ class CecStore {
         ? "Disconnected and removed. They can't reconnect without asking you again."
         : "Removed. They can't reconnect without asking you again.",
     );
-  }
-
-  /** "Ask for help": raise this machine's hand on the support area until a
-   *  technician connects or the customer cancels. The node ensures area
-   *  residence as part of the ask, so a tap on a fresh launch still just works. */
-  async askHelp(): Promise<void> {
-    // A fresh ask starts unconfirmed — the card shows "raising your
-    // hand…" until the node reports the asking-room join landed.
-    this.helpRaised = false;
-    if (this.demo) {
-      this.askingHelp = true;
-      // Act out the real sequence: a couple of seconds of hand-raising,
-      // then the hand is confirmed up.
-      setTimeout(() => {
-        if (this.askingHelp) this.helpRaised = true;
-      }, 2500);
-      return;
-    }
-    // Flip to the "Raising your hand…" card the instant they tap — BEFORE the
-    // node round-trip. Ensuring area residence as part of the ask can take a few
-    // seconds on a cold launch, and awaiting it first left the front door sitting
-    // on a disabled button with no visible change, which reads as a freeze. The
-    // card's spinner + reassurance is the comforting "we've got you" moment, so
-    // show it immediately; if the ask fails we drop back to the front door with a
-    // message.
-    this.askingHelp = true;
-    this.busy = true;
-    try {
-      await cecAskHelp(true);
-    } catch (e) {
-      this.askingHelp = false;
-      this.notify(`Couldn't ask for help: ${errMsg(e)}`);
-    } finally {
-      this.busy = false;
-    }
-  }
-
-  /** Withdraw the ask ("Stop asking"). */
-  async cancelHelp(): Promise<void> {
-    if (this.demo) {
-      this.askingHelp = false;
-      return;
-    }
-    this.busy = true;
-    try {
-      await cecAskHelp(false);
-      this.askingHelp = false;
-    } catch (e) {
-      this.notify(`Couldn't stop the request: ${errMsg(e)}`);
-    } finally {
-      this.busy = false;
-    }
   }
 
   async setLabel(label: string): Promise<void> {
@@ -1323,17 +1232,15 @@ class CecStore {
     const snap = await sessionSnapshot();
     if (snap) this.snapshot = snap;
     await this.refreshReachable();
-    // Pick up hand-raises made at the device itself — the physical button
-    // raises the same hand this app does, so the card must reflect it whichever
-    // one was pressed.
+    // Pick up approvals and window refreshes made at the device or in its web UI.
     await this.refreshKvmHelp();
   }
 
-  /** Re-read the hand-raise state of every KVM linked to this computer. Runs
+  /** Re-read the support status of every owned KVM. Runs
    *  off the same discovery pass as the card, and stays quiet on failure. */
   private async refreshKvmHelp(): Promise<void> {
     await Promise.all(
-      this.cecKvms.filter((k) => k.mine && k.attachedHere && k.hasWeb).map((k) => this.loadKvmHelp(k.node)),
+      this.cecKvms.filter((k) => k.mine && k.hasWeb).map((k) => this.loadKvmHelp(k.node)),
     );
   }
 
@@ -1576,24 +1483,40 @@ class CecStore {
     );
   }
 
-  // ---- KVM "ask for help" ----------------------------------------------
-  //
-  // A KVM raises its hand on the shared CEC support area in its own right — it
-  // is a help-seeker like a customer's app, not a thing this app raises a hand
-  // *about*. The device's physical button does exactly the same, so this is a
-  // second way into one path, and the state below is always re-read from the
-  // appliance rather than inferred from what we just asked for.
-  //
-  // A technician who answers is authorised for a bounded window (three hours,
-  // enforced and persisted on the device), which is why this surface shows a
-  // deadline rather than an open-ended "someone may be connected".
+  // ---- KVM support requests and access ---------------------------------
 
-  /** The hand-raise state for `node`, or null until first read. */
+  /** Latest support status from the appliance. */
   helpFor(node: string): KvmHelpStatus | null {
     return this.kvmHelp[canonicalTech(node)] ?? null;
   }
 
-  /** Whether a raise/lower is in flight for `node`. */
+  /** The appliance sends a duration because its wall clock may not be set. */
+  approvalTimeLeft(node: string): string | null {
+    void this.now;
+    const status = this.helpFor(node);
+    const seconds = Math.max(0, Math.ceil((status?.approvalRemainingSeconds ?? 0) -
+      (performance.now() - (status?.observedAt ?? performance.now())) / 1000));
+    return seconds > 0 ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}` : null;
+  }
+
+  async armKvmSupport(node: string): Promise<void> {
+    const key = canonicalTech(node);
+    if (this.helpBusy[key]) return;
+    this.helpBusy = { ...this.helpBusy, [key]: true };
+    this.helpRevision.set(key, (this.helpRevision.get(key) ?? 0) + 1);
+    try {
+      const port = await this.kvmConsolePort(node);
+      if (!port) { this.notify("Couldn't reach the KVM's console."); return; }
+      const { rsp, reason } = await this.kvmApi<KvmHelpStatus>(port, "/api/mesh/help/arm", { method: "POST" });
+      if (!rsp || rsp.code !== 0 || !rsp.data) {
+        this.notify(rsp ? this.kvmMsg(rsp, "Couldn't open the approval window.") : (reason ?? "Couldn't open the approval window."));
+        return;
+      }
+      this.kvmHelp = { ...this.kvmHelp, [key]: { ...rsp.data, observedAt: performance.now() } };
+    } finally { this.helpBusy = { ...this.helpBusy, [key]: false }; }
+  }
+
+  /** Whether an approval decision is in flight for `node`. */
   helpPending(node: string): boolean {
     return !!this.helpBusy[canonicalTech(node)];
   }
@@ -1624,7 +1547,7 @@ class CecStore {
     return m === 1 ? "1 minute" : `${m} minutes`;
   }
 
-  /** Read a KVM's hand-raise state. Quiet on failure — this is ambient status
+  /** Read a KVM's support status. Quiet on failure — this is ambient status
    *  the card simply omits when unavailable, not something the customer asked
    *  for, so a toast would be noise. */
   async loadKvmHelp(node: string): Promise<void> {
@@ -1633,7 +1556,7 @@ class CecStore {
         ...this.kvmHelp,
         [canonicalTech(node)]: {
           enabled: true,
-          asking: false,
+          pending: [],
           supportId: "123456789",
           authorised: false,
           grantSeconds: 10800,
@@ -1641,59 +1564,41 @@ class CecStore {
       };
       return;
     }
-    const port = await this.kvmConsolePort(node);
-    if (!port) return;
-    const { rsp } = await this.kvmApi<KvmHelpStatus>(port, "/api/mesh/help");
-    if (!rsp || rsp.code !== 0 || !rsp.data) return;
-    this.kvmHelp = { ...this.kvmHelp, [canonicalTech(node)]: rsp.data };
-  }
-
-  /** Raise or lower a KVM's hand. The reply carries the resulting state, so one
-   *  round-trip both acts and refreshes. */
-  async toggleKvmHelp(node: string): Promise<void> {
     const key = canonicalTech(node);
-    if (this.helpBusy[key]) return;
-    const raised = this.helpFor(node)?.asking ?? false;
-
-    if (this.demo) {
-      const cur = this.helpFor(node);
-      this.kvmHelp = {
-        ...this.kvmHelp,
-        [key]: { ...(cur ?? { enabled: true, supportId: "123456789", authorised: false, grantSeconds: 10800 }), asking: !raised } as KvmHelpStatus,
-      };
-      this.notify(raised ? "Cancelled the help request." : "The KVM has raised its hand.");
-      return;
-    }
-
-    const port = await this.kvmConsolePort(node);
-    if (!port) {
-      this.notify("Couldn't reach the KVM's console.");
-      return;
-    }
-    this.helpBusy = { ...this.helpBusy, [key]: true };
+    if (this.helpBusy[key] || this.helpReading.has(key)) return;
+    this.helpReading.add(key);
+    const version = this.helpRevision.get(key) ?? 0;
     try {
-      const { rsp, reason } = await this.kvmApi<KvmHelpStatus>(
-        port,
-        raised ? "/api/mesh/help/lower" : "/api/mesh/help/raise",
-        { method: "POST" },
-      );
-      if (!rsp || rsp.code !== 0) {
-        this.notify(
-          rsp
-            ? this.kvmMsg(rsp, "The KVM couldn't ask for help.")
-            : (reason ?? "The KVM couldn't ask for help."),
-        );
+      const port = await this.kvmConsolePort(node);
+      const { rsp } = port ? await this.kvmApi<KvmHelpStatus>(port, "/api/mesh/help") : { rsp: null };
+      if ((this.helpRevision.get(key) ?? 0) !== version) return;
+      if (!rsp || rsp.code !== 0 || !rsp.data) {
+        delete this.kvmHelp[key];
         return;
       }
-      if (rsp.data) this.kvmHelp = { ...this.kvmHelp, [key]: rsp.data };
-      this.notify(
-        raised
-          ? "Cancelled the help request."
-          : `The KVM has raised its hand. A technician who answers gets ${this.helpWindowLabel(node)} of access.`,
-      );
-    } finally {
-      this.helpBusy = { ...this.helpBusy, [key]: false };
-    }
+      this.kvmHelp = { ...this.kvmHelp, [key]: { ...rsp.data, observedAt: performance.now() } };
+    } finally { this.helpReading.delete(key); }
+  }
+
+  /** Approve or decline exactly the request the customer reviewed. */
+  async decideKvmSupport(node: string, technician: string, sessionId: string, approve: boolean): Promise<void> {
+    const key = canonicalTech(node);
+    if (this.helpBusy[key]) return;
+    this.helpBusy = { ...this.helpBusy, [key]: true };
+    this.helpRevision.set(key, (this.helpRevision.get(key) ?? 0) + 1);
+    try {
+      const port = await this.kvmConsolePort(node);
+      if (!port) { this.notify("Couldn't reach the KVM's console."); return; }
+      const { rsp, reason } = await this.kvmApi<KvmHelpStatus>(port,
+        `/api/mesh/help/${approve ? "approve" : "deny"}`,
+        { method: "POST", body: { technician, sessionId } });
+      if (!rsp || rsp.code !== 0) {
+        this.notify(rsp ? this.kvmMsg(rsp, "Couldn't send the decision.") : (reason ?? "Couldn't send the decision."));
+        return;
+      }
+      if (rsp.data) this.kvmHelp = { ...this.kvmHelp, [key]: { ...rsp.data, observedAt: performance.now() } };
+      this.notify(approve ? `Approved KVM access for ${this.helpWindowLabel(node)}.` : "Declined the support request.");
+    } finally { this.helpBusy = { ...this.helpBusy, [key]: false }; }
   }
 
   // ---- Reaching the KVM's own web UI ("Open") ---------------------------

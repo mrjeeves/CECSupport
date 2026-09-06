@@ -19,9 +19,6 @@ export interface CecStatus {
   network_id: string;
   /** This node's role — always "client" for the customer app. */
   role: string;
-  /** Whether this node is currently asking for help on the support area
-   *  (the "Ask for help" button's live state). Absent from an older node. */
-  asking_help?: boolean;
   /** This computer's friendly name, if the customer set one. */
   label?: string;
 }
@@ -319,18 +316,15 @@ export interface KvmApiRsp<T = unknown> {
   data?: T;
 }
 
-/** A KVM's CEC hand-raise state (`GET /api/mesh/help` on the appliance).
- *
- *  The KVM raises its own hand on the shared support area — it's a help-seeker
- *  in its own right, exactly like a customer's app — and a technician who
- *  answers is authorised for a bounded window rather than indefinitely. Both the
- *  device's physical button and this app drive the same path, so this state is
- *  the truth wherever the raise came from. */
+/** The appliance owns pending requests, the one-request approval window, and access grants. */
 export interface KvmHelpStatus {
-  /** The device's mesh bridge is running (false → it can't ask for help). */
+  approvalRemainingSeconds?: number;
+  /** Local monotonic time at which the snapshot was received. */
+  observedAt?: number;
+  /** The device's mesh bridge is running. */
   enabled: boolean;
-  /** Its hand is currently up, waiting for a technician. */
-  asking: boolean;
+  /** Requests awaiting an explicit decision on the appliance. */
+  pending?: Array<{ technician: string; sessionId: string; agentName: string; verificationCode: string; wantControl: boolean; requestedAt: number }>;
   /** The 9-digit support number, readable out loud to identify the device. */
   supportId: string;
   /** A technician currently holds an authorisation. */
