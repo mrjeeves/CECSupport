@@ -33,19 +33,12 @@ published now and resolve; what this sandbox still lacks is the media/webview
 toolchain. They are validated at the layer that *can* be checked here — the
 frontend type-checker — and reviewed by inspection:
 
-- **AllMyStuff node "CEC mode" + technician GUI** — the secret "CEC Support"
-  settings tab (Agent Name + the raised-hand queue → answer; a Customer number
-  entry as the fallback), revealed only by a hidden keyboard gesture. Every CEC
-  node lives on the one shared support area (`cecsupport-clients`); a technician
-  answers a raised hand by dialing that customer's device directly, and dialed
-  customers show as ordinary graph peers. The tab lists them from CEC state via
-  `cec_dialed`. The node-control command surface is `cec_online`, `cec_dial_node`
-  (answer a hand / reconnect), `cec_dial` (number fallback), `cec_help_watch` /
-  `cec_help_list`, `cec_pending`, `cec_approve`, `cec_deny`, `cec_revoke`,
-  `cec_dialed`, the app-wide `forget_node` (on every node's gear), and the
-  `cec://*` events. The Svelte frontend is type-checked (`pnpm check`); the node
-  backend needs the Linux media stack **and** the MyOwnMesh `Silent` /
-  listen-only signaling API below.
+- **AllMyStuff node and technician GUI** — enter the customer's support number,
+  then wait for approval. Saved customers can reconnect. AllMyStuff shows ordinary
+  incoming approval requests in its main window. Its KVM Support panel can approve
+  a request or open/refresh the same five-minute window as the physical KVM button.
+  The shared engine uses a public discovery directory and isolated customer session
+  rooms. The help queue is retired.
 - **CEC Support client GUI (`gui/`) + `cec-support` binary** — the Tauri + Svelte
   customer app (inline support number, three-choice approve modal, connected
   banner, access list, grant-scoped autostart settings). Settings is tabbed and
@@ -100,12 +93,11 @@ every step.
 None of the following can be exercised in this headless environment; they are
 the runtime acceptance tests, run on a Windows box against a live mesh:
 
-- End-to-end (headline): customer launches → **Press for Help** → technician sees
-  the raised hand and answers → customer sees "‹Agent› is trying to connect" →
-  Approve Once/3h/Forever → screen appears → control works → Revoke stops it
-  immediately.
-- End-to-end (fallback): technician types the customer's number → node resolves
-  it to that device on the shared area → same approve/connect flow.
+- End-to-end: customer shares their support number → technician enters it →
+  customer verifies the name/code and approves → screen/control works → revoke stops it.
+- KVM: approve an incoming request from the web UI, CECSupport, and AllMyStuff.
+  Check five-minute expiry, repeated-press refresh, one-request consumption, and
+  three-hour access expiry on both physical appliances.
 - On the shared area, a customer holds **no** connection to anyone — the area
   is Silent, presence-only — and no session forms until the technician's
   deliberate `connect_peer`.
@@ -127,11 +119,6 @@ the runtime acceptance tests, run on a Windows box against a live mesh:
 
 ## Nice-to-haves (later)
 
-- **A proper support queue.** The raised-hand list is the queue today; the
-  number is the fallback for when that list gets too crowded to pick someone
-  out. A real queue — ordering, claim/assignment across technicians, wait-time
-  surfacing — is the near-term follow-up that lets the hand-raise path scale
-  past the point where the number workaround is needed.
 - A random (non-derived) number option for customers who want a fresh code per
   session rather than one stable to their device key.
 - Session audit log on the customer side ("who connected, when, for how long").

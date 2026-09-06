@@ -247,12 +247,6 @@ export function cecOnline(): Promise<{ number: string } | null> {
   return tryInvoke<{ number: string }>("cec_online");
 }
 
-/** Raise (or withdraw) the hand on the support area. Errors surface — the
- *  customer must know their tap didn't take, not wait on a dead beacon. */
-export function cecAskHelp(on: boolean): Promise<void> {
-  return mustInvoke("cec_ask_help", { on });
-}
-
 /** This machine's headline hardware for the spec card. Null in web mode, on
  *  an older node (no such command), or while the node is still starting —
  *  the card simply doesn't render then. */
@@ -297,23 +291,6 @@ export function openKvmStore(): void {
     return;
   }
   void tryInvoke("open_kvm_store");
-}
-
-/** The help/asking state changed (`cec://help`). `asking: false` means the
- *  node auto-withdrew the ask (help arrived) and the waiting card must
- *  follow. `raised: true` means the asking-room join landed — this machine
- *  is present in the queue room's signaling, where every watching
- *  technician reads it ("CEC can see you"). Older nodes send per-beacon
- *  `watchers` reach counts instead; any positive count means the same. */
-export async function onCecHelp(
-  cb: (e: { asking?: boolean; raised?: boolean; watchers?: number }) => void,
-): Promise<() => void> {
-  if (!isTauri()) return () => {};
-  const { listen } = await import("@tauri-apps/api/event");
-  return listen<{ asking?: boolean; raised?: boolean; watchers?: number }>(
-    "cec://help",
-    (e) => cb(e.payload),
-  );
 }
 
 /** The technician requests currently awaiting the customer's decision. */

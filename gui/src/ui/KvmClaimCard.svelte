@@ -192,56 +192,6 @@
             </button>
           </div>
 
-          <!-- Ask for help. The KVM raises its own hand on the CEC support
-               area; its physical button does the same thing, so this reflects
-               whichever was used. A technician who answers is authorised for a
-               bounded window, and that deadline is shown rather than left as an
-               open-ended "someone may be connected".
-
-               Whether access is live is `authorised`, NOT whether a countdown
-               could be computed: the KVM has no RTC, and a grant held while its
-               clock is still unset is real access the device can't yet put a
-               time on. Branching on the countdown would tell the customer
-               nobody was connected at the one moment that's least true. -->
-          {@const help = store.helpFor(k.node)}
-          {#if help?.enabled}
-            {@const left = store.helpTimeLeft(k.node)}
-            <div class="help" class:up={help.asking} class:granted={help.authorised}>
-              <div class="help-state">
-                {#if help.authorised}
-                  <span class="dot ok" aria-hidden="true"></span>
-                  {#if left}
-                    <span>A technician has access — <strong>{left}</strong> left</span>
-                  {:else}
-                    <span>A technician has access</span>
-                  {/if}
-                {:else if help.asking}
-                  <span class="hand" aria-hidden="true">✋</span>
-                  <span>Hand up — waiting for a technician</span>
-                {:else}
-                  <span class="dot" aria-hidden="true"></span>
-                  <span>Support number <strong>{formatSupportId(help.supportId)}</strong></span>
-                {/if}
-              </div>
-              <button
-                class="btn small"
-                class:primary={!help.asking && !help.authorised}
-                disabled={store.helpPending(k.node)}
-                title={help.asking
-                  ? "Take the hand down and leave the queue"
-                  : `Raise this KVM's hand. A technician who answers gets ${store.helpWindowLabel(k.node)} of access.`}
-                onclick={() => void store.toggleKvmHelp(k.node)}
-              >
-                {#if store.helpPending(k.node)}
-                  Working…
-                {:else if help.asking}
-                  Cancel
-                {:else}
-                  Ask for help
-                {/if}
-              </button>
-            </div>
-          {/if}
         {:else}
           <!-- Ours, but the customer said it's not on this computer. -->
           <div class="row">
@@ -264,6 +214,44 @@
               Unclaim
             </button>
           </div>
+        {/if}
+        {#if k.mine && k.hasWeb}
+          {@const help = store.helpFor(k.node)}
+          {#if help?.enabled}
+            {@const left = store.helpTimeLeft(k.node)}
+            <div class="help" class:granted={help.authorised}>
+              <div class="help-state">
+                <span>Support number <strong>{formatSupportId(help.supportId) || "Starting…"}</strong></span>
+              </div>
+              {#if help.authorised}
+                <div class="sub">A technician has access{#if left} — <strong>{left}</strong> left{/if}</div>
+              {/if}
+              {#if help.approvalRemainingSeconds !== undefined}
+                {@const approval = store.approvalTimeLeft(k.node)}
+                <div class="sub">{approval ? `Waiting for one request · ${approval} left` : "Approval window closed"}</div>
+                <button class="btn small" disabled={store.helpPending(k.node)} onclick={() => void store.armKvmSupport(k.node)}>
+                  {approval ? "Refresh 5-minute window" : "Approve current or next request"}
+                </button>
+                <div class="sub">Wait up to 5 minutes for one support-number request, then grant {store.helpWindowLabel(k.node)} of access.</div>
+              {:else}
+                <div class="sub">Update this KVM to enable support-request approvals here.</div>
+              {/if}
+              {#each help.pending ?? [] as request (request.technician + request.sessionId)}
+                <div class="support-request" role="status">
+                  <strong>{request.agentName || "A technician"}</strong> wants to connect to this KVM.
+                  <div class="sub">Verify code <strong>{request.verificationCode}</strong> with your technician.</div>
+                  <div class="actions">
+                    <button class="btn small primary" disabled={store.helpPending(k.node)}
+                      onclick={() => void store.decideKvmSupport(k.node, request.technician, request.sessionId, true)}>
+                      Approve for {store.helpWindowLabel(k.node)}
+                    </button>
+                    <button class="btn small" disabled={store.helpPending(k.node)}
+                      onclick={() => void store.decideKvmSupport(k.node, request.technician, request.sessionId, false)}>Decline</button>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {/if}
         {/if}
       </div>
     {/each}
@@ -382,7 +370,7 @@
     gap: 0.5rem;
   }
 
-  /* Ask-for-help row — hand-raise state and any live support authorisation. */
+  /* Support number, incoming requests, and active access. */
   .help {
     display: flex;
     align-items: center;
@@ -392,9 +380,6 @@
     background: var(--surface);
     border: 1px solid var(--line);
     border-radius: var(--r-md);
-  }
-  .help.up {
-    border-color: var(--accent);
   }
   .help.granted {
     border-color: var(--ok);
@@ -414,11 +399,8 @@
     font-weight: 650;
     white-space: nowrap;
   }
-  .hand {
-    flex: 0 0 auto;
-    font-size: 0.95rem;
-    line-height: 1;
-  }
+  .support-request { width: 100%; border-top: 1px solid var(--line); padding-top: 0.6rem; }
+  .support-request .actions { margin-top: 0.5rem; }
 
   /* "Open" menu — the ways to reach the KVM's own web UI. */
   .menu-wrap {

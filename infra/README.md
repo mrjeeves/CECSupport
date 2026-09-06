@@ -15,15 +15,14 @@ binary (see its `docs/SERVICES.md` for the full reference):
 
 | Service | What it carries | Port |
 |---|---|---|
-| **Signaling relay** — an intelligent NIP-01 (Nostr/WebSocket) room server | Presence announces (who is on the support area / in the asking queue), SDP offer/answer/ICE for dials. Metadata only, never session data. | `tcp 4848` (put wss/TLS in front) |
+| **Signaling relay** — an intelligent NIP-01 (Nostr/WebSocket) room server | Presence announces (who is on the support directory / in a session room), SDP offer/answer/ICE for dials. Metadata only, never session data. | `tcp 4848` (put wss/TLS in front) |
 | **TURN** (answers STUN too) | Relayed WebRTC allocations for symmetric-NAT customers — encrypted session bytes, as ICE fallback only. | `udp 3478` + a relay port range |
 
 Without CEC-operated instances, the mesh rides the public-relay defaults
 and the reference STUN/TURN. That works, but CEC-operated boxes give the
 help desk dedicated capacity, no third-party dependency, and instant
 departure notices (the smart relay synthesizes `leave` the moment a
-customer's socket closes, so the queue drops a withdrawn hand immediately
-instead of after the announce timeout).
+customer's socket closes, so an offline device leaves the directory promptly).
 
 ## What the CEC rooms are (context for operators)
 
@@ -31,13 +30,11 @@ instead of after the announce timeout).
   a **Silent** resident: present in the signaling room, connected to
   nobody. A technician's pinned redial finds a rebooted customer here,
   and a phoned-in number resolves against the room's member list.
-- `cecsupport-asking` — the queue. A customer joins it only while their
-  hand is up; membership *is* the ask. Technicians watch it with a
-  **listen-only** join (they read the room without announcing into it).
+- `cec-<number>` — the selected customer's Silent session room. A deliberate
+  support-number dial opens the transport; a consent grant controls human access.
+- `cecsupport-asking` is retired. Updated clients remove persisted membership.
 
-Both rooms are just namespaces on the signaling relay — the relay needs
-no CEC-specific configuration, and one relay instance serves both (plus
-anything else that points at it).
+These are namespaces on the signaling relay; it needs no CEC-specific configuration.
 
 ## Provisioning a hub box
 

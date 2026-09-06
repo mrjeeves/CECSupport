@@ -1,6 +1,6 @@
 <script lang="ts">
   // The customer's side of the live support chat, sitting in the top-left card
-  // slot. While a technician is connected this replaces the "Ask for help"
+  // slot. While a technician is connected this replaces the support-number
   // front door (the store swaps it in on connect and back out on disconnect);
   // it also opens on its own when the customer taps a technician's name in the
   // access list, to read back an earlier conversation.

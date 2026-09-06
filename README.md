@@ -1,6 +1,6 @@
 # CEC Support
 
-**One-tap remote help from Critical Error Computing** — a tiny, calm app a
+**Remote help by support number from Critical Error Computing** — a tiny, calm app a
 customer runs so a CEC technician can view and control their screen to fix
 things, like AnyDesk, but over a private peer-to-peer mesh with **no central
 server** holding a directory or the session, and with access the customer
@@ -14,30 +14,15 @@ is [MyOwnMesh](https://github.com/mrjeeves/MyOwnMesh). See
 
 ## What the customer sees
 
-1. **Press for Help.** The large, physical-looking headline button. One press
-   joins the Silent `cecsupport-asking` room; that membership is the raised hand
-   a watching technician sees in their queue. Stopping the request leaves the
-   room. No customer-to-customer or technician-to-technician connection is
-   created just because the hand is raised.
-2. **Their support number.** Shown too (9 digits, e.g. `123 456 789`), with a
-   copy button and "read this to your technician". It's derived from the
-   device's key (`allmystuff_cec_protocol::support_id_from_device`) and serves
-   as a display/verification label and a **fallback**: for a customer who'd
-   rather read a number out, or for when the raised-hand queue is too crowded
-   to pick them out, a technician can type the number and the node resolves it
-   to this device on the area. It is **not** a mesh room.
-3. **One shared support area, Silent.** On launch the app takes up residence
-   on the one well-known MyOwnMesh network every CEC node shares
-   (`HELP_NETWORK_ID` = `cecsupport-clients`). The area is a **Silent** mesh:
-   the customer is merely *present* in its signaling room — connected to
-   nobody, connecting to nobody, gossiping nothing. Raising a hand joins a
-   second Silent room (`ASK_NETWORK_ID` = `cecsupport-asking`) whose
-   membership IS the technicians' queue; lowering it leaves. A technician's
-   deliberate dial (the device id, straight from the queue or resolved from a
-   read-out number) opens the one **direct WebRTC session** — CEC
-   infrastructure carries signaling and, at worst, TURN-relayed ciphertext,
-   never a routed session. It connects to a technician only when asked, and
-   only after the customer approves.
+1. **Their support number.** The start screen prominently shows the nine-digit
+   number with one-tap copy. Share it with a technician, who enters it in
+   AllMyStuff to request a connection.
+2. **Reachable while running.** The app announces in the Silent support directory
+   and hosts its isolated session room. Discovery never grants screen or input
+   access; the customer must approve the incoming request.
+3. **KVM support.** An attached KVM shows its own support number and incoming
+   requests in its card. Approve a named technician for three hours or decline.
+   The same decision is available in the KVM web UI and AllMyStuff.
 4. **Approve or deny.** When a technician dials in, a modal appears:
    "**‹Agent Name› is trying to connect to your computer**", with the 6-digit
    verification code to check against what the technician reads out, and three
@@ -149,7 +134,6 @@ sibling agent implements them on the AllMyStuff node):
 |---|---|---|
 | `cec_status` | `{}` | `{ number, network_id, role }` |
 | `cec_online` | `{}` | `{ number }` (join the shared support area at bring-up) |
-| `cec_ask_help` | `{ on }` | — (raise / lower the hand on the area) |
 | `cec_pending` | `{}` | `[{ tech, agent_name, want_control, session_id, verification_code }]` |
 | `cec_approve` | `{ tech, scope, session_id, want_control }` | — (`scope` ∈ `once`\|`three_hours`\|`forever`) |
 | `cec_deny` | `{ tech, session_id }` | — |

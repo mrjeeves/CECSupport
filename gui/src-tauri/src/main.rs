@@ -218,6 +218,12 @@ async fn cec_status(state: State<'_, AppState>) -> Result<Value, String> {
 /// `{ number }` (the display label to read out).
 #[tauri::command]
 async fn cec_online(state: State<'_, AppState>) -> Result<Value, String> {
+    // A reused, older pinned engine may still hold an ask from the previous UI.
+    // Retire that membership before announcing the support number.
+    let _ = state
+        .node
+        .request("cec_ask_help", json!({ "on": false }))
+        .await;
     state
         .node
         .request("cec_online", json!({}))
@@ -1008,16 +1014,6 @@ async fn machine_temps(state: State<'_, AppState>) -> Result<Value, String> {
 /// Raise (or withdraw) the ask on the global help room. While on, this node
 /// beacons "I need help" to every CEC technician; a technician answers by
 /// dialing our own number room, so the normal approval still gates everything.
-#[tauri::command]
-async fn cec_ask_help(state: State<'_, AppState>, on: bool) -> Result<Value, String> {
-    state
-        .node
-        .request("cec_ask_help", json!({ "on": on }))
-        .await
-        .map_err(|e| e.to_string())
-}
-
-/// The technician requests currently awaiting a decision (drives the modal).
 #[tauri::command]
 async fn cec_pending(state: State<'_, AppState>) -> Result<Value, String> {
     state
@@ -2628,7 +2624,6 @@ fn run_gui() -> ExitCode {
         .invoke_handler(tauri::generate_handler![
             cec_status,
             cec_online,
-            cec_ask_help,
             machine_specs,
             machine_temps,
             open_tiktok,

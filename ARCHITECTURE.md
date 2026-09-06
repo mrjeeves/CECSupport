@@ -1,155 +1,54 @@
 # CEC Support — Architecture
 
-CEC Support is Critical Error Computing's **one-tap remote help desk**: a
-customer runs a tiny app, reads out a short number, and a CEC technician can
-then view and control their screen to fix things — like AnyDesk, but over a
-private peer-to-peer mesh with **no central server holding a directory or the
-session data**, and with access that the customer grants per-session or
-generally and can revoke at any time.
+CEC Support is the customer app for Critical Error Computing. The customer shares
+its nine-digit support number; a technician enters it in AllMyStuff and requests
+access. The customer approves the named technician before screen or control access
+starts. Both apps use the AllMyStuff node engine and MyOwnMesh transport.
 
-It is not a new networking stack. It is a thin, focused **re-scope of
-AllMyStuff's remote-control console**, layered on the same substrate:
+## Discovery and connection
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│  CEC Support client app  (this repo)                                   │
-│  Windows-first customer GUI: Press for Help · approve/deny · revoke ·  │
-│  Toolbox · component repair · reconnect on boot. Embeds the AllMyStuff  │
-│  node in "CEC client mode".                                             │
-└───────────────▲──────────────────────────────────────────────────────┘
-                │ reuses (git dependency)
-┌───────────────┴──────────────────────────────────────────────────────┐
-│  AllMyStuff  (the shared engine + the technician app)                  │
-│  • node engine: screen capture / input inject / sessions / graph       │
-│  • crates/allmystuff-cec-protocol   the CEC wire contract + Support ID  │
-│  • crates/allmystuff-cec-consent    Once / 3-hours / Forever grants     │
-│  • GUI: a secret "CEC Support" tab (Agent Name + raised-hand queue →   │
-│    answer, or type the number as a fallback); dialed customers show    │
-│    as ordinary graph peers (no fleet group — CEC is Silent, no roster) │
-└───────────────▲──────────────────────────────────────────────────────┘
-                │ embeds
-┌───────────────┴──────────────────────────────────────────────────────┐
-│  MyOwnMesh  (the peer-to-peer substrate)                               │
-│  identity · mutual ed25519 auth · WebRTC transport · signaling ·       │
-│  + **Silent** networks (no auto-connect, no gossip) + listen-only join │
-└──────────────────────────────────────────────────────────────────────┘
-```
+The public `cecsupport-clients` room is a Silent, admission-disabled directory.
+Customers announce their presence; technicians listen without announcing themselves.
+A support number derives from the device's public key and resolves against this
+live directory. Discovery provides no access to a computer or appliance.
 
-Why this split, and not one monolith: AllMyStuff is already the remote-control
-engine and the technician's app; putting the CEC logic there means the
-technician side and the customer side share **one** implementation of the wire
-protocol, the consent rules, and the media planes. The customer's app is then a
-small, calm, single-purpose GUI on top. MyOwnMesh stays a general substrate —
-its CEC-related additions are two reusable signaling behaviours: the `Silent`
-network type and the `listen_only` signaling join.
+A deliberate dial joins the customer's `cec-<number>` session room and opens a
+WebRTC transport to that device. The technician sends a connect request containing
+an agent name, session id, and requested capabilities. The customer checks the
+name and six-digit verification code, then approves or declines. Every privileged
+operation remains subject to the customer's consent grant.
 
-## The "Silent" mesh — one shared support area
+Existing saved customer connections can reconnect through their known identity.
+The help queue and its presence beacons are retired. Updated engines remove any
+persisted `cecsupport-asking` membership on startup or reconnect. CECSupport also
+withdraws an old ask when it announces through an older shared engine.
 
-An ordinary MyOwnMesh network is always-on: every co-present peer auto-dials
-every other and the roster gossips. That is wrong for a help desk — you don't
-want to be connected to strangers just because you launched an app. So CEC
-Support uses a new MyOwnMesh network type, **`Silent`**:
+## KVM approval
 
-- **No auto-connect.** A Silent node dials *nobody* on its own. Peers are merely
-  *discoverable* (signaling presence); a WebRTC connection forms only when
-  someone calls `connect_peer` for a specific peer.
-- **No gossip.** A Silent network never broadcasts a roster; membership is never
-  shared. Each connection is deliberate.
-- **Open, never closed.** A mesh that auto-accepts members can't be governed by a
-  signed roster, so `Silent` is inherently open; access control happens
-  out-of-band (below), not via network governance.
+NanoKVM and NanoKVM-Pro display their own support numbers. Incoming requests can
+be approved or declined in the appliance web UI, the CECSupport KVM card, or
+AllMyStuff's KVM Support panel. Approval names the exact technician and session,
+so an expired card cannot approve a replacement request.
 
-On top of that, **every CEC node — customers and technicians alike — lives on
-one well-known shared area**: the constant
-`allmystuff_cec_protocol::HELP_NETWORK_ID` (`cecsupport-clients`). There is no
-per-customer room, and no connection topology to shape — because on a Silent
-area there are **no connections to shape**. MyOwnMesh is a mesh *signaling*
-system for direct WebRTC peer-to-peer connections, and the area uses exactly
-that half:
+The physical button and each app's approval-window button have the same behavior:
 
-- On the area a customer **dials nobody and is dialed by nobody**: the Silent
-  rules above mean no auto-connect, no gossip, no roster. Residents are merely
-  present in the signaling room — that presence is what lets a technician's
-  pinned redial find a rebooted customer, and a phoned-in number resolve to a
-  device. There is no N² fan-out because there are no connections at all until
-  a technician deliberately opens one.
-- **Raising a hand is joining a second Silent room**,
-  `allmystuff_cec_protocol::ASK_NETWORK_ID` (`cecsupport-asking`): membership
-  is the entire "I need help" signal, and lowering the hand is leaving.
-  Watching technicians read that room's presence as the queue — with a
-  **listen-only** signaling join (`SignalingConfig::listen_only`), so a
-  watcher never appears as a raised hand itself, and waiting customers can't
-  tell who is watching. (The previous design carried the hand as a
-  `SupportPresence` beacon over data channels — which needed the very
-  connections Silent forbids, the deadlock that briefly forced the area
-  `open` and auto-connected every customer to every co-present stranger.)
-- A technician reaches a customer by **deliberately dialing that one
-  device** (`connect_peer`, pinned): they answer a queue entry, or — when the
-  queue is too crowded to pick someone out — type the read-out number and let
-  the node resolve those digits against the area's member list. The session is
-  a **direct WebRTC link**; CEC infrastructure carries signaling and, when NAT
-  forces it, TURN-relayed ciphertext — never a routed or inspected session
-  (see `infra/README.md` for the hub boxes themselves).
-- The number (`support_id_from_device`, 9 digits like `123 456 789`) is a
-  **display / verification label and a dial fallback — not a network id, room
-  key, or rendezvous secret**. It is derived deterministically from the device's
-  public key, so the customer can read it out to confirm identity, but knowing it
-  puts no one in a private room — there is no per-number room to enter.
+- If a request is pending, approve the oldest one immediately.
+- Otherwise, wait up to five minutes for one support-number request.
+- Pressing again refreshes the wait to five minutes.
+- The first request consumes that permission and receives three hours of access.
+- A reconnect under an existing grant does not extend its deadline or consume a
+  newly opened window. Unclaiming the appliance clears pending requests and the window.
 
-### Two layers of access control
+The web UI and app cards display the remaining wait from the appliance's duration,
+using a local monotonic clock so an unset KVM wall clock cannot break the countdown.
+The existing long-hold factory-reset gesture is preserved.
 
-1. **Discovery gate — being a technician who dials you.** Reaching a customer at
-   all means being a technician on the shared support area and **deliberately
-   dialing that one device**. The area is Silent — no auto-connect, no gossip,
-   no roster, connections exist only when someone opens one — so nothing
-   reaches a customer until a technician picks their device (from the asking
-   room's queue, or the number as a fallback) and dials it.
-2. **Access gate — the approval.** Discovery is not access. Even once a
-   technician has dialed in, nothing happens until the customer **approves** them
-   (below). Screen and control frames are authorised per-frame against the
-   customer's consent store, so a revoke stops the stream immediately.
-
-This is the AnyDesk shape ("here's my ID" → "allow this session"), with no
-central directory or session server in the middle — but the ID is only a label
-the customer reads out to be found and verified, not a private rendezvous:
-reach comes from a technician on the shared area dialing the device directly.
-
-## The connect flow
-
-```
-Customer (CEC Support app)                 Technician (AllMyStuff + CEC tab)
-──────────────────────────                 ────────────────────────────────
-launch → identity → number N
-join shared support area (cecsupport-clients)
-Press for Help → join asking room
- (cecsupport-asking) — membership IS
- the raised hand; wait
-                                           already on the shared support area
-                                           watching the asking room (listen-only)
-                                           sees the hand in the queue
-                                           answers it (or types N as a fallback)
-                                           connect_peer(customer)         ─┐
-   ◀───────────── inbound offer + connect-request (agent_name) ───────────┘
-prompt: "‹Agent Name› is trying to
- connect" + 6-digit verification code
- [Approve Once] [3 hours] [Forever] [Deny]
-   │
-   ├─ approve(scope) → consent grant + mesh approve → session goes Active
-   │                                                  customer appears on the
-   │                                                  graph as a normal peer
-   ├─ screen frames ─────────────────────────────────▶ view
-   │  ◀──────────────────────────────── input events (if control granted)
-   │  (every frame re-checked against the grant)
-   └─ Revoke / "Forget this technician" → teardown, immediately
-```
-
-The 6-digit verification code and the Agent Name let the customer confirm *who*
-they're letting in before approving — the human check on top of the ed25519
-mutual authentication MyOwnMesh already performs.
-
-Each new connect request foregrounds the customer window once, keyed by the
-technician/session request. Repeated polls and duplicate events update the same
-pending request without repeatedly stealing focus.
+The compatibility status endpoint remains `GET /api/mesh/help`. Decisions use
+`POST /api/mesh/help/approve` or `/deny` with `{ technician, sessionId }`, and
+`POST /api/mesh/help/arm` approves the current request or opens/refreshes the window.
+Approval endpoints require the local web login or an owner/fleet mesh tunnel.
+Temporary technicians cannot mint or extend consent through their own tunnel.
+The former raise, lower, and toggle endpoints are removed.
 
 ## Consent: Approve Once / 3 hours / Forever
 
