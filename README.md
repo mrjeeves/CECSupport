@@ -6,11 +6,14 @@ things, like AnyDesk, but over a private peer-to-peer mesh with **no central
 server** holding a directory or the session, and with access the customer
 grants and can revoke at any time.
 
-This repo is the **customer-facing client** (Windows-first). The remote-control
+This repo is the **customer-facing client**, with Windows releases and a Linux
+build pipeline being prepared alongside AllMyStuff. The remote-control
 engine, the technician's app, and the shared CEC crates live in
 [AllMyStuff](https://github.com/mrjeeves/AllMyStuff); the peer-to-peer substrate
 is [MyOwnMesh](https://github.com/mrjeeves/MyOwnMesh). See
 [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`docs/`](docs/) for the full picture.
+Linux build targets, release order, and the runtime checks required before
+advertising support are in [`docs/LINUX-SUPPORT.md`](docs/LINUX-SUPPORT.md).
 
 ## What the customer sees
 
@@ -113,9 +116,10 @@ the whole app.
 CEC Support installs like any other app: the customer downloads the **installer
 (`setup.exe`)** from [support.cec.direct](https://support.cec.direct) and
 double-clicks it. **No terminal, no separate downloads, nothing to piece
-together.** The installer is the Tauri bundle (`targets: all` → NSIS `setup.exe`
-+ `.msi`), and it ships the `allmystuff-serve` node and the `myownmesh` daemon
-**inside it** as sidecars (`externalBin` in `tauri.conf.json`) — one package with
+together.** The supported Windows installer is the Tauri NSIS `setup.exe`,
+whose hooks provision the privileged host. It ships the `allmystuff-serve` node
+and the `myownmesh` daemon **inside it** as sidecars (`externalBin` in
+`tauri.conf.json`) — one package with
 everything the client needs.
 
 **Reuse, don't clobber** happens at *runtime*, not install time: when the client
@@ -124,6 +128,15 @@ and new enough, and falls back to its own bundled copies otherwise. The release
 build stages the pinned versions into the bundle — the versions pinned in
 `.myownmesh-rev` / `.allmystuff-rev`, which match the `tag = "…"` git deps in
 `gui/src-tauri/Cargo.toml`.
+
+The Linux pipeline builds `.deb` and `.AppImage` candidates for x86_64 and
+aarch64 using the same Ubuntu 22.04 baseline as AllMyStuff. These need desktop
+runtime acceptance testing before Linux is added to the customer support
+promise. Candidates are retained as workflow artifacts; publishing Linux
+downloads requires an AllMyStuff pin of v0.2.122 or newer. The v0.2.122 pin
+meets that version gate; required upstream assets and desktop runtime
+acceptance still need verification. The Windows Toolbox and Crucible payload
+remain Windows-specific.
 
 ## The node-control contract the client drives
 
@@ -162,7 +175,7 @@ replacing another app's live backend.
 ```
 CECSupport/
 ├── Justfile                        one-command ops (`just setup` / `dev` / `check` / `release`)
-├── Cargo.toml                      light root workspace (service crate only)
+├── Cargo.toml                      light root workspace (service, updater, Wi-Fi)
 ├── crates/cec-support-service/     the client's OWN OS-service installer
 ├── gui/                            Tauri + Svelte 5 client (its own workspace)
 │   ├── package.json, vite.config.ts, tsconfig.json, svelte.config.js
@@ -170,7 +183,7 @@ CECSupport/
 │   └── src-tauri/                  Cargo.toml (pinned git deps), main.rs, tauri.conf.json
 ├── scripts/bump-version.sh         version bump used by `just release`
 ├── .allmystuff-rev / .myownmesh-rev / .crucible-rev   pinned bundled components
-├── .github/workflows/             ci.yml (service crate + gui check) · release.yml (tag → Windows installer)
+├── .github/workflows/             CI checks + Windows/Linux release bundles
 ├── ARCHITECTURE.md · docs/         design + roadmap
 ```
 
@@ -182,13 +195,13 @@ node-workspace bits it doesn't have. Install [`just`](https://just.systems) and:
 ```sh
 just setup     # front-end deps (+ the Tauri prerequisites to install)
 just dev       # run the app with hot reload
-just check     # everything CI runs: fmt + clippy + test + gui typecheck/build
+just check     # light Rust workspace + GUI frontend checks
 just release 0.2.0   # bump versions, commit, push, tag
 ```
 
 The individual commands, if you'd rather not use `just`:
 
-**Frontend (this repo's hard validation):**
+**Frontend:**
 
 ```sh
 cd gui
@@ -198,19 +211,21 @@ pnpm build     # vite production build → gui/dist
 pnpm dev       # browser preview (degrades gracefully with a demo, no backend)
 ```
 
-**Service crate (compiles and tests here):**
+**Light Rust workspace:**
 
 ```sh
-cargo test         # from the repo root — the cec-support-service crate
+cargo test --workspace   # service, updater, and Wi-Fi crates
 ```
 
-**The full desktop app** (`gui/src-tauri`) needs the AllMyStuff node engine +
-CEC crates (git dependencies, now resolvable on published AllMyStuff tags) plus
-the Tauri/media toolchain — so it does **not** build in this repo's headless
-Linux sandbox, which lacks that toolchain. On a machine that has it:
+**The full desktop app** (`gui/src-tauri`) needs the published AllMyStuff pin
+and the Tauri/media toolchain. On Ubuntu, `just linux-deps` installs the native
+build packages used by the Linux pipeline; Rust, Node 22, and the pinned pnpm
+version must also be installed. Then:
 
 ```sh
-cd gui && pnpm tauri dev      # or: pnpm tauri build
+just dev             # development app
+just gui-backend     # backend fmt, clippy, and tests
+just gui-build       # bundle with required, verified sidecars
 ```
 
 The single `cec-support` binary is both the app and its CLI:
@@ -223,13 +238,17 @@ cec-support id                # print this computer's support number
 cec-support --version
 ```
 
-## What builds where
+## Build coverage
 
-| Piece | Builds in this sandbox? | Why |
+| Piece | Validation | Requirements |
 |---|---|---|
-| `gui/` frontend (`pnpm check`/`build`) | ✅ yes | pure Svelte/TS |
-| `crates/cec-support-service` (`cargo test`) | ✅ yes | no webview/media deps |
-| `gui/src-tauri` (`cargo build`) | ❌ no | needs the heavy media/webview (Tauri) toolchain this headless Linux sandbox lacks |
+| `gui/` frontend | Typecheck and production build in CI | Node + pnpm |
+| Root Rust workspace | Format, clippy, and tests on Linux, macOS, Windows | Rust; no webview/media stack |
+| Linux desktop backend and bundles | Native CI/release jobs on x86_64 and aarch64 | Published, matching AllMyStuff pin/lock and Linux native dependencies |
+
+Compilation and bundle creation do not exercise a desktop session, capture,
+input injection, or consent. See the [Linux acceptance checklist](docs/LINUX-SUPPORT.md#runtime-acceptance)
+for the remaining support gate.
 
 ## License
 

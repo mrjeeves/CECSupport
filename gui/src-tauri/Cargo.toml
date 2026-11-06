@@ -5,12 +5,10 @@
 # and webview-free — exactly the split AllMyStuff and MyOwnMesh use. The empty
 # `[workspace]` table makes this crate its own single-member workspace root.
 #
-# NOTE: this crate does NOT compile in the CEC Support sandbox. It depends on
-# AllMyStuff's heavy node engine (webview + media stack: xcap / openh264 /
-# cpal / …) via git, and on the CEC crates that are only pushed once the
-# sibling AllMyStuff branch lands. The manifest and `src/main.rs` are written
-# to be correct; the frontend (`pnpm check` / `pnpm build`) is what this repo
-# validates. See the README's "What builds where" section.
+# This crate needs the shared AllMyStuff node engine and Linux media/webview
+# libraries (xcap / openh264 / cpal / …). Native Linux CI checks/tests it and
+# builds bundles on the same Ubuntu baseline as AllMyStuff. See
+# docs/LINUX-SUPPORT.md for prerequisites and runtime acceptance.
 [workspace]
 
 [package]
@@ -56,11 +54,11 @@ tauri-plugin-single-instance = "2"
 # these resolve wherever that tag is reachable; bump all three together with
 # `.allmystuff-rev`, which pins the `allmystuff-serve` sidecar to the same
 # release (see build.rs — it stamps the tag in as ALLMYSTUFF_PIN).
-allmystuff-node = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.121" }
+allmystuff-node = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.122" }
 # The CEC wire contract + Support-ID derivation, and the three-choice consent
 # store — the customer's per-technician approvals.
-allmystuff-cec-protocol = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.121" }
-allmystuff-cec-consent = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.121" }
+allmystuff-cec-protocol = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.122" }
+allmystuff-cec-consent = { git = "https://github.com/mrjeeves/AllMyStuff", tag = "v0.2.122" }
 
 # The client's OWN OS-service installer (never AllMyStuff's), so installing the
 # background service never clobbers an existing AllMyStuff install.

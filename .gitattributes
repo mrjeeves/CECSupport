@@ -1,0 +1,2 @@
+# Bash helpers must also run from Windows checkouts mounted into Linux/WSL.
+*.sh text eol=lf

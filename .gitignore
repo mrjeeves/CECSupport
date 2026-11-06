@@ -2,6 +2,8 @@
 /target
 **/target
 Cargo.lock.bak
+/dist-bin/
+__pycache__/
 
 # Node / Tauri frontend
 gui/node_modules
