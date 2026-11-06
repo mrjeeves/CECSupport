@@ -39,6 +39,13 @@ setup:
     @Write-Output "Prerequisites: Rust (rustup), Node 22+, pnpm, and WebView2 (ships with Windows 11)."
     @cd gui; pnpm install
 
+# Use the same native packages as the Linux CI/release jobs. On Ubuntu 22.04
+# this also enables the PipeWire PPA needed by the shared capture engine.
+[linux]
+[doc("Install Ubuntu native build dependencies for the Linux desktop app (uses sudo).")]
+linux-deps:
+    @bash ./scripts/install-linux-deps.sh
+
 # Run the desktop app (Tauri + Svelte) with hot reload. Unlike AllMyStuff there's
 # no local node binary to pre-build: the AllMyStuff node engine is a git dep the
 # Tauri backend embeds, and the `myownmesh` + `allmystuff-serve` sidecars are
@@ -54,15 +61,15 @@ dev *ARGS:
 dev *ARGS:
     @cd gui; pnpm install --silent; pnpm tauri dev {{ARGS}}
 
-# Build the light root workspace (the service-installer crate — no webview).
+# Build the light root workspace (service, updater, Wi-Fi — no webview).
 build:
     @cargo build --workspace
 
 build-release:
     @cargo build --workspace --release
 
-# Build the desktop installer: the NSIS `setup.exe` + `.msi` on Windows (what a
-# customer downloads), or the `.deb`/`.AppImage`/`.dmg` on Linux/macOS.
+# Build the desktop bundle. Releases select NSIS on Windows and deb/AppImage
+# on Linux; the Windows NSIS hooks provision the privileged host.
 # CEC_REQUIRE_SIDECARS=1 makes a local installer build behave exactly like CI:
 # hermetic sidecars — only the pinned, checksum-verified release assets are
 # bundled (never a sibling checkout or stray binary), and a sidecar that can't
@@ -162,37 +169,33 @@ lint:
 test:
     @cargo test --workspace --no-fail-fast
 
-# Typecheck + build the Svelte front-end (no webview needed) — the client's hard
-# CI validation.
+# Test, typecheck, and build the Svelte front-end (no webview needed).
 [unix]
-[doc("Typecheck + build the front-end.")]
+[doc("Test, typecheck, and build the front-end.")]
 gui-check:
-    @cd gui && pnpm install --frozen-lockfile && pnpm check && pnpm build
+    @cd gui && pnpm install --frozen-lockfile && pnpm test && pnpm check && pnpm build
 
 [windows]
-[doc("Typecheck + build the front-end.")]
+[doc("Test, typecheck, and build the front-end.")]
 gui-check:
-    @cd gui; pnpm install --frozen-lockfile; pnpm check; pnpm build
+    @cd gui; pnpm install --frozen-lockfile; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; pnpm test; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; pnpm check; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; pnpm build
 
-# The Tauri backend (`gui/src-tauri`) — fmt + clippy + test. NOT part of `check`
-# or CI yet: it depends on the AllMyStuff node engine + CEC crates via git
-# (tag = `.allmystuff-rev`), which only resolve once that tag is published, and
-# it needs the media/webview toolchain. Run it on a dev machine once the deps
-# land — the analog of AllMyStuff's `node-check`.
+# The Tauri backend (`gui/src-tauri`) — fmt + clippy + test. It needs the
+# published AllMyStuff pin and media/webview toolchain. Linux CI checks the
+# backend separately; this stays out of the light, cross-platform `check`.
 [unix]
-[doc("fmt+clippy+test the Tauri backend (needs published AllMyStuff deps; not in CI).")]
+[doc("fmt+clippy+test the Tauri backend (needs AllMyStuff deps + native toolchain).")]
 gui-backend:
     @cd gui/src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 
 [windows]
-[doc("fmt+clippy+test the Tauri backend (needs published AllMyStuff deps; not in CI).")]
+[doc("fmt+clippy+test the Tauri backend (needs AllMyStuff deps + native toolchain).")]
 gui-backend:
     @cd gui/src-tauri; cargo fmt --check; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; cargo clippy --all-targets -- -D warnings; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; cargo test
 
-# Everything CI runs: Rust fmt + clippy + test (the light service workspace),
-# then the GUI typecheck/build. (The Tauri backend isn't in CI — see
-# `gui-backend` for why.)
-[doc("Everything CI runs: Rust fmt + clippy + test, then the GUI typecheck/build.")]
+# Checks that need no native media/webview toolchain. The Linux backend and
+# bundle CI jobs additionally validate the desktop with those dependencies.
+[doc("Light Rust workspace checks and GUI frontend typecheck/build.")]
 check: fmt-check lint test gui-check
 
 # Resolve the Tauri AllMyStuff git graph from `.allmystuff-rev` and verify the
@@ -203,9 +206,10 @@ pin-locks:
 
 # Cut a release: bump the workspace + GUI versions, commit, push, then push the
 # `v{{VERSION}}` tag. Mirrors AllMyStuff / MyOwnMesh. Pushing the tag triggers
-# `.github/workflows/release.yml`, which builds the Windows Tauri bundle (with
-# the pinned myownmesh + allmystuff-serve sidecars fetched in) and publishes the
-# `setup.exe` / `.msi` to the GitHub release. (The installer ships unsigned for
+# `.github/workflows/release.yml`, which builds Windows NSIS and Linux
+# deb/AppImage bundles with pinned sidecars. Windows publishes as usual;
+# Linux candidates publish only after the AllMyStuff pin reaches v0.2.123.
+# (The Windows installer ships unsigned for
 # now — see docs/WINDOWS-CODE-SIGNING.md to add Authenticode signing.) Cut this
 # only after the pinned AllMyStuff release (.allmystuff-rev) is published, so the
 # serve sidecar resolves.

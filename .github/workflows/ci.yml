@@ -8,6 +8,9 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   # The light root workspace — just the `cec-support-service` crate (systemd /
   # launchd / Windows SCM installer). It has no webview or media deps, so it
@@ -18,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-15, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -28,7 +31,7 @@ jobs:
       # Bash-4-only collection builtins that caused AllMyStuff's 0.2.86 cut to
       # stop at `mapfile: command not found`.
       - name: release helper is compatible with system Bash
-        if: matrix.os == 'macos-latest'
+        if: matrix.os == 'macos-15'
         run: |
           bash -n scripts/sync-pinned-locks.sh
           if grep -En '(^|[[:space:]])(mapfile|readarray)([[:space:]]|$)' scripts/sync-pinned-locks.sh; then
@@ -46,13 +49,19 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: test
         run: cargo test --workspace
+      - name: Sidecar target selection tests
+        shell: bash
+        run: |
+          mkdir -p target
+          out=target/build-support-tests
+          if [[ "$RUNNER_OS" == Windows ]]; then out="$out.exe"; fi
+          rustc --edition 2021 --test gui/src-tauri/build_support.rs -o "$out"
+          "$out"
+      - name: Linux packaging and publication gate tests
+        if: matrix.os == 'ubuntu-latest'
+        run: python3 -m unittest discover -s scripts/tests
 
-  # The Svelte front-end: typecheck + production build. This is the CEC Support
-  # client's hard validation — the Tauri Rust backend (`gui/src-tauri`) is NOT
-  # built in CI because it depends on AllMyStuff's node engine + the CEC crates
-  # via git, which only resolve once the sibling AllMyStuff branch is published.
-  # Add a `gui-backend` job (cargo check/test in gui/src-tauri, matrix over the
-  # three desktop OSes) once those deps are on a published ref.
+  # Frontend validation stays independent of the native media/webview toolchain.
   gui:
     name: GUI front-end
     runs-on: ubuntu-latest
@@ -70,5 +79,74 @@ jobs:
           cache: pnpm
           cache-dependency-path: gui/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+      - run: pnpm test
       - run: pnpm check
       - run: pnpm build
+
+  # Compile/test the actual Linux customer app, then bundle real pinned
+  # sidecars. Compile-only checks may use stubs; candidate packages may not.
+  linux:
+    name: Linux desktop · ${{ matrix.platform.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { name: linux-x86_64, os: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
+          - { name: linux-aarch64, os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu }
+    runs-on: ${{ matrix.platform.os }}
+    env:
+      CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux build dependencies
+        timeout-minutes: 20
+        run: bash scripts/install-linux-deps.sh
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gui/src-tauri -> target
+          key: gui-${{ matrix.platform.name }}
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: gui/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: gui/pnpm-lock.yaml
+      - name: Verify suite pins match the committed lock
+        run: bash scripts/sync-pinned-locks.sh --check
+      - name: Build frontend for the Tauri backend
+        working-directory: gui
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+      - name: Check backend
+        working-directory: gui/src-tauri
+        env:
+          CEC_SKIP_SIDECAR: "1"
+        run: cargo check --locked --target ${{ matrix.platform.target }}
+      - name: Test backend
+        working-directory: gui/src-tauri
+        env:
+          CEC_SKIP_SIDECAR: "1"
+        run: cargo test --locked --target ${{ matrix.platform.target }}
+      - name: Build Linux candidate packages with verified sidecars
+        working-directory: gui
+        env:
+          CEC_REQUIRE_SIDECARS: "1"
+        run: pnpm tauri build --target ${{ matrix.platform.target }} --bundles deb,appimage -- --locked
+      - name: Ensure bundle build kept the committed dependency graph
+        run: git diff --exit-code -- gui/src-tauri/Cargo.lock
+      - name: Package Linux portable and self-update payload
+        run: bash scripts/package-linux.sh ${{ matrix.platform.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cec-support-${{ matrix.platform.name }}-candidate
+          if-no-files-found: error
+          path: |
+            gui/src-tauri/target/${{ matrix.platform.target }}/release/bundle/deb/*.deb
+            gui/src-tauri/target/${{ matrix.platform.target }}/release/bundle/appimage/*.AppImage
+            dist-bin/cec-support-*

@@ -1,21 +1,10 @@
 name: Release
 
 # Triggered by pushing a tag `v*` (what `just release X.Y.Z` does) or a manual
-# `workflow_dispatch`. Builds the Windows installer and publishes it to the
-# GitHub release at that tag — this is what support.cec.direct's "Download for
-# Windows" button points at (the NSIS `*-setup.exe` asset).
-#
-# Two kinds of asset ship here, for two different jobs:
-#   *-setup.exe / .msi              first install (what a customer downloads)
-#   cec-support-windows-x86_64.zip  self-update payload (GUI + runtime tools)
-# The updater applies an update by swapping the GUI and AMST, so it needs the plain
-# archive — it can't install from an installer.
-#
-# CEC Support is a Windows-only product (one download, no OS picker), so the
-# matrix is Windows-only. The app is a Tauri bundle that ships two sidecars —
-# `myownmesh` (.myownmesh-rev) and `allmystuff-serve` (.allmystuff-rev) — which
-# the GUI's build.rs fetches from those repos' releases during `pnpm tauri
-# build`, so the installer is self-contained.
+# `workflow_dispatch`. Windows ships NSIS and a self-update ZIP. Linux builds
+# native .deb/AppImage candidates and portable tarballs on AllMyStuff's glibc
+# baseline. Public Linux downloads start once the suite pins + committed lock
+# advance to AllMyStuff v0.2.123 (the Linux rollout baseline).
 #
 # NOTE ON SIGNING: the installer is currently published UNSIGNED, so Windows
 # SmartScreen warns on first run. To sign it (Authenticode) and clear that
@@ -37,8 +26,17 @@ permissions:
 
 jobs:
   bundle:
-    name: Build Windows installer
-    runs-on: windows-latest
+    name: Build ${{ matrix.platform.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { name: windows-x86_64, os: windows-latest, target: x86_64-pc-windows-msvc, bundles: nsis }
+          # Native runners, matching AllMyStuff's glibc 2.35 floor. AppImage
+          # tooling does not support cross-compiling the ARM bundle.
+          - { name: linux-x86_64, os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, bundles: "deb,appimage" }
+          - { name: linux-aarch64, os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu, bundles: "deb,appimage" }
+    runs-on: ${{ matrix.platform.os }}
     env:
       # The Opus bundled via the node engine's audio stack declares a pre-3.5
       # `cmake_minimum_required` that CMake 4.x rejects; this shim re-enables
@@ -53,6 +51,18 @@ jobs:
       CEC_REQUIRE_SIDECARS: "1"
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Linux build dependencies (same baseline as AllMyStuff)
+        if: runner.os == 'Linux'
+        timeout-minutes: 20
+        run: bash scripts/install-linux-deps.sh
+
+      - name: Check Linux publication baseline
+        id: linux-baseline
+        if: runner.os == 'Linux'
+        run: python3 scripts/linux-release-ready.py
 
       # Guard the "tag says v0.1.0, binary reports 0.0.9" trap. The `cec-support`
       # binary embeds CARGO_PKG_VERSION and the GUI title reads
@@ -88,13 +98,13 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-msvc
+          targets: ${{ matrix.platform.target }}
 
       - name: Cache (GUI workspace)
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: gui/src-tauri -> target
-          key: gui-windows
+          key: gui-${{ matrix.platform.name }}
 
       # No `version:` — pnpm/action-setup reads it from gui/package.json's
       # `packageManager` field. There's no root package.json, so point the action
@@ -113,29 +123,19 @@ jobs:
         working-directory: gui
         run: pnpm install --frozen-lockfile
 
-      # Build + publish the Tauri bundle. tauri-action runs `pnpm tauri build`,
-      # so the GUI's build.rs fetches the pinned `myownmesh` + `allmystuff-serve`
-      # sidecars from their GitHub releases and bundles them inside the installer
-      # — we deliberately do NOT set CEC_SKIP_SIDECAR. It then uploads the NSIS
-      # `*-setup.exe` + `.msi` (targets: "all") to the named release.
-      #
-      # The pinned AllMyStuff release (.allmystuff-rev) must already be published
-      # with its `allmystuff-serve-windows-x86_64.zip` asset before this runs,
-      # or the serve sidecar falls back to a stub (the app still builds; it just
-      # won't ship the bundled node).
-      - uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          projectPath: gui
-          tagName: ${{ inputs.tag || github.ref_name }}
-          releaseName: ${{ inputs.tag || github.ref_name }}
-          releaseDraft: false
-          prerelease: false
-          # NSIS carries the privileged-host install/uninstall hooks. Publishing
-          # a second MSI would offer a clean-install path that silently omits
-          # the host and recreates the Toolbox elevation failure.
-          args: --target x86_64-pc-windows-msvc --bundles nsis
+      # Strict staging downloads checksum-verified sidecars from the suite
+      # pins. Crucible/VC++ resources and privileged NSIS hooks stay Windows-only.
+      - name: Build desktop bundles
+        working-directory: gui
+        run: pnpm tauri build --target ${{ matrix.platform.target }} --bundles ${{ matrix.platform.bundles }} -- --locked
+
+      - name: Ensure bundle build kept the committed dependency graph
+        shell: bash
+        run: git diff --exit-code -- gui/src-tauri/Cargo.lock
+
+      - name: Package Linux portable and self-update payload
+        if: runner.os == 'Linux'
+        run: bash scripts/package-linux.sh ${{ matrix.platform.target }}
 
       # Package the GUI and runtime tools so the SELF-UPDATER can repair older
       # installs as well as update the app. The installers above are for first
@@ -145,7 +145,8 @@ jobs:
       # crates/cec-support-updater/src/lib.rs: `cec-support-<platform>.zip`.
       # The `.sha256` sidecar is mandatory — the updater refuses to stage an
       # artifact it can't verify, so a missing sidecar fails the update closed.
-      - name: Package self-update payload
+      - name: Package Windows self-update payload
+        if: runner.os == 'Windows'
         shell: bash
         run: |
           set -e
@@ -172,10 +173,25 @@ jobs:
           # and its checksum.
           rm -f dist-bin/cec-support.exe dist-bin/amst.exe dist-bin/cec-crucible-portable.zip
 
+      # Keep candidates reviewable even while the public Linux gate is closed.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cec-support-${{ matrix.platform.name }}
+          if-no-files-found: error
+          path: |
+            gui/src-tauri/target/${{ matrix.platform.target }}/release/bundle/nsis/*-setup.exe
+            gui/src-tauri/target/${{ matrix.platform.target }}/release/bundle/deb/*.deb
+            gui/src-tauri/target/${{ matrix.platform.target }}/release/bundle/appimage/*.AppImage
+            dist-bin/cec-support-*
+
       - uses: softprops/action-gh-release@v2
+        if: runner.os == 'Windows' || steps.linux-baseline.outputs.ready == 'true'
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           files: |
+            gui/src-tauri/target/${{ matrix.platform.target }}/release/bundle/nsis/*-setup.exe
+            gui/src-tauri/target/${{ matrix.platform.target }}/release/bundle/deb/*.deb
+            gui/src-tauri/target/${{ matrix.platform.target }}/release/bundle/appimage/*.AppImage
             dist-bin/cec-support-*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

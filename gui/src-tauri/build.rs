@@ -35,6 +35,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod build_support;
+use build_support::AssetStyle;
+
 /// One sidecar to bundle: which binary, and where the pinned copy comes from.
 struct Sidecar {
     /// Binary base name, e.g. `"myownmesh"` — also the `externalBin` slot base.
@@ -60,12 +63,6 @@ struct Sidecar {
     /// is a portable payload (exe + LibreHardwareMonitor tree), not one loose
     /// executable, so runtime extraction must preserve that whole layout.
     portable_resource: Option<&'static str>,
-}
-
-#[derive(Clone, Copy)]
-enum AssetStyle {
-    Standard,
-    CrucibleWindows,
 }
 
 const SIDECARS: &[Sidecar] = &[
@@ -152,6 +149,12 @@ fn main() {
     let require = env::var_os("CEC_REQUIRE_SIDECARS").is_some();
 
     for sc in SIDECARS {
+        // Crucible is a Windows-only portable tool. It is intentionally absent
+        // from tauri.conf.json's shared resources, so Linux/macOS releases must
+        // not require or stage it while enforcing their native sidecars.
+        if !sc.asset_style.supports_target(&target_triple()) {
+            continue;
+        }
         println!("cargo:rerun-if-changed={}", rev_file(sc).display());
         if let Some(file) = sc.sha256_file {
             println!(

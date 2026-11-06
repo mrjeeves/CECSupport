@@ -29,6 +29,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "Critical Error Computing",
+    "category": "Utility",
+    "shortDescription": "Remote help by support number from Critical Error Computing.",
     "externalBin": [
       "binaries/myownmesh",
       "binaries/allmystuff-serve",
@@ -43,6 +46,11 @@
     ],
     "macOS": {
       "signingIdentity": "-"
+    },
+    "linux": {
+      "deb": {
+        "depends": ["rclone", "fuse3"]
+      }
     }
   },
   "plugins": {
