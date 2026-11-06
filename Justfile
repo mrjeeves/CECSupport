@@ -208,7 +208,7 @@ pin-locks:
 # `v{{VERSION}}` tag. Mirrors AllMyStuff / MyOwnMesh. Pushing the tag triggers
 # `.github/workflows/release.yml`, which builds Windows NSIS and Linux
 # deb/AppImage bundles with pinned sidecars. Windows publishes as usual;
-# Linux candidates publish only after the AllMyStuff pin reaches v0.2.122.
+# Linux candidates publish only after the AllMyStuff pin reaches v0.2.123.
 # (The Windows installer ships unsigned for
 # now — see docs/WINDOWS-CODE-SIGNING.md to add Authenticode signing.) Cut this
 # only after the pinned AllMyStuff release (.allmystuff-rev) is published, so the

@@ -133,7 +133,7 @@ The Linux pipeline builds `.deb` and `.AppImage` candidates for x86_64 and
 aarch64 using the same Ubuntu 22.04 baseline as AllMyStuff. These need desktop
 runtime acceptance testing before Linux is added to the customer support
 promise. Candidates are retained as workflow artifacts; publishing Linux
-downloads requires an AllMyStuff pin of v0.2.122 or newer. The v0.2.122 pin
+downloads requires an AllMyStuff pin of v0.2.123 or newer. The v0.2.123 pin
 meets that version gate; required upstream assets and desktop runtime
 acceptance still need verification. The Windows Toolbox and Crucible payload
 remain Windows-specific.

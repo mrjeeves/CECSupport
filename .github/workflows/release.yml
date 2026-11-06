@@ -4,7 +4,7 @@ name: Release
 # `workflow_dispatch`. Windows ships NSIS and a self-update ZIP. Linux builds
 # native .deb/AppImage candidates and portable tarballs on AllMyStuff's glibc
 # baseline. Public Linux downloads start once the suite pins + committed lock
-# advance to AllMyStuff v0.2.122 (the Wayland support baseline).
+# advance to AllMyStuff v0.2.123 (the Linux rollout baseline).
 #
 # NOTE ON SIGNING: the installer is currently published UNSIGNED, so Windows
 # SmartScreen warns on first run. To sign it (Authenticode) and clear that

@@ -116,15 +116,17 @@ class LinuxReleaseGateTests(unittest.TestCase):
             return lines[1]
 
     def test_previous_upstream_release_remains_candidate_only(self):
-        self.assertEqual(self.readiness("v0.2.121"), "ready=false")
+        for pin in ("v0.2.121", "v0.2.122"):
+            with self.subTest(pin=pin):
+                self.assertEqual(self.readiness(pin), "ready=false")
 
     def test_minimum_and_newer_stable_upstream_releases_enable_publication(self):
-        for pin in ("v0.2.122", "v0.2.123", "v0.3.0", "v1.0.0"):
+        for pin in ("v0.2.123", "v0.2.124", "v0.3.0", "v1.0.0"):
             with self.subTest(pin=pin):
                 self.assertEqual(self.readiness(pin), "ready=true")
 
     def test_malformed_and_prerelease_pins_do_not_publish(self):
-        for pin in ("", "main", "0.2.122", "v0.2", "v0.2.122-rc.1", "v0.3.0-beta", "v0.2.122 extra"):
+        for pin in ("", "main", "0.2.123", "v0.2", "v0.2.123-rc.1", "v0.3.0-beta", "v0.2.123 extra"):
             with self.subTest(pin=pin):
                 self.assertEqual(self.readiness(pin), "ready=false")
 

@@ -53,17 +53,21 @@ must include `allmystuff-serve-linux-<arch>.tar.gz` and
 release in `.myownmesh-rev` must likewise publish each Linux daemon archive
 and checksum.
 
-AllMyStuff v0.2.122 supplies the Linux/Wayland fixes and is now the pinned
-Linux baseline. That pin meets the release workflow's Linux publication
+AllMyStuff v0.2.123 is the target Linux/Wayland release. That pin meets the
+release workflow's Linux publication
 threshold. All required upstream assets and checksums must still be available
 for both architectures, and desktop runtime acceptance remains required before
 advertising support. CI builds complete Linux candidates with the committed
 pins and retains them as workflow artifacts. Windows publication continues
 independently.
 
+A pin can be prepared before its upstream tag exists. Regenerate the Cargo
+lockfile with `just pin-locks` after the tag is published; the pin/lock guard
+must pass before building or releasing the native desktop app.
+
 For the Linux rollout:
 
-1. Verify that AllMyStuff v0.2.122 or a newer release containing the
+1. Verify that AllMyStuff v0.2.123 or a newer release containing the
    Linux/Wayland fixes has published its assets for both architectures.
 2. Update `.allmystuff-rev` and all three Rust dependency tags together, run
    `just pin-locks`, and commit the matching GUI Cargo lockfile.
