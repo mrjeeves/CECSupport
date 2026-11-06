@@ -39,13 +39,11 @@ lock_matches_pin() {
 }
 
 if [[ "$MODE" == "sync" ]] && ! lock_matches_pin; then
-  # A normal resolution updates the entire tagged AllMyStuff source as one
-  # unit. It intentionally fails if the forward-pinned tag is not published:
-  # CECSupport must be released only after its pinned AllMyStuff release.
-  cargo update --manifest-path "$MANIFEST" \
-    -p allmystuff-node \
-    -p allmystuff-cec-protocol \
-    -p allmystuff-cec-consent
+  # Resolve from the current manifest without first loading package IDs from
+  # the old source: that tag may have been removed after a cancelled release.
+  # --workspace keeps compatible dependency locks while adopting the new git
+  # source. It still fails if the forward-pinned release tag is unpublished.
+  cargo update --manifest-path "$MANIFEST" --workspace
 fi
 
 [[ -f "$LOCK" ]] || fail "$LOCK is missing"
