@@ -899,25 +899,22 @@ class CecStore {
   async forget(tech: string): Promise<void> {
     const want = canonicalTech(tech);
     const live = this.liveSessions.filter((s) => canonicalTech(s.tech) === want);
-    // Disconnect first (the same End the wire uses for a decline), so the
-    // session closes cleanly before the node is dropped from the mesh.
-    for (const s of live) {
-      try {
-        await cecDeny(s.tech, s.session_id);
-      } catch {
-        // The revoke + forget below still cut access; a failed End just means
-        // the transport teardown does the disconnecting.
-      }
-      const next = { ...this.sessions };
-      delete next[s.session_id];
-      this.sessions = next;
-    }
-    if (live.length > 0) this.reconcileChatPanel();
     try {
+      // AMS v0.2.122 declines pending requests with cec_deny. Revocation
+      // tears down active sessions and removes standing access together.
       await cecRevoke(tech);
       await cecForgetNode(tech);
+      const next = { ...this.sessions };
+      for (const [id, session] of Object.entries(next)) {
+        if (canonicalTech(session.tech) === want) delete next[id];
+      }
+      this.sessions = next;
+      this.pending = this.pending.filter((p) => canonicalTech(p.tech) !== want);
+      if (live.length > 0) this.reconcileChatPanel();
     } catch (e) {
       this.notify(`Couldn't remove: ${errMsg(e)}`);
+      await this.loadGrants();
+      return;
     }
     await this.loadGrants();
     this.notify(

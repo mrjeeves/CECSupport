@@ -206,6 +206,7 @@ The individual commands, if you'd rather not use `just`:
 ```sh
 cd gui
 pnpm install
+pnpm test      # consent-flow regressions against the compiled Svelte store
 pnpm check     # svelte-check — 0 errors
 pnpm build     # vite production build → gui/dist
 pnpm dev       # browser preview (degrades gracefully with a demo, no backend)
@@ -242,7 +243,7 @@ cec-support --version
 
 | Piece | Validation | Requirements |
 |---|---|---|
-| `gui/` frontend | Typecheck and production build in CI | Node + pnpm |
+| `gui/` frontend | Tests, typecheck, and production build in CI | Node + pnpm |
 | Root Rust workspace | Format, clippy, and tests on Linux, macOS, Windows | Rust; no webview/media stack |
 | Linux desktop backend and bundles | Native CI/release jobs on x86_64 and aarch64 | Published, matching AllMyStuff pin/lock and Linux native dependencies |
 

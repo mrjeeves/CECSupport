@@ -169,16 +169,16 @@ lint:
 test:
     @cargo test --workspace --no-fail-fast
 
-# Typecheck + build the Svelte front-end (no webview needed).
+# Test, typecheck, and build the Svelte front-end (no webview needed).
 [unix]
-[doc("Typecheck + build the front-end.")]
+[doc("Test, typecheck, and build the front-end.")]
 gui-check:
-    @cd gui && pnpm install --frozen-lockfile && pnpm check && pnpm build
+    @cd gui && pnpm install --frozen-lockfile && pnpm test && pnpm check && pnpm build
 
 [windows]
-[doc("Typecheck + build the front-end.")]
+[doc("Test, typecheck, and build the front-end.")]
 gui-check:
-    @cd gui; pnpm install --frozen-lockfile; pnpm check; pnpm build
+    @cd gui; pnpm install --frozen-lockfile; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; pnpm test; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; pnpm check; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; pnpm build
 
 # The Tauri backend (`gui/src-tauri`) — fmt + clippy + test. It needs the
 # published AllMyStuff pin and media/webview toolchain. Linux CI checks the

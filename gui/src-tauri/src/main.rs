@@ -1053,8 +1053,7 @@ async fn cec_approve(
     Ok(())
 }
 
-/// Decline a technician's dial, or end the current session (leaving any
-/// standing grant intact — that's what revoke is for).
+/// Decline a pending technician request. Revoke access to end active sessions.
 #[tauri::command]
 async fn cec_deny(
     state: State<'_, AppState>,
