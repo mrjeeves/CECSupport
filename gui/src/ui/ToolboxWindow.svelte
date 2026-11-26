@@ -5,6 +5,7 @@
     onToolboxProgress,
     runToolboxAction,
     startToolboxSession,
+    type LinuxToolboxTool,
     type ToolboxAction,
     type ToolboxSession,
     type ToolboxProgress,
@@ -64,6 +65,12 @@
     { id: "reliability_monitor", title: "Reliability Monitor", description: "Review the stability timeline, failures, and application crashes." },
   ];
 
+  let platform = $state("");
+  let linuxTools = $state<LinuxToolboxTool[]>([]);
+  const isLinux = $derived(platform === "linux");
+  const checks = $derived(isLinux ? linuxTools.filter((tool) => tool.group === "check") : repairs);
+  const diagnostics = $derived(isLinux ? linuxTools.filter((tool) => tool.group === "diagnostic") : consoles);
+  const advancedAvailable = $derived(isLinux ? linuxTools.filter((tool) => tool.group === "advanced") : advancedTools);
   let advanced = $state(false);
   let sessions = $state<ActivitySession[]>([]);
   let currentSessionId = $state("");
@@ -197,6 +204,8 @@
     let stopProgress: (() => void) | null = null;
     sessionReady = startToolboxSession()
       .then((history) => {
+        platform = history.platform;
+        linuxTools = history.linuxTools;
         currentSessionId = history.currentSessionId;
         sessions = history.sessions.map((session) => historySession(session, currentSessionId));
       })
@@ -220,9 +229,8 @@
   });
 
   async function run(tool: Tool): Promise<void> {
-    if (running(tool.id)) return;
     await sessionReady;
-    if (!currentSessionId) return;
+    if (!currentSessionId || running(tool.id)) return;
     const runId = `${tool.id}-${Date.now()}-${++runSequence}`;
     sessions = sessions.map((session) => session.id === currentSessionId
       ? {
@@ -256,12 +264,34 @@
       updateJob(runId, (job) => ({
         ...job,
         status: "failed",
-        output: job.output || detail,
+        output: detail || job.output,
         persistent: true,
       }));
     }
   }
 </script>
+
+{#snippet toolGrid(tools: Tool[], variant: "repair" | "diagnostic" | "advanced")}
+  <div class="grid">
+    {#each tools as tool (tool.id)}
+      {@const cta = tool.cta ?? (variant === "repair" ? "Run" : "Open")}
+      <button
+        class="tool"
+        class:repair={variant === "repair"}
+        class:advanced-tool={variant === "advanced"}
+        disabled={running(tool.id)}
+        onclick={() => void run(tool)}
+      >
+        <span class="tool-icon" aria-hidden="true">{variant === "advanced" ? "!" : variant === "repair" || cta === "Run" ? "✓" : "↗"}</span>
+        <span class="tool-copy">
+          <strong>{tool.title}</strong>
+          <small>{tool.description}</small>
+        </span>
+        <span class="run-label">{running(tool.id) ? "Running…" : cta}</span>
+      </button>
+    {/each}
+  </div>
+{/snippet}
 
 <div class="toolbox-shell">
   <header>
@@ -272,80 +302,59 @@
     </span>
     <span>
       <h1>Toolbox</h1>
-      <p>Useful, repeatable Windows maintenance—without hunting through menus.</p>
+      <p>Run system checks and open local diagnostic tools.</p>
     </span>
   </header>
 
   <div class="toolbox-workspace" class:has-progress={visibleSessions().length > 0 || !!sessionError}>
     <main>
-      <section aria-labelledby="repair-title">
-        <div class="section-heading">
-          <h2 id="repair-title">Check & repair</h2>
-          <span>Safe checks and Windows cleanup tools</span>
-        </div>
-        <div class="grid">
-          {#each repairs as tool (tool.id)}
-            <button class="tool repair" disabled={running(tool.id)} onclick={() => void run(tool)}>
-              <span class="tool-icon" aria-hidden="true">&#10003;</span>
-              <span class="tool-copy">
-                <strong>{tool.title}</strong>
-                <small>{tool.description}</small>
-              </span>
-              <span class="run-label">{running(tool.id) ? "Running…" : tool.cta ?? "Run"}</span>
-            </button>
-          {/each}
-        </div>
-      </section>
+      {#if platform === "windows" || isLinux}
+        {#if checks.length > 0}
+          <section aria-labelledby="repair-title">
+            <div class="section-heading">
+              <h2 id="repair-title">Check & repair</h2>
+              {#if !isLinux}<span>Safe checks and Windows cleanup tools</span>{/if}
+            </div>
+            {@render toolGrid(checks, "repair")}
+          </section>
+        {/if}
 
-      <section aria-labelledby="console-title">
-        <div class="section-heading">
-          <h2 id="console-title">Windows tools</h2>
-          <span>Open familiar diagnostics directly</span>
-        </div>
-        <div class="grid">
-          {#each consoles as tool (tool.id)}
-            <button class="tool" disabled={running(tool.id)} onclick={() => void run(tool)}>
-              <span class="tool-icon" aria-hidden="true">&#8599;</span>
-              <span class="tool-copy">
-                <strong>{tool.title}</strong>
-                <small>{tool.description}</small>
-              </span>
-              <span class="run-label">Open</span>
-            </button>
-          {/each}
-        </div>
-      </section>
+        {#if diagnostics.length > 0}
+          <section aria-labelledby="console-title">
+            <div class="section-heading">
+              <h2 id="console-title">{isLinux ? "Linux diagnostics" : "Windows tools"}</h2>
+              {#if !isLinux}<span>Open familiar diagnostics directly</span>{/if}
+            </div>
+            {@render toolGrid(diagnostics, "diagnostic")}
+          </section>
+        {/if}
 
-      {#if advanced}
-        <section class="advanced" aria-labelledby="advanced-title">
-          <div class="section-heading">
-            <h2 id="advanced-title">Advanced Windows tools</h2>
-            <span>These tools can change system configuration</span>
+        {#if advanced && advancedAvailable.length > 0}
+          <section class="advanced" aria-labelledby="advanced-title">
+            <div class="section-heading">
+              <h2 id="advanced-title">{isLinux ? "Advanced Linux tools" : "Advanced Windows tools"}</h2>
+              {#if !isLinux}<span>These tools can change system configuration</span>{/if}
+            </div>
+            {@render toolGrid(advancedAvailable, "advanced")}
+          </section>
+        {/if}
+
+        {#if advancedAvailable.length > 0}
+          <div class="mode-row">
+            <div class="mode-group" role="group" aria-label="Toolbox mode">
+              <button
+                class:active={advanced}
+                aria-pressed={advanced}
+                onclick={() => (advanced = !advanced)}
+              >{advanced ? "Hide Advanced" : "Show Advanced"}</button>
+            </div>
           </div>
-          <div class="grid">
-            {#each advancedTools as tool (tool.id)}
-              <button class="tool advanced-tool" disabled={running(tool.id)} onclick={() => void run(tool)}>
-                <span class="tool-icon" aria-hidden="true">!</span>
-                <span class="tool-copy">
-                  <strong>{tool.title}</strong>
-                  <small>{tool.description}</small>
-                </span>
-                <span class="run-label">Open</span>
-              </button>
-            {/each}
-          </div>
-        </section>
+        {/if}
+      {:else if platform}
+        <p>The Toolbox is available on Windows and Linux.</p>
+      {:else if !sessionError}
+        <p role="status">Loading tools…</p>
       {/if}
-
-      <div class="mode-row">
-        <div class="mode-group" role="group" aria-label="Toolbox mode">
-          <button
-            class:active={advanced}
-            aria-pressed={advanced}
-            onclick={() => (advanced = !advanced)}
-          >{advanced ? "Hide Advanced" : "Show Advanced"}</button>
-        </div>
-      </div>
     </main>
 
     {#if visibleSessions().length || sessionError}

@@ -103,6 +103,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+tokio = { version = "1", features = ["io-util", "process"] }
+
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.7"
 sha2 = "0.10"

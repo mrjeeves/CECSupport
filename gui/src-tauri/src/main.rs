@@ -46,6 +46,8 @@ use tauri::{Emitter, Manager, RunEvent, State};
 use tauri_plugin_autostart::ManagerExt;
 
 mod gpu_diagnostics;
+#[cfg(target_os = "linux")]
+mod toolbox_linux;
 
 /// The AllMyStuff version this build pins its bundled `allmystuff-serve` at,
 /// stamped by `build.rs` from `.allmystuff-rev` (e.g. `v0.2.25`). Passed to the
@@ -286,6 +288,7 @@ async fn open_kvm_store(app: tauri::AppHandle) -> Result<(), String> {
 // Toolbox
 // ---------------------------------------------------------------------------
 
+#[cfg(any(not(target_os = "linux"), test))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ToolboxKind {
     AdminTerminal(&'static str),
@@ -293,6 +296,7 @@ enum ToolboxKind {
     ElevatedSidecar(&'static str),
 }
 
+#[cfg(any(not(target_os = "linux"), test))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ToolboxSpec {
     label: &'static str,
@@ -446,6 +450,7 @@ fn toolbox_output_for_history(output: &str) -> String {
     )
 }
 
+#[cfg(any(not(target_os = "linux"), test))]
 fn toolbox_action_persists_success(action: &str) -> bool {
     matches!(action, "sfc" | "dism" | "chkdsk" | "flush_dns")
 }
@@ -489,6 +494,7 @@ fn render_toolbox_log(history: &ToolboxHistory, only_session: Option<&str>) -> S
     log
 }
 
+#[cfg(any(not(target_os = "linux"), test))]
 fn toolbox_spec(action: &str) -> Option<ToolboxSpec> {
     Some(match action {
         "sfc" => ToolboxSpec {
@@ -618,7 +624,16 @@ fn toolbox_session_start() -> Result<Value, String> {
     })?;
     let mut sessions = load_toolbox_history().sessions;
     sessions.reverse();
-    Ok(json!({ "currentSessionId": id, "sessions": sessions }))
+    #[cfg(target_os = "linux")]
+    let linux_tools = toolbox_linux::catalog();
+    #[cfg(not(target_os = "linux"))]
+    let linux_tools: Vec<Value> = Vec::new();
+    Ok(json!({
+        "currentSessionId": id,
+        "sessions": sessions,
+        "platform": std::env::consts::OS,
+        "linuxTools": linux_tools,
+    }))
 }
 
 /// Export one persisted Toolbox session, or every non-empty session, as a
@@ -666,7 +681,11 @@ async fn toolbox_run(
     run_id: String,
     session_id: String,
 ) -> Result<Value, String> {
-    let spec = toolbox_spec(&action).ok_or_else(|| format!("unknown Toolbox action: {action}"))?;
+    #[cfg(target_os = "linux")]
+    let spec = toolbox_linux::lookup(&action);
+    #[cfg(not(target_os = "linux"))]
+    let spec = toolbox_spec(&action);
+    let spec = spec.ok_or_else(|| format!("unknown Toolbox action on this platform: {action}"))?;
     if !toolbox_run_id_valid(&run_id) {
         return Err("invalid Toolbox run id".into());
     }
@@ -679,9 +698,13 @@ async fn toolbox_run(
         return Err("unknown Toolbox session".into());
     }
 
+    #[cfg(target_os = "linux")]
+    let persists_success = spec.captures_output();
+    #[cfg(not(target_os = "linux"))]
+    let persists_success = toolbox_action_persists_success(&action);
     let started_at = toolbox_now();
     let result = toolbox_run_spec(app, spec, &run_id).await;
-    let persistent = toolbox_action_persists_success(&action) || result.is_err();
+    let persistent = persists_success || result.is_err();
     if persistent {
         let (status, output) = match &result {
             Ok(value) => (
@@ -911,13 +934,26 @@ fn admin_sidecar_command(base: &str) -> Result<String, String> {
     ))
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+async fn toolbox_run_spec(
+    app: tauri::AppHandle,
+    spec: &toolbox_linux::Tool,
+    run_id: &str,
+) -> Result<Value, String> {
+    let output = toolbox_linux::run(spec, |stream, line| {
+        emit_toolbox_progress(&app, run_id, stream, line);
+    })
+    .await?;
+    Ok(json!({ "ok": true, "label": spec.label, "output": output }))
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 async fn toolbox_run_spec(
     _app: tauri::AppHandle,
     _spec: ToolboxSpec,
     _run_id: &str,
 ) -> Result<Value, String> {
-    Err("The repair Toolbox is currently available on Windows.".into())
+    Err("The Toolbox is available on Windows and Linux.".into())
 }
 
 fn toolbox_run_id_valid(run_id: &str) -> bool {
@@ -936,7 +972,7 @@ fn toolbox_session_id_valid(session_id: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 fn append_toolbox_line(output: &mut String, line: &str) {
     if !output.is_empty() && !output.ends_with('\n') {
         output.push('\n');
@@ -944,10 +980,8 @@ fn append_toolbox_line(output: &mut String, line: &str) {
     output.push_str(line.trim_end_matches(['\r', '\n']));
 }
 
-/// AMST carries a real PTY, so its output can contain terminal title and color
-/// sequences. Keep the useful text/progress while preventing raw escape codes
-/// from leaking into the Toolbox progress cards.
-#[cfg(any(windows, test))]
+/// Keep terminal title and color sequences out of Toolbox progress cards.
+#[cfg(any(windows, target_os = "linux", test))]
 fn clean_toolbox_output(input: &[u8]) -> String {
     let mut clean = Vec::with_capacity(input.len());
     let mut index = 0;
@@ -988,7 +1022,7 @@ fn clean_toolbox_output(input: &[u8]) -> String {
     String::from_utf8_lossy(&clean).into_owned()
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn emit_toolbox_progress(app: &tauri::AppHandle, run_id: &str, stream: &str, line: &str) {
     let chunk = line.trim_end_matches(['\r', '\n']);
     if chunk.is_empty() {
