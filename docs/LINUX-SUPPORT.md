@@ -82,8 +82,20 @@ For the Linux rollout:
 
 Release staging requires `myownmesh`, `allmystuff-serve`, and `amst` for the
 target architecture. Linux skips Windows-only Crucible and VC runtime
-resources. CEC Support's Windows Toolbox actions and Crucible are not Linux
-maintenance tools.
+resources.
+
+## Linux Toolbox
+
+Open **Toolbox** to run checks and launch tools on the local machine. Linux
+checks cover disk space, memory, processes, storage, network state, DNS,
+systemd logs and service failures, and Debian package state. **Show Advanced**
+reveals PCI and USB inventories and GNOME Disks when installed. Desktop
+Settings and System Monitor depend on the active desktop and installed tools.
+
+The available commands run with the signed-in user's permissions. For example,
+the journal view reflects the account's log access, and **Flush DNS cache**
+appears on installations with systemd-resolved. Checks stream output to the
+activity panel, and the Toolbox can export service logs from its history.
 
 ## Install and update ownership
 
@@ -126,6 +138,9 @@ before advertising both downloads.
 - Test display selection, scaling, multiple monitors, clipboard behavior,
   reconnect, and a new session after logging out and back in. Record any
   portal prompt that returns despite a standing CECSupport grant.
+- Open the Toolbox in both package formats. Run overlapping Linux checks,
+  confirm output and failures appear in the correct cards, and export a log.
+  Check that installed desktop tools open and unavailable utilities stay hidden.
 - Test native drive mapping with `rclone` and `fuse3` installed: mount a
   consented remote folder as the desktop user, read/write as permitted, and
   unmount cleanly after disconnect or revocation. Confirm the `.deb` resolves

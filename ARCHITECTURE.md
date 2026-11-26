@@ -126,11 +126,9 @@ repair never silently changes that consent/startup policy.
 
 ## Toolbox execution boundary
 
-The Toolbox is a dedicated Tauri window (`?toolbox=1`), created and foregrounded
-by Rust rather than by a general-purpose webview window permission. The UI can
-submit only a fixed `ToolboxAction`; `toolbox_spec` maps that id to one known
-repair or Windows program. No arbitrary command string crosses the webview
-boundary.
+Rust creates and foregrounds the dedicated Toolbox window (`?toolbox=1`). The
+UI submits a fixed `ToolboxAction` ID. The backend selects a platform-specific
+command from its allowlist and owns its executable and arguments.
 
 SFC, DISM, online CHKDSK, DNS flush, and the administrator-only Windows tools
 launch through the bundled `amst.exe --admin --run` path in a real visible
@@ -144,6 +142,14 @@ Manager, Services, System Information, Task Manager, and Windows Settings.
 **Show Advanced** reveals configuration-changing tools: Control Panel, Registry
 Editor, Disk/Computer Management, System Configuration, Windows Features,
 Resource Monitor, and Crucible Tests.
+
+On Linux, the backend advertises the actions whose system utilities are
+present. The catalog covers disk space, memory, storage devices, packages,
+networking, systemd services, logs, processes, and desktop applications. It
+offers DNS cache flushing when systemd-resolved is available. Linux commands
+run with the desktop user's permissions and fixed arguments. CLI output and
+errors stream to `toolbox://progress` and are saved in the existing history.
+Successful desktop launches show a brief activity card.
 
 Crucible ships as the upstream portable zip, not a loose executable. The build
 pins `.crucible-rev` and its SHA-256; runtime extraction rejects unsafe archive

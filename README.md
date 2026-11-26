@@ -46,11 +46,11 @@ advertising support are in [`docs/LINUX-SUPPORT.md`](docs/LINUX-SUPPORT.md).
    of CEC Support, AllMyStuff Serve, MyOwnMesh Serve, AMSTerm, Crucible, and any
    installed service payload. Every row has its own Update or Repair action, so
    an older shared backend cannot hide behind a current GUI version.
-7. **Toolbox.** A dedicated window collects safe Windows checks and familiar
-   diagnostics. SFC, DISM, the online CHKDSK scan, and DNS flush run in visible
-   administrator terminals with live progress while other tools remain usable.
-   Windows tools open directly; **Show Advanced** reveals configuration-changing
-   tools and the bundled **Crucible Tests** interactive hardware-test console.
+7. **Toolbox.** Run local checks, open desktop diagnostics, and export a service
+   log. On Windows, SFC, DISM, the online CHKDSK scan, and DNS flush run in
+   visible administrator terminals, and **Show Advanced** includes the bundled
+   **Crucible Tests** hardware-test console. On Linux, the Toolbox shows the
+   available system, storage, networking, and desktop tools.
 
 It is **customer-only**. It never browses or dials anyone (that's the
 technician's AllMyStuff app) — no graph, no fleets, no file browser, no
@@ -97,12 +97,12 @@ that prerequisite visible and can request the pinned node update in place.
 
 ## Toolbox and privilege boundary
 
-The Toolbox is intentionally an allowlist, not a command prompt. The webview
-sends a short action id; Rust maps it to one fixed command or Windows program.
-Administrator repairs launch through the bundled `amst.exe --admin --run` path
-in a real visible console, while a UTF-8 transcript streams back into the
-Toolbox progress cards. Jobs have independent run ids and processes, so a long
-SFC or DISM pass does not block Event Viewer, Device Manager, or another repair.
+The webview sends a fixed action ID. Rust selects a command for the local
+operating system. Windows administrator repairs launch through the bundled
+`amst.exe --admin --run` path in a visible console and stream a transcript into
+the Toolbox. Linux checks run as the signed-in user with live output in the
+same window. Each run has its own progress card, and check output can be
+exported from the session history.
 
 Crucible is bundled as its upstream portable archive, including PresentMon and
 LibreHardwareMonitor. The release pins both its version and SHA-256; CEC Support
@@ -134,9 +134,8 @@ aarch64 using the same Ubuntu 22.04 baseline as AllMyStuff. These need desktop
 runtime acceptance testing before Linux is added to the customer support
 promise. Candidates are retained as workflow artifacts; publishing Linux
 downloads requires an AllMyStuff pin of v0.2.123 or newer. The v0.2.123 pin
-meets that version gate; required upstream assets and desktop runtime
-acceptance still need verification. The Windows Toolbox and Crucible payload
-remain Windows-specific.
+meets that version gate. Required upstream assets and desktop runtime
+acceptance still need verification.
 
 ## The node-control contract the client drives
 

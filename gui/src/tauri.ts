@@ -74,7 +74,17 @@ export type ToolboxAction =
   | "system_configuration"
   | "windows_features"
   | "resource_monitor"
-  | "reliability_monitor";
+  | "reliability_monitor"
+  | `linux_${string}`;
+
+export interface LinuxToolboxTool {
+  id: ToolboxAction;
+  title: string;
+  description: string;
+  group: "check" | "diagnostic" | "advanced";
+  cta: "Run" | "Open";
+  persistent: boolean;
+}
 
 export interface ToolboxResult {
   ok: boolean;
@@ -108,6 +118,8 @@ export interface ToolboxSession {
 export interface ToolboxSessionStart {
   currentSessionId: string;
   sessions: ToolboxSession[];
+  platform: string;
+  linuxTools: LinuxToolboxTool[];
 }
 
 export interface ToolboxLogDownload {
@@ -127,8 +139,7 @@ export async function openToolbox(): Promise<void> {
   await rawInvoke<void>("open_toolbox");
 }
 
-/** Run one backend-allowlisted maintenance action. Errors deliberately reach
- * the Toolbox so a failed repair never looks like success. */
+/** Start a new Toolbox visit and load the local platform's tool availability. */
 export async function startToolboxSession(): Promise<ToolboxSessionStart> {
   if (!isTauri()) {
     const startedAt = new Date().toISOString();
@@ -137,7 +148,12 @@ export async function startToolboxSession(): Promise<ToolboxSessionStart> {
       { id: currentSessionId, startedAt, entries: [] },
       ...previewToolboxSessions,
     ];
-    return { currentSessionId, sessions: previewToolboxSessions };
+    return {
+      currentSessionId,
+      sessions: previewToolboxSessions,
+      platform: "windows",
+      linuxTools: [],
+    };
   }
   return rawInvoke<ToolboxSessionStart>("toolbox_session_start");
 }

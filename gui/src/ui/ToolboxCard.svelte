@@ -23,7 +23,7 @@
     </span>
     <span>
       <h3 id="toolbox-card-title">Toolbox</h3>
-      <p>Safe Windows checks and repair tools, gathered in one place.</p>
+      <p>Run system checks and open diagnostic tools for this computer.</p>
     </span>
   </div>
   <button class="btn toolbox-button" disabled={opening} onclick={() => void open()}>
