@@ -1301,11 +1301,18 @@ fn host_wifi_scan() -> Value {
 /// tunnel (auth is bypassed on the mesh path).
 #[tauri::command]
 async fn site_map(state: State<'_, AppState>, node: String, port: u16) -> Result<Value, String> {
-    state
-        .node
-        .request("site_map", json!({ "node": node, "port": port }))
-        .await
-        .map_err(|e| e.to_string())
+    map_kvm_site(&state.node, &node, port).await
+}
+
+async fn map_kvm_site(node: &NodeClient, peer: &str, port: u16) -> Result<Value, String> {
+    // CEC opens this tunnel for KVM controls. The shared node should only
+    // persist it if the user explicitly saved it in AllMyStuff.
+    node.request(
+        "site_map",
+        json!({ "node": peer, "port": port, "remember": false }),
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// One JSON call to a claimed KVM's own web API, over the site tunnel already
@@ -1492,13 +1499,14 @@ async fn remap_site_for_local_port(
         return Ok(None);
     };
 
-    node.request("site_unmap", json!({ "node": peer, "port": host_port }))
-        .await
-        .map_err(|e| e.to_string())?;
-    let mapped = node
-        .request("site_map", json!({ "node": peer, "port": host_port }))
-        .await
-        .map_err(|e| e.to_string())?;
+    // Tear down the route while preserving any saved mapping on the shared node.
+    node.request(
+        "site_unmap",
+        json!({ "node": peer, "port": host_port, "forget": false }),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    let mapped = map_kvm_site(node, &peer, host_port).await?;
     let repaired_port = mapped
         .get("localPort")
         .and_then(Value::as_u64)
