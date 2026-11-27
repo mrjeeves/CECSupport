@@ -49,7 +49,7 @@
     },
     "linux": {
       "deb": {
-        "depends": ["rclone", "fuse3"]
+        "depends": ["pkexec | policykit-1"]
       }
     }
   },

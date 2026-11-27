@@ -77,8 +77,8 @@ For the Linux rollout:
 4. Complete runtime acceptance below, then cut CECSupport's release with
    `just release <version>`. The release pin/lock guard must pass; do not
    bypass it to build against an older graph.
-5. Add Linux download choices to the customer website only after validating
-   the uploaded packages.
+5. Verify the website download links and terminal installer against the
+   published assets for both Linux architectures.
 
 Release staging requires `myownmesh`, `allmystuff-serve`, and `amst` for the
 target architecture. Linux skips Windows-only Crucible and VC runtime
@@ -99,17 +99,22 @@ activity panel, and the Toolbox can export service logs from its history.
 
 ## Install and update ownership
 
+See the [CEC Support download page](https://support.cec.direct/#download) for
+the terminal installer and published Linux package downloads.
+
 The `.deb` is a package-managed install: replace it through the package
 installer when updating. For AppImage, replace the complete AppImage; the
 current updater swaps a raw executable and does not rebuild an AppImage's
 read-only mounted filesystem. Neither format should be presented as having
 verified in-app self-update until that path has been tested.
 
-Linux native drive mapping uses the shared node's rootless rclone/FUSE path.
-The `.deb` declares `rclone` and `fuse3` as runtime dependencies; install it
-through a package manager that resolves those dependencies. AppImage and
-portable users must install `rclone` and `fuse3` separately for native drive
-mapping: those formats do not bundle the external helpers.
+Linux native drive mapping uses the shared node's kernel CIFS/SMB3 client. The
+`.deb` declares `pkexec | policykit-1`. Install it with `sudo apt install
+./<package>.deb` so APT resolves its dependencies. For AppImage and portable
+installs, use the distribution's polkit/pkexec package. Mounting from an
+unprivileged desktop session requires a running polkit authentication agent
+and kernel CIFS support. AppImage launch has its own host requirements,
+including FUSE for normal AppImage execution.
 
 Linux `cec-support-linux-<arch>.tar.gz` assets are separate updater/portable
 payloads with `.sha256` sidecars. Each contains `cec-support`, `myownmesh`,
@@ -141,10 +146,10 @@ before advertising both downloads.
 - Open the Toolbox in both package formats. Run overlapping Linux checks,
   confirm output and failures appear in the correct cards, and export a log.
   Check that installed desktop tools open and unavailable utilities stay hidden.
-- Test native drive mapping with `rclone` and `fuse3` installed: mount a
-  consented remote folder as the desktop user, read/write as permitted, and
-  unmount cleanly after disconnect or revocation. Confirm the `.deb` resolves
-  both dependencies and AppImage/portable installs find the external helpers.
+- Test native drive mapping with kernel CIFS and desktop polkit available.
+  Mount a consented remote folder as the desktop user, read/write as permitted,
+  and unmount cleanly after disconnect or revocation. Confirm APT resolves the
+  polkit dependency and that AppImage/portable installs can invoke host `pkexec`.
 - Test with AllMyStuff already installed and running, and with CECSupport
   alone. Verify both reuse the shared node without overwriting each other's
   service identity or state.
