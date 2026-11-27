@@ -109,12 +109,13 @@ read-only mounted filesystem. Neither format should be presented as having
 verified in-app self-update until that path has been tested.
 
 Linux native drive mapping uses the shared node's kernel CIFS/SMB3 client. The
-`.deb` declares `pkexec | policykit-1`. Install it with `sudo apt install
-./<package>.deb` so APT resolves its dependencies. For AppImage and portable
-installs, use the distribution's polkit/pkexec package. Mounting from an
-unprivileged desktop session requires a running polkit authentication agent
-and kernel CIFS support. AppImage launch has its own host requirements,
-including FUSE for normal AppImage execution.
+`.deb` declares the runtime libraries for the bundled node, including ALSA
+and PipeWire, plus `pkexec | policykit-1` for mounts. Install it with APT so
+those dependencies resolve. For AppImage and portable installs, use the
+distribution's polkit/pkexec package. Mounting from an unprivileged desktop
+session requires a running polkit authentication agent and kernel CIFS support.
+AppImage launch has its own host requirements, including FUSE for normal
+AppImage execution.
 
 Linux `cec-support-linux-<arch>.tar.gz` assets are separate updater/portable
 payloads with `.sha256` sidecars. Each contains `cec-support`, `myownmesh`,
